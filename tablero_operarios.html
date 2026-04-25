@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Velasco App 2.0 — Tablero por Operario v23</title>
+<title>Velasco App 2.0 — Tablero por Operario v24</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -1485,7 +1485,29 @@ function render() {
 
           const tx = document.createElement('div');
           tx.style.cssText = 'display:flex;flex-direction:column;justify-content:center;overflow:hidden' + (showPhoto ? ';flex:1;min-width:0' : '');
-          tx.appendChild(Object.assign(document.createElement('div'), { className: 'bt', textContent: act.descripcion }));
+          // Title: "Item - Proceso" → item in bold, proceso in normal weight.
+          // The descripcion field is already formatted as "<Item> - <Proceso>"
+          // by the projects module. Split on the first " - " for display.
+          const titleDiv = document.createElement('div');
+          titleDiv.className = 'bt';
+          const fullDesc = act.descripcion || '';
+          const sepIdx = fullDesc.indexOf(' - ');
+          if (sepIdx > 0) {
+            const itemPart = fullDesc.substring(0, sepIdx);
+            const procPart = fullDesc.substring(sepIdx + 3);
+            const itemSpan = document.createElement('span');
+            itemSpan.style.fontWeight = '700';
+            itemSpan.textContent = itemPart;
+            const procSpan = document.createElement('span');
+            procSpan.style.fontWeight = '400';
+            procSpan.textContent = ' - ' + procPart;
+            titleDiv.appendChild(itemSpan);
+            titleDiv.appendChild(procSpan);
+          } else {
+            // Fallback: no separator → render as before (whole text bold)
+            titleDiv.textContent = fullDesc;
+          }
+          tx.appendChild(titleDiv);
           tx.appendChild(Object.assign(document.createElement('div'), { className: 'bs', textContent: clN(act.cliente_id) }));
           tx.appendChild(Object.assign(document.createElement('div'), { className: 'bm', textContent: mT(bl.startMin) + '-' + mT(bE) }));
           // Show machine name only when machine is "Otra" (there's no column that identifies it)
