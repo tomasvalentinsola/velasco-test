@@ -1,0 +1,2324 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Velasco App 2.0 — Tablero por Operario v23</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#FAFAF8;color:#2C2C2A;font-size:13px;display:flex;flex-direction:column;overflow:hidden}
+.hd{display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-bottom:2px solid #A8A79F;background:#fff;flex-shrink:0;z-index:100}
+.hd-l{display:flex;align-items:center;gap:16px}.hd-t{font-size:17px;font-weight:600}.hd-d{font-size:11px;color:#888780}
+.hd-r{display:flex;gap:8px;align-items:center}
+.b{font-size:11px;padding:5px 12px;border-radius:5px;cursor:pointer;border:1px solid #C8C6BE;background:#fff;color:#2C2C2A}
+.b:hover{background:#F1EFE8}.b:disabled{opacity:.4}
+.b-nav{font-size:11px;padding:5px 10px;border-radius:5px;cursor:pointer;border:1px solid #C8C6BE;background:#fff;color:#2C2C2A;font-weight:500}.b-nav:hover{background:#F1EFE8}
+.bw{flex:1;overflow:auto}.bd{display:grid;min-width:1000px}
+.hc{background:#DEEBF7;border-right:3px solid #1a1a1a;border-bottom:2px solid #A8A79F;padding:8px;font-size:10px;font-weight:600;color:#0C447C;text-align:center;position:sticky;left:0;top:0;z-index:30;display:flex;align-items:flex-end;justify-content:center}
+.ho{background:#DEEBF7;border-right:3px solid #1a1a1a;border-bottom:2px solid #A8A79F;padding:8px;font-size:13px;font-weight:700;color:#0C447C;text-align:center;position:sticky;top:0;z-index:15}
+.hr{background:#DEEBF7;border-right:2px solid #A8A79F;border-bottom:2px solid #A8A79F;padding:6px 8px;font-size:13px;font-weight:700;position:sticky;left:0;z-index:10;display:flex;flex-direction:column;justify-content:center;min-height:68px;color:#0C447C}
+.hr.td{background:#A8D8F0}.hr.ps{background:#9E9C96;color:#5F5E5A}
+.hr-n{font-size:10px;font-weight:500;color:#5F5E5A;margin-top:2px}
+.hr.td .hr-n{color:#0C447C}
+.cl{border-right:3px solid #1a1a1a;border-bottom:2px solid #1a1a1a;position:relative;overflow:visible;background:#fff;padding:0}
+.cl.ps{background:#9E9C96}.cl.td{background:#fff}.cl.ra{background:#F3F2EC}.cl.ra.ps{background:#9E9C96}
+.wk-sep{border-bottom:8px solid #1a1a1a !important}
+.ab{position:absolute;bottom:2px;right:4px;border:1px dashed #C8C6BE;border-radius:3px;padding:2px 6px;font-size:8px;color:#888780;background:rgba(255,255,255,.8);z-index:6;cursor:pointer}
+.ab:hover{background:#F1EFE8;border-color:#A8A79F;color:#5F5E5A}
+.nl{position:absolute;top:0;bottom:0;left:54.55%;border-left:1.5px dashed #C8C6BE;pointer-events:none;z-index:2}
+.sg{position:absolute;top:0;bottom:0;right:0;width:45.45%;background:#9E9C96;pointer-events:none;z-index:1}
+.bk{position:absolute;border-radius:4px;padding:3px 5px;cursor:pointer;font-size:9px;line-height:1.3;border-style:solid;border-width:5px 2.5px;user-select:none;z-index:5;display:flex;flex-direction:column;justify-content:center;overflow:hidden;min-width:6px}
+.bk-u{background:#1A1A1A;color:#fff}.bk-u .bt,.bk-u .bs,.bk-u .bm,.bk-u .bma{color:#fff}
+.bk-a{background:#FF9B9B;color:#000}.bk-m{background:#F0D47A;color:#000}.bk-b{background:#BDECB6;color:#000}
+.bk-d{background:#E0DEDA;opacity:.5}
+.bt{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:10px}
+.bs{color:#2C2C2A;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:9px}
+.bm{color:#2C2C2A;font-size:9px;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bma{font-size:8px;color:#5F5E5A;font-style:italic;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ba{position:absolute;top:2px;right:3px;width:11px;height:11px;border-radius:50%;background:rgba(255,255,255,.25);font-size:7px;display:flex;align-items:center;justify-content:center;color:inherit;font-weight:700}
+.tip{position:fixed;background:#2C2C2A;color:#fff;padding:10px 14px;border-radius:8px;font-size:11px;line-height:1.5;z-index:400;max-width:320px;pointer-events:none}
+.mo{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.15);z-index:200;display:flex;align-items:center;justify-content:center}
+/* Allow clicks on background to pass through when modal is dragged/resized,
+   but the backdrop still dims things visually. */
+.md{background:#fff;border-radius:10px;padding:20px;min-width:380px;max-width:540px;max-height:80vh;overflow:auto;border:1px solid #C8C6BE;resize:both;box-shadow:0 8px 30px rgba(0,0,0,.2);position:relative}
+.md.dragging{position:fixed;margin:0}
+.md-t{font-size:15px;font-weight:600;margin-bottom:12px;cursor:move;user-select:none;padding-right:40px}
+.md-t:hover{background:rgba(0,0,0,.03);margin:-20px -20px 12px;padding:20px 60px 0 20px;border-radius:10px 10px 0 0}
+.md-min-btn{position:absolute;top:14px;right:48px;background:none;border:none;font-size:16px;cursor:pointer;color:#888780;padding:2px 8px;border-radius:4px;line-height:1;font-weight:700}
+.md-min-btn:hover{background:rgba(0,0,0,.08);color:#2C2C2A}
+.md.minimized{height:auto!important;max-height:none;resize:none}
+.md.minimized > *:not(.md-t):not(.md-x):not(.md-min-btn){display:none}
+.md.minimized .md-t{margin-bottom:0}
+/* Selector items: cards with clear separation + hover */
+.ao{border:1px solid #C8C6BE;border-radius:6px;padding:8px 10px;margin-bottom:8px;cursor:pointer;background:#fff;transition:all .12s;user-select:none}
+.ao:hover{border-color:#378ADD;background:#F5FAFF;box-shadow:0 2px 6px rgba(55,138,221,.15)}
+.ao.dis{opacity:.5;cursor:not-allowed;background:#F5F3EC}
+.ao.dis:hover{border-color:#C8C6BE;background:#F5F3EC;box-shadow:none}
+.ao-t{font-size:13px;font-weight:600;margin-bottom:3px}
+.ao-s{font-size:11px;color:#5F5E5A;line-height:1.5}
+/* Multi-select dropdown wrapper (selector filters) */
+.ms-wrap{position:relative}
+.ms-btn{padding:6px 10px;border:1px solid #C8C6BE;border-radius:4px;background:#fff;font-size:12px;cursor:pointer;min-height:29px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;box-sizing:border-box}
+.ms-btn:hover{border-color:#888}
+.ms-dd{position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid #C8C6BE;border-radius:4px;margin-top:2px;box-shadow:0 4px 10px rgba(0,0,0,.1);z-index:50;max-height:220px;overflow-y:auto;min-width:180px}
+.ms-dd label{display:flex;align-items:center;gap:6px;padding:6px 10px;cursor:pointer;font-size:12px;white-space:nowrap;user-select:none}
+.ms-dd label:hover{background:#F5FAFF}
+.ms-dd input[type="checkbox"]{flex-shrink:0}
+.lg{display:flex;flex-wrap:wrap;gap:12px;padding:8px 16px;background:#F3F2EC;border-bottom:1px solid #C8C6BE;font-size:10px;align-items:center}
+.li{display:flex;align-items:center;gap:4px}
+.ls{width:14px;height:10px;border-radius:2px;border:1px solid #888}
+.lo{width:14px;height:10px;border:2.5px solid;border-radius:2px;background:#fff}
+.ld{width:1px;height:14px;background:#C8C6BE;margin:0 4px}
+.to{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#2C2C2A;color:#fff;padding:10px 24px;border-radius:8px;font-size:12px;z-index:300;opacity:0;transition:opacity .3s;pointer-events:none}.to.sh{opacity:1}
+.b-u{background:#FAEEDA;color:#633806;border-color:#FAC775}
+.b-p{background:#E6F1FB;color:#0C447C;border-color:#85B7EB;font-weight:500}
+.bk:hover{filter:brightness(.93)}.bk:active{cursor:grabbing}.bk.dg{opacity:.3}
+.cl.dov{outline:2px dashed #378ADD;outline-offset:-2px;background:rgba(55,138,221,.12)!important}
+.md-x{float:right;background:none;border:none;font-size:18px;cursor:pointer;color:#888780}
+.ef{margin-bottom:10px}.ef-l{font-size:11px;color:#888780;margin-bottom:3px}
+.ef-i{width:100%;padding:6px 8px;border:1px solid #C8C6BE;border-radius:5px;font-size:13px}
+.alert-stack{position:fixed;bottom:16px;right:16px;z-index:350;display:flex;flex-direction:column-reverse;gap:10px;max-height:70vh;overflow-y:auto;align-items:flex-end}
+.alert-card{border-radius:14px;padding:14px 16px;width:300px;font-size:12px;box-shadow:0 6px 24px rgba(0,0,0,.25);animation:alertIn .3s ease;position:relative;color:#000}
+.alert-card.alert-gray{background:#D8D8D8}.alert-card.alert-yellow{background:#FFEAA0}.alert-card.alert-red{background:#FF9B9B}
+.alert-card .alert-x{position:absolute;top:8px;right:10px;width:24px;height:24px;border-radius:50%;background:rgba(0,0,0,.25);color:#fff;font-size:15px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-weight:700;line-height:1}
+.alert-card .alert-x:hover{background:rgba(0,0,0,.45)}
+.alert-card .alert-title{font-weight:700;font-size:13px;margin-bottom:6px;padding-right:30px}
+.alert-card .alert-body{line-height:1.6;font-size:11px}
+.alert-close-all{background:rgba(0,0,0,.6);color:#fff;border:none;border-radius:10px;padding:8px 20px;font-size:11px;cursor:pointer;font-weight:600}
+.alert-close-all:hover{background:rgba(0,0,0,.75)}
+@keyframes alertIn{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+</style>
+</head>
+<body>
+
+<div class="hd">
+  <div class="hd-l">
+    <div>
+      <div class="hd-t">Tablero por Operario — Velasco</div>
+      <div class="hd-d" id="hd-d"></div>
+    </div>
+    <div style="display:flex;gap:6px">
+      <button class="b-nav" onclick="navWeek(-1)">← Sem. ant.</button>
+      <button class="b-nav" onclick="navWeek(0)">Hoy</button>
+      <button class="b-nav" onclick="navWeek(1)">Sem. sig. →</button>
+    </div>
+  </div>
+  <div class="hd-r">
+    <button class="b b-u" id="bu" disabled onclick="undo()">Deshacer</button>
+    <span id="uc" style="font-size:10px;color:#888780"></span>
+    <button class="b" onclick="window.open('proyectos.html','_blank')">Proyectos</button>
+    <button class="b" onclick="init()">Recargar</button>
+  </div>
+</div>
+
+<div class="lg" id="lg"></div>
+<div class="bw"><div class="bd" id="bd"></div></div>
+
+<div class="to" id="to"></div>
+<div class="alert-stack" id="alert-stack"></div>
+
+<script>
+const SUPA_URL = 'https://mzjbcfkalvduimqhawur.supabase.co';
+const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im16amJjZmthbHZkdWltcWhhd3VyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ4NzY0MzcsImV4cCI6MjA5MDQ1MjQzN30.P7so8AbiRgR9bIWttIqoG6ievY4cxgDMjzZQLx-95-Q';
+const sb = supabase.createClient(SUPA_URL, SUPA_KEY);
+
+// Operator column order (left to right)
+const OP_ORDER = ['Roman','Alfredo','Ariel','Tomas C.','Victor','Claudio'];
+
+// Machine -> border color mapping (this tablero uses machine colors on borders)
+const MACH_COLORS = {
+  'ST-30':        '#C62828',
+  'TR-1':         '#fa6497',
+  'TC-Alfredo':   '#FF9800',
+  'AR-3300':      '#2E7D32',
+  'AR-1000':      '#6ffc74',
+  'VF3-YT':       '#1565C0',
+  'VF4':          '#73bbf5',
+  'Perfect-Jet':  '#26dad4',
+  'Otra':         '#9E9E9E'
+};
+function machColor(machId) {
+  const m = maq.find(x => x.id === machId);
+  if (!m) return '#9E9E9E';
+  return MACH_COLORS[m.nombre] || '#9E9E9E';
+}
+
+const GAP = 10;
+const DAY_MIN_HEIGHT = 104;
+const MAX_SIMULTANEAS = 3;  // Max simultaneous activities per operator (4+ = blocked)
+
+// Vacation data (hardcoded for now; matches v10)
+const VACACIONES = [
+  {operarioNombre:'Ariel', desde:'2026-04-13', hasta:'2026-04-18'}
+];
+function getVacaciones(dateStr){
+  return VACACIONES.filter(v=>dateStr>=v.desde&&dateStr<=v.hasta).map(v=>{
+    const op=ops.find(o=>o.nombre===v.operarioNombre);
+    return{nombre:v.operarioNombre.split(' ')[0],color:op?op.color_borde:'#888'};
+  });
+}
+
+// ========== STATE ==========
+let maq=[],ops=[],cls=[],acts=[],uStack=[],dragD=null,tipEl=null,weekOffset=0;
+let alertCounter = 0;
+let suppressNextToast = false;
+
+// ========== DATE/TIME HELPERS ==========
+function getDays(){
+  const today=new Date();today.setHours(12,0,0,0);
+  const days=[];
+  const baseMonday=new Date(today);baseMonday.setDate(today.getDate()-((today.getDay()+6)%7));
+  const firstDay=new Date(baseMonday);firstDay.setDate(baseMonday.getDate()+(weekOffset*7)-1);
+  for(let i=0;i<8;i++){
+    const d=new Date(firstDay);d.setDate(firstDay.getDate()+i);
+    if(d.getDay()===0){firstDay.setDate(firstDay.getDate()+1);i--;continue}
+    const tk=dK(today),dk=dK(d);
+    days.push({date:new Date(d),type:dk===tk?'today':(dk<tk?'past':'future')});
+  }
+  return days;
+}
+function navWeek(dir){
+  if(dir===0)weekOffset=0;else weekOffset+=dir;
+  render();
+  document.getElementById('hd-d').textContent=weekOffset===0?new Date().toLocaleDateString('es-AR',{weekday:'long',year:'numeric',month:'long',day:'numeric'}):'Semana '+(weekOffset>0?'+':'')+weekOffset;
+}
+function fD(d){return['Dom','Lun','Mar','Mie','Jue','Vie','Sab'][d.getDay()]+' '+d.getDate()+'/'+(d.getMonth()+1)}
+function dK(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
+function tM(t){if(!t)return 0;const p=t.split(':');return+p[0]*60+(+p[1])}
+function mT(m){return String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0')}
+function pL(m){return Math.max(0,(m-360)/660*100)}
+function pW(d){return d/660*100}
+function opC(id){const o=ops.find(x=>x.id===id);return o?o.color_borde:'#888'}
+function opN(id){const o=ops.find(x=>x.id===id);return o?o.nombre:'?'}
+function opI(name){const o=ops.find(x=>x.nombre===name);return o?o.id:null}
+function clN(id){const c=cls.find(x=>x.id===id);return c?c.nombre:'?'}
+function mN(id){const m=maq.find(x=>x.id===id);return m?m.nombre:'?'}
+function mI(n){const m=maq.find(x=>x.nombre===n);return m?m.id:null}
+function D(a){return a.duracion_estimada_min+(a.duracion_margen_min||0)}
+// Operator time: how long the operator is attached to the activity.
+// Manual activities: operator stays the whole duration (same as D).
+// Automaticas with duracion_operario_min set: just the setup portion.
+// Fallback to D if the field is null/undefined (safe default).
+function Dop(a) {
+  if (a.tipo === 'automatica' && a.duracion_operario_min !== null && a.duracion_operario_min !== undefined) {
+    return a.duracion_operario_min;
+  }
+  return D(a);
+}
+// dd/mm/aaaa numeric date format (used in all dialogs)
+function fDn(d) {
+  if (typeof d === 'string') d = new Date(d + 'T12:00:00');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const yy = d.getFullYear();
+  return dd + '/' + mm + '/' + yy;
+}
+function toast(m){const t=document.getElementById('to');t.textContent=m;t.classList.add('sh');setTimeout(()=>t.classList.remove('sh'),3500)}
+function updU(){const b=document.getElementById('bu');if(!b)return;b.disabled=uStack.length===0;document.getElementById('uc').textContent=uStack.length>0?uStack.length+' cambio(s)':''}
+function canPlace(act,machId){if(!act.maquina_ideal_id)return true;if(mN(machId)==='Otra')return true;return act.maquina_ideal_id===machId||(act.maquinas_suplentes_ids||[]).includes(machId)}
+function nwd(ds){const d=new Date(ds+'T12:00:00');do{d.setDate(d.getDate()+1)}while(d.getDay()===0);return dK(d)}
+function sS(opId){const o=ops.find(x=>x.id===opId);return o?tM(o.horario_inicio||'06:00'):360}
+function sE(opId,ds){const o=ops.find(x=>x.id===opId);if(!o)return 1020;const d=new Date(ds+'T12:00:00');return d.getDay()===6?tM(o.horario_sabado_fin||'12:00'):tM(o.horario_fin||'15:00')}
+
+// ========== VISUAL BLOCKS (multi-day aware) ==========
+// Splits each activity across days according to operator's shift schedule.
+function computeVB() {
+  const vb = [];
+  acts.filter(a => a.estado !== 'sin_planificar' && a.fecha !== '1900-01-01' && !a.es_pulmon).forEach(act => {
+    if (!act.operario_id) return;
+    let rem = D(act), cd = act.fecha, ct = tM(act.hora_inicio), pn = 1;
+    const parts = []; let safe = 0;
+    while (rem > 0 && safe < 20) {
+      safe++;
+      const ds = sS(act.operario_id), de = sE(act.operario_id, cd);
+      if (ct < ds) ct = ds;
+      const av = de - ct;
+      if (av <= 0) { cd = nwd(cd); ct = sS(act.operario_id); continue; }
+      const bd = Math.min(rem, av);
+      parts.push({ actId: act.id, act, date: cd, startMin: ct, dur: bd, part: pn });
+      rem -= bd;
+      if (rem > 0) { cd = nwd(cd); ct = sS(act.operario_id); pn++; }
+    }
+    const tot = parts.length;
+    parts.forEach(p => { p.totalParts = tot; vb.push(p); });
+  });
+  return vb;
+}
+
+// ========== SCHEDULING CORE (imported from v10 tablero extendido) ==========
+// These functions deal with resolving machine conflicts after any placement.
+// When a block is dropped on operator X but the machine already has other
+// activities at that time, this cascade pushes them forward.
+
+function realEnd(a) {
+  let rem = D(a), cd = a.fecha, ct = tM(a.hora_inicio), safe = 0;
+  while (rem > 0 && safe < 20) {
+    safe++;
+    const ds = sS(a.operario_id), de = sE(a.operario_id, cd);
+    if (ct < ds) ct = ds;
+    const avail = de - ct;
+    if (avail <= 0) { cd = nwd(cd); ct = sS(a.operario_id); continue; }
+    const used = Math.min(rem, avail);
+    rem -= used;
+    if (rem > 0) { cd = nwd(cd); ct = sS(a.operario_id); } else { ct = ct + used; }
+  }
+  return { date: cd, time: ct };
+}
+
+// End of OPERATOR's attachment to the activity. Same walk as realEnd but using
+// Dop (which is shorter for automaticas). Used by all cascades/conflict checks
+// that care about when the operator becomes free (as opposed to the machine).
+function realEndOp(a) {
+  let rem = Dop(a), cd = a.fecha, ct = tM(a.hora_inicio), safe = 0;
+  while (rem > 0 && safe < 20) {
+    safe++;
+    const ds = sS(a.operario_id), de = sE(a.operario_id, cd);
+    if (ct < ds) ct = ds;
+    const avail = de - ct;
+    if (avail <= 0) { cd = nwd(cd); ct = sS(a.operario_id); continue; }
+    const used = Math.min(rem, avail);
+    rem -= used;
+    if (rem > 0) { cd = nwd(cd); ct = sS(a.operario_id); } else { ct = ct + used; }
+  }
+  return { date: cd, time: ct };
+}
+
+// List of machine names iterated by globalResolve
+const MCH_LIST = ['VF4','VF3-YT','Perfect-Jet','ST-30','TR-1','AR-3300','AR-1000','TC-Alfredo','Otra'];
+
+async function globalResolve(undoBatch, justPlacedId) {
+  let changed = true, iterations = 0;
+  while (changed && iterations < 50) {
+    changed = false; iterations++;
+    for (const mn of MCH_LIST) {
+      const machId = mI(mn); if (!machId) continue;
+      const machActs = acts
+        .filter(a => a.maquina_id === machId && a.estado !== 'sin_planificar' && a.fecha !== '1900-01-01')
+        .sort((a, b) => {
+          if (a.fecha < b.fecha) return -1;
+          if (a.fecha > b.fecha) return 1;
+          const td = tM(a.hora_inicio) - tM(b.hora_inicio);
+          if (td !== 0) return td;
+          if (a.id === justPlacedId) return -1;
+          if (b.id === justPlacedId) return 1;
+          return a.id - b.id;
+        });
+      for (let i = 0; i < machActs.length - 1; i++) {
+        const A = machActs[i], B = machActs[i + 1];
+        const endA = realEnd(A);
+        const bDate = B.fecha, bTime = tM(B.hora_inicio);
+        let needsMove = false;
+        if (bDate < endA.date) needsMove = true;
+        else if (bDate === endA.date && bTime < endA.time + GAP) needsMove = true;
+        if (needsMove) {
+          let newDate = endA.date, newTime = endA.time + GAP;
+          const bShE = sE(B.operario_id, newDate), bShS = sS(B.operario_id);
+          if (newTime < bShS) newTime = bShS;
+          if (newTime >= bShE) { newDate = nwd(newDate); newTime = sS(B.operario_id); }
+          if (B.fecha !== newDate || B.hora_inicio !== mT(newTime)) {
+            const prev = { maquina_id: B.maquina_id, fecha: B.fecha, hora_inicio: B.hora_inicio, estado: B.estado };
+            if (!undoBatch.find(u => u.id === B.id)) undoBatch.push({ id: B.id, prev });
+            await sb.from('actividades_tablero').update({ fecha: newDate, hora_inicio: mT(newTime) }).eq('id', B.id);
+            B.fecha = newDate; B.hora_inicio = mT(newTime);
+            changed = true;
+          }
+        }
+      }
+    }
+  }
+}
+
+function dayBlocks(machId, dateStr, excludeId) {
+  const blocks = [];
+  acts.filter(a => a.maquina_id === machId && a.estado !== 'sin_planificar' && a.fecha !== '1900-01-01' && a.id !== excludeId)
+    .forEach(a => {
+      let rem = D(a), cd = a.fecha, ct = tM(a.hora_inicio), safe = 0;
+      while (rem > 0 && safe < 20) {
+        safe++;
+        const ds = sS(a.operario_id), de = sE(a.operario_id, cd);
+        if (ct < ds) ct = ds;
+        const avail = de - ct;
+        if (avail <= 0) { cd = nwd(cd); ct = sS(a.operario_id); continue; }
+        const used = Math.min(rem, avail);
+        if (cd === dateStr) blocks.push({ s: ct, e: ct + used, act: a });
+        if (cd > dateStr) break;
+        rem -= used;
+        if (rem > 0) { cd = nwd(cd); ct = sS(a.operario_id); } else { ct += used; }
+      }
+    });
+  return blocks.sort((a, b) => a.s - b.s);
+}
+
+// 5-case drop logic: decides start time given X position of drop within a cell
+function calcInsertTime(machId, dateStr, dropMin, excludeId) {
+  const blocks = dayBlocks(machId, dateStr, excludeId);
+  const act = acts.find(a => a.id === excludeId);
+  const opStart = act && act.operario_id ? sS(act.operario_id) : 360;
+  if (blocks.length === 0) return opStart;
+  if (dropMin < blocks[0].s) {
+    if (blocks[0].s > opStart + GAP) {
+      const mid = (opStart + blocks[0].s) / 2;
+      return dropMin <= mid ? opStart : blocks[0].s;
+    } else return blocks[0].s;
+  }
+  if (dropMin === blocks[0].s) return blocks[0].s;
+  for (let i = 0; i < blocks.length; i++) {
+    const bl = blocks[i];
+    if (dropMin >= bl.s && dropMin < bl.e) {
+      const mid = (bl.s + bl.e) / 2;
+      return dropMin <= mid ? bl.s : bl.e + GAP;
+    }
+    if (i < blocks.length - 1 && dropMin >= bl.e && dropMin < blocks[i + 1].s) {
+      const mid = (bl.e + blocks[i + 1].s) / 2;
+      return dropMin <= mid ? bl.e + GAP : blocks[i + 1].s;
+    }
+  }
+  return blocks[blocks.length - 1].e + GAP;
+}
+
+// Same as dayBlocks but for an operator instead of a machine.
+// Returns all blocks belonging to `opId` on `dateStr`, sorted by start.
+function dayBlocksForOp(opId, dateStr, excludeId) {
+  const blocks = [];
+  acts.filter(a => a.operario_id === opId && a.estado !== 'sin_planificar' && a.fecha !== '1900-01-01' && a.id !== excludeId)
+    .forEach(a => {
+      // Operator is only attached for Dop(a) minutes (= setup time for automaticas)
+      let rem = Dop(a), cd = a.fecha, ct = tM(a.hora_inicio), safe = 0;
+      while (rem > 0 && safe < 20) {
+        safe++;
+        const ds = sS(a.operario_id), de = sE(a.operario_id, cd);
+        if (ct < ds) ct = ds;
+        const avail = de - ct;
+        if (avail <= 0) { cd = nwd(cd); ct = sS(a.operario_id); continue; }
+        const used = Math.min(rem, avail);
+        if (cd === dateStr) blocks.push({ s: ct, e: ct + used, act: a });
+        if (cd > dateStr) break;
+        rem -= used;
+        if (rem > 0) { cd = nwd(cd); ct = sS(a.operario_id); } else { ct += used; }
+      }
+    });
+  return blocks.sort((a, b) => a.s - b.s);
+}
+
+// 5-case drop logic for the operator board. Uses the operator's timeline
+// (not the machine's) to decide where an incoming drop lands.
+function calcInsertTimeForOp(opId, dateStr, dropMin, excludeId) {
+  const blocks = dayBlocksForOp(opId, dateStr, excludeId);
+  const opStart = opId ? sS(opId) : 360;
+  if (blocks.length === 0) return opStart;
+  if (dropMin < blocks[0].s) {
+    if (blocks[0].s > opStart + GAP) {
+      const mid = (opStart + blocks[0].s) / 2;
+      return dropMin <= mid ? opStart : blocks[0].s;
+    } else return blocks[0].s;
+  }
+  if (dropMin === blocks[0].s) return blocks[0].s;
+  for (let i = 0; i < blocks.length; i++) {
+    const bl = blocks[i];
+    if (dropMin >= bl.s && dropMin < bl.e) {
+      const mid = (bl.s + bl.e) / 2;
+      return dropMin <= mid ? bl.s : bl.e + GAP;
+    }
+    if (i < blocks.length - 1 && dropMin >= bl.e && dropMin < blocks[i + 1].s) {
+      const mid = (bl.e + blocks[i + 1].s) / 2;
+      return dropMin <= mid ? bl.e + GAP : blocks[i + 1].s;
+    }
+  }
+  return blocks[blocks.length - 1].e + GAP;
+}
+
+// Find activities of OTHER operators that use the same machine and overlap
+// in time with a proposed placement. Considers the full multi-day expansion
+// of the incoming activity (it may span several days), and returns ALL
+// conflicting activities across all affected days.
+function findMachineConflictsOtherOps(actId, machId, opId, fecha, startMin, dur) {
+  const conflicts = [];
+  if (!machId) return conflicts;
+
+  // Simulate the placed activity's day-by-day slices (respects operator shift).
+  const slices = simulatePlacement({ duracion_estimada_min: dur, duracion_margen_min: 0 }, opId, fecha, startMin);
+  if (slices.length === 0) return conflicts;
+
+  // For each slice, find activities of OTHER operators on the same machine that overlap
+  acts.forEach(a => {
+    if (a.id === actId) return;
+    if (a.maquina_id !== machId) return;
+    if (a.operario_id === opId) return;  // only OTHER operators
+    if (a.estado === 'sin_planificar') return;
+    let rem = D(a), cd = a.fecha, ct = tM(a.hora_inicio), safe = 0;
+    let pushed = false;
+    while (rem > 0 && safe < 20 && !pushed) {
+      safe++;
+      const ds = sS(a.operario_id), de = sE(a.operario_id, cd);
+      if (ct < ds) ct = ds;
+      const av = de - ct;
+      if (av <= 0) { cd = nwd(cd); ct = sS(a.operario_id); continue; }
+      const used = Math.min(rem, av);
+      // Check against every slice of the incoming activity
+      for (const s of slices) {
+        if (cd === s.date && ct < s.end && ct + used > s.start) {
+          conflicts.push(a); pushed = true; break;
+        }
+      }
+      if (!pushed) {
+        rem -= used;
+        if (rem > 0) { cd = nwd(cd); ct = sS(a.operario_id); } else { ct += used; }
+      }
+    }
+  });
+  return conflicts;
+}
+
+// ========== OPERATOR CONFLICT DETECTION ==========
+// `dur` is the operator-time duration of the incoming activity (Dop, not D).
+// Each existing activity `a` is compared using its own Dop(a) — the operator
+// is only attached to it for that long.
+function findOpConflicts(actId, opId, machId, fecha, startMin, dur) {
+  const conflicts = [];
+  if (!opId) return conflicts;
+  acts.forEach(a => {
+    if (a.id === actId) return;
+    if (a.operario_id !== opId) return;
+    if (a.estado === 'sin_planificar') return;
+    if (a.maquina_id === machId) return;
+    let rem = Dop(a), cd = a.fecha, ct = tM(a.hora_inicio), safe = 0;
+    while (rem > 0 && safe < 20) {
+      safe++;
+      const ds = sS(a.operario_id), de = sE(a.operario_id, cd);
+      if (ct < ds) ct = ds;
+      const av = de - ct;
+      if (av <= 0) { cd = nwd(cd); ct = sS(a.operario_id); continue; }
+      const used = Math.min(rem, av);
+      if (cd === fecha && ct < startMin + dur && ct + used > startMin) {
+        conflicts.push(a); break;
+      }
+      if (cd > fecha) break;
+      rem -= used;
+      if (rem > 0) { cd = nwd(cd); ct = sS(a.operario_id); } else { ct += used; }
+    }
+  });
+  return conflicts;
+}
+
+// 3+ simultaneous = blocked (was 4 in v10, lowered per user request)
+function classifyOpConflict(act, conflicts) {
+  if (conflicts.length === 0) return 'ok';
+  const all = [act, ...conflicts];
+  const manC = all.filter(a => a.tipo === 'manual').length;
+  const total = all.length;
+  if (total > MAX_SIMULTANEAS) return 'blocked';
+  if (manC >= 2) return 'blocked';
+  if (total === 3 && manC >= 1) return 'red';
+  return 'yellow';
+}
+
+function getManualRanges(excludeActId, opId, fecha) {
+  const ranges = [];
+  acts.forEach(a => {
+    if (a.id === excludeActId) return;
+    if (a.operario_id !== opId) return;
+    if (a.tipo !== 'manual') return;
+    if (a.estado === 'sin_planificar') return;
+    let rem = D(a), cd = a.fecha, ct = tM(a.hora_inicio), safe = 0;
+    while (rem > 0 && safe < 30) {
+      safe++;
+      const ds = sS(a.operario_id), de = sE(a.operario_id, cd);
+      if (ct < ds) ct = ds;
+      const av = de - ct;
+      if (av <= 0) { cd = nwd(cd); ct = sS(a.operario_id); continue; }
+      const used = Math.min(rem, av);
+      if (cd === fecha) ranges.push({ start: ct, end: ct + used });
+      if (cd > fecha) break;
+      rem -= used;
+      if (rem > 0) { cd = nwd(cd); ct = sS(a.operario_id); } else { ct += used; }
+    }
+  });
+  ranges.sort((a, b) => a.start - b.start);
+  return ranges;
+}
+
+function simulatePlacement(act, opId, fecha, startMin) {
+  const slices = [];
+  let rem = D(act), cd = fecha, ct = startMin, safe = 0;
+  while (rem > 0 && safe < 30) {
+    safe++;
+    const ds = sS(opId), de = sE(opId, cd);
+    if (ct < ds) ct = ds;
+    const av = de - ct;
+    if (av <= 0) { cd = nwd(cd); ct = sS(opId); continue; }
+    const used = Math.min(rem, av);
+    slices.push({ date: cd, start: ct, end: ct + used });
+    rem -= used;
+    if (rem > 0) { cd = nwd(cd); ct = sS(opId); } else { ct += used; }
+  }
+  return rem > 0 ? [] : slices;
+}
+
+function isManualTimeValid(act, opId, fecha, startMin) {
+  // Operator conflict check uses Dop (operator-time), not full machine time.
+  const slices = simulatePlacement({ duracion_estimada_min: Dop(act), duracion_margen_min: 0 }, opId, fecha, startMin);
+  if (slices.length === 0) return false;
+  for (const s of slices) {
+    const ranges = getManualRanges(act.id, opId, s.date);
+    for (const r of ranges) if (r.start < s.end && r.end > s.start) return false;
+  }
+  return true;
+}
+
+function findFreeManualSlot(act, opId, fechaFrom) {
+  const maxDays = 30;
+  let cd = fechaFrom;
+  for (let day = 0; day < maxDays; day++) {
+    const ranges = getManualRanges(act.id, opId, cd);
+    const dayStart = sS(opId), dayEnd = sE(opId, cd);
+    const candidates = new Set([dayStart]);
+    for (const r of ranges) { const c = r.end + GAP; if (c < dayEnd) candidates.add(c); }
+    const sorted = [...candidates].sort((a, b) => a - b);
+    for (const candidate of sorted) {
+      if (candidate >= dayEnd) continue;
+      if (isManualTimeValid(act, opId, cd, candidate)) return { fecha: cd, startMin: candidate };
+    }
+    cd = nwd(cd);
+  }
+  return null;
+}
+
+// ========== ALERT STACK ==========
+function pushAlert(type, opName, actName, conflicts, isBlocked) {
+  alertCounter++;
+  const id = 'alert-' + alertCounter;
+  const stack = document.getElementById('alert-stack');
+  const card = document.createElement('div');
+  card.className = 'alert-card alert-' + type;
+  card.id = id;
+  const conflictList = conflicts.map(c => '- ' + c.descripcion + ' \u2014 Ped. ' + (c.pedido_nro||'-') + ' \u2014 ' + mN(c.maquina_id) + ' (' + c.tipo + ')').join('<br>');
+  const title = isBlocked
+    ? '\u26A0 BLOQUEADO: ' + opName + ' ya tiene actividades manuales en este horario'
+    : '\u26A0 ' + opName + ' tiene otras actividades en este horario:';
+  card.innerHTML = '<div class="alert-x" onclick="closeAlert(\'' + id + '\')">&times;</div>' +
+    '<div class="alert-title">' + title + '</div>' +
+    '<div class="alert-body">' + conflictList + (isBlocked ? '<br><b>Movimiento cancelado</b>' : '') + '</div>';
+  stack.appendChild(card);
+  updateCloseAllBtn();
+}
+function updateCloseAllBtn() {
+  const stack = document.getElementById('alert-stack');
+  let btn = document.getElementById('alert-close-all-btn');
+  if (stack.querySelectorAll('.alert-card').length > 1) {
+    if (!btn) {
+      btn = document.createElement('button');
+      btn.id = 'alert-close-all-btn'; btn.className = 'alert-close-all';
+      btn.textContent = 'Cerrar todas'; btn.onclick = closeAllAlerts;
+      stack.appendChild(btn);
+    }
+  } else if (btn) btn.remove();
+}
+function closeAlert(id) { const el = document.getElementById(id); if (el) el.remove(); updateCloseAllBtn(); }
+function closeAllAlerts() {
+  const stack = document.getElementById('alert-stack');
+  stack.querySelectorAll('.alert-card').forEach(c => c.remove());
+  const btn = document.getElementById('alert-close-all-btn'); if (btn) btn.remove();
+}
+
+// ========== OP ALERT DIALOGS (gray/yellow/red) ==========
+// `effectiveOpId`: the operator that will end up owning this activity (may differ
+// from act.operario_id if the user is moving it to another operator).
+function showOpAlert(type, act, conflicts, onProceed, effectiveOpId) {
+  const targetOpId = effectiveOpId || act.operario_id;
+  if (type === 'yellow') {
+    // GRAY card: informational only
+    onProceed();
+    setTimeout(() => pushAlert('gray', opN(targetOpId), act.descripcion, conflicts), 500);
+    return;
+  }
+  if (type === 'red') {
+    // YELLOW dialog: confirm before placing
+    const bd = document.createElement('div'); bd.className = 'mo';
+    const m = document.createElement('div'); m.className = 'md';
+    const cList = conflicts.map(c => '<div style="margin:3px 0">• <b>' + c.descripcion + '</b> — Ped. ' + (c.pedido_nro||'-') + ' — ' + mN(c.maquina_id) + ' (' + c.tipo + ')</div>').join('');
+    m.innerHTML = '<div class="md-t" style="color:#9B7500">⚠ Advertencia de operario</div>' +
+      '<div style="font-size:13px;margin-bottom:12px;line-height:1.5"><b>' + opN(targetOpId) + '</b> ya tiene actividades simultaneas:</div>' +
+      '<div style="font-size:12px;margin-bottom:12px;padding:10px;background:#FFF8E1;border-radius:6px;border:1px solid #F9A825">' + cList + '</div>' +
+      '<div style="display:flex;gap:8px;justify-content:flex-end"><button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar movimiento</button>' +
+      '<button class="b" style="background:#FFF8E1;color:#9B7500;border-color:#F9A825;font-weight:600" id="op-conf-ok">Aceptar movimiento</button></div>';
+    bd.appendChild(m); document.body.appendChild(bd);
+    document.getElementById('op-conf-ok').onclick = () => {
+      bd.remove(); onProceed();
+      setTimeout(() => pushAlert('yellow', opN(targetOpId), act.descripcion, conflicts), 500);
+    };
+    return;
+  }
+  if (type === 'blocked') {
+    // RED dialog: blocked, offer alt time (multi-day search)
+    const cList = conflicts.map(c => '<div style="margin:3px 0">• <b>' + c.descripcion + '</b> — Ped. ' + (c.pedido_nro||'-') + ' — ' + mN(c.maquina_id) + ' <span style="color:#888">(' + c.tipo + ')</span></div>').join('');
+    const origFecha = act._pendingFecha || act.fecha;
+    const machId = act._pendingMachId || act.maquina_id;
+    const freeSlot = findFreeManualSlot(act, targetOpId, origFecha);
+    const hasSpace = freeSlot !== null;
+    const targetFecha = hasSpace ? freeSlot.fecha : origFecha;
+    const isOtherDay = hasSpace && freeSlot.fecha !== origFecha;
+    const fDate = ds => fDn(ds);
+    const freeDateLabel = hasSpace ? (isOtherDay ? fDate(freeSlot.fecha) + ' a las ' + mT(freeSlot.startMin) : mT(freeSlot.startMin)) : '';
+    const btnAltLabel = hasSpace ? (isOtherDay ? 'Setear el ' + freeDateLabel : 'Setear a las ' + mT(freeSlot.startMin)) : '';
+    const inputDayNote = isOtherDay ? ' <span style="color:#A32D2D;font-weight:600">(' + fDate(targetFecha) + ')</span>' : '';
+    const bd = document.createElement('div'); bd.className = 'mo';
+    const m = document.createElement('div'); m.className = 'md';
+    m.innerHTML = '<div class="md-t" style="color:#A32D2D">⚠ Movimiento bloqueado</div>' +
+      '<div style="font-size:13px;margin-bottom:12px;line-height:1.5"><b>' + opN(targetOpId) + '</b> ya tiene actividades manuales en este horario:</div>' +
+      '<div style="font-size:12px;margin-bottom:12px;padding:10px;background:#FEF0F0;border-radius:6px;border:1px solid #E24B4A">' + cList + '</div>' +
+      (hasSpace ? '<div style="font-size:12px;color:#5F5E5A;margin-bottom:8px">' +
+        (isOtherDay ? 'Proximo hueco disponible: <b>' + freeDateLabel + '</b>' : 'El operario queda libre a las <b>' + mT(freeSlot.startMin) + '</b>') + '</div>' : '') +
+      '<div style="margin-bottom:12px">' +
+        '<div style="font-size:11px;color:#888780;margin-bottom:5px">Setear hora de inicio manualmente:' + inputDayNote + '</div>' +
+        '<div style="display:flex;gap:8px;align-items:center">' +
+          '<input type="time" id="op-custom-time" value="' + (hasSpace ? mT(freeSlot.startMin).substring(0,5) : '') + '" step="600" style="padding:5px 8px;border:1px solid #C8C6BE;border-radius:4px;font-size:13px">' +
+          '<button class="b" style="background:#E6F1FB;color:#0C447C;border-color:#85B7EB;font-weight:600" id="op-custom-ok">Setear hora manual</button>' +
+        '</div>' +
+      '</div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">' +
+        '<button class="b" id="op-cancel-ok">Cancelar</button>' +
+        (hasSpace ? '<button class="b" style="background:#FEF0F0;color:#A32D2D;border-color:#E24B4A;font-weight:600" id="op-alt-ok">' + btnAltLabel + '</button>' : '') +
+      '</div>' +
+      '<div id="op-err" style="display:none;color:#A32D2D;font-size:12px;font-weight:600;margin-top:12px;text-align:center">Horario no permitido</div>';
+    bd.appendChild(m); document.body.appendChild(bd);
+    const errEl = document.getElementById('op-err');
+    const inputEl = document.getElementById('op-custom-time');
+    inputEl.addEventListener('input', () => { errEl.style.display = 'none'; });
+    document.getElementById('op-cancel-ok').onclick = () => bd.remove();
+    if (hasSpace) {
+      document.getElementById('op-alt-ok').onclick = () => {
+        bd.remove();
+        placeActWithCheck(act._pendingActId || act.id, machId, freeSlot.fecha, freeSlot.startMin, act._pendingNewOpId);
+      };
+    }
+    document.getElementById('op-custom-ok').onclick = () => {
+      const customTime = inputEl.value;
+      if (!customTime) { errEl.textContent = 'Ingrese una hora'; errEl.style.display = 'block'; return; }
+      const startMin = tM(customTime + ':00');
+      if (!isManualTimeValid(act, targetOpId, targetFecha, startMin)) {
+        errEl.textContent = 'Horario no permitido'; errEl.style.display = 'block'; return;
+      }
+      if (startMin < sS(targetOpId)) {
+        errEl.textContent = 'Horario fuera del turno del operario'; errEl.style.display = 'block'; return;
+      }
+      // Intermediate step: if this manual time overlaps with any other activity
+      // of this operator (even automaticas), show a cascade preview dialog first
+      const overlapping = findOverlappingActivitiesForOp(act.id, targetOpId, targetFecha, startMin, Dop(act));
+      if (overlapping.length > 0) {
+        bd.remove();
+        showCascadePreview(act, targetOpId, targetFecha, startMin, machId, overlapping, act._pendingNewOpId);
+      } else {
+        bd.remove();
+        placeActWithCheck(act._pendingActId || act.id, machId, targetFecha, startMin, act._pendingNewOpId);
+      }
+    };
+    return;
+  }
+}
+
+// ========== OPERATOR CASCADE HELPERS ==========
+// Find all activities of `opId` that overlap temporally with the new
+// activity (actId, fecha, startMin, dur). Returns array of act objects.
+// `dur` is the operator-time duration (Dop) of the incoming activity.
+// Used to detect what would need to be pushed when placing on a busy operator.
+function findOverlappingActivitiesForOp(actId, opId, fecha, startMin, dur) {
+  const overlapping = [];
+  if (!opId) return overlapping;
+  const endMin = startMin + dur;
+  acts.forEach(a => {
+    if (a.id === actId) return;
+    if (a.operario_id !== opId) return;
+    if (a.estado === 'sin_planificar') return;
+    // Walk a's slices using Dop(a): operator is only attached that long.
+    let rem = Dop(a), cd = a.fecha, ct = tM(a.hora_inicio), safe = 0;
+    while (rem > 0 && safe < 20) {
+      safe++;
+      const ds = sS(a.operario_id), de = sE(a.operario_id, cd);
+      if (ct < ds) ct = ds;
+      const av = de - ct;
+      if (av <= 0) { cd = nwd(cd); ct = sS(a.operario_id); continue; }
+      const used = Math.min(rem, av);
+      if (cd === fecha && ct < endMin && ct + used > startMin) {
+        overlapping.push(a); break;
+      }
+      if (cd > fecha) break;
+      rem -= used;
+      if (rem > 0) { cd = nwd(cd); ct = sS(a.operario_id); } else { ct += used; }
+    }
+  });
+  return overlapping;
+}
+
+// Intermediate dialog shown when the user picks a manual time that overlaps
+// with other activities of this operator. Lists the activities that would
+// move in the cascade and asks for confirmation.
+function showCascadePreview(act, targetOpId, targetFecha, startMin, machId, overlapping, newOpId) {
+  const bd = document.createElement('div'); bd.className = 'mo';
+  const m = document.createElement('div'); m.className = 'md';
+  const fDate = ds => fDn(ds);
+  const cList = overlapping.map(c => '<div style="margin:3px 0">• <b>' + c.descripcion + '</b> — Ped. ' + (c.pedido_nro||'-') + ' — ' + mN(c.maquina_id) + ' — ' + c.hora_inicio.substring(0,5) + '</div>').join('');
+  m.innerHTML = '<div class="md-t" style="color:#9B7500">⚠ Confirmar cascada</div>' +
+    '<div style="font-size:13px;margin-bottom:12px;line-height:1.5">Al setear <b>' + act.descripcion + '</b> a las <b>' + mT(startMin) + '</b> del <b>' + fDate(targetFecha) + '</b>, las siguientes actividades de <b>' + opN(targetOpId) + '</b> se moveran hacia adelante:</div>' +
+    '<div style="font-size:12px;margin-bottom:12px;padding:10px;background:#FFF8E1;border-radius:6px;border:1px solid #F9A825">' + cList + '</div>' +
+    '<div style="font-size:11px;color:#5F5E5A;margin-bottom:12px">Si alguna actividad desplazada queda en un horario donde su maquina esta ocupada, se mostrara otro aviso.</div>' +
+    '<div style="display:flex;gap:8px;justify-content:flex-end">' +
+      '<button class="b" id="cas-cancel">Cancelar</button>' +
+      '<button class="b" style="background:#FFF8E1;color:#9B7500;border-color:#F9A825;font-weight:600" id="cas-ok">Confirmar</button>' +
+    '</div>';
+  bd.appendChild(m); document.body.appendChild(bd);
+  document.getElementById('cas-cancel').onclick = () => bd.remove();
+  document.getElementById('cas-ok').onclick = () => {
+    bd.remove();
+    placeActWithCheck(act.id, machId, targetFecha, startMin, newOpId);
+  };
+}
+
+// Dry-run version of cascadeOverlapsForOperator. Returns a snapshot of the
+// operator's activities with all cascade pushes applied, WITHOUT touching
+// the actual data. Used to predict conflicts before executing the move.
+// `placedActId` is the activity being placed; `placedFecha`/`placedStart`
+// are its proposed values. If `placedActId` isn't currently owned by opId,
+// it's added to the snapshot (for the case where we're reassigning an act
+// from another operator).
+function simulateOpCascade(opId, placedActId, placedFecha, placedStart, placedMachId) {
+  if (!opId) return [];
+  // Clone activities of this operator (they're the only ones the cascade touches)
+  const snapshot = acts
+    .filter(a => a.operario_id === opId && a.estado !== 'sin_planificar' && a.fecha !== '1900-01-01' && a.id !== placedActId)
+    .map(a => ({ id: a.id, operario_id: a.operario_id, maquina_id: a.maquina_id, fecha: a.fecha, hora_inicio: a.hora_inicio, duracion_estimada_min: a.duracion_estimada_min, duracion_margen_min: a.duracion_margen_min, duracion_operario_min: a.duracion_operario_min, descripcion: a.descripcion, pedido_nro: a.pedido_nro, tipo: a.tipo }));
+  // Add the placed activity (pulling its other fields from the actual act)
+  const srcAct = acts.find(a => a.id === placedActId);
+  if (srcAct) {
+    snapshot.push({
+      id: placedActId, operario_id: opId,
+      maquina_id: placedMachId !== undefined ? placedMachId : srcAct.maquina_id,
+      fecha: placedFecha, hora_inicio: mT(placedStart),
+      duracion_estimada_min: srcAct.duracion_estimada_min, duracion_margen_min: srcAct.duracion_margen_min,
+      duracion_operario_min: srcAct.duracion_operario_min,
+      descripcion: srcAct.descripcion, pedido_nro: srcAct.pedido_nro, tipo: srcAct.tipo
+    });
+  }
+  // Run the cascade on the snapshot (same logic as cascadeOverlapsForOperator)
+  let iter = 0;
+  while (iter < 50) {
+    iter++;
+    snapshot.sort((a, b) => {
+      if (a.fecha < b.fecha) return -1;
+      if (a.fecha > b.fecha) return 1;
+      const td = tM(a.hora_inicio) - tM(b.hora_inicio);
+      if (td !== 0) return td;
+      if (a.id === placedActId) return -1;
+      if (b.id === placedActId) return 1;
+      return a.id - b.id;
+    });
+    let pushed = false;
+    for (let i = 0; i < snapshot.length - 1; i++) {
+      const A = snapshot[i], B = snapshot[i + 1];
+      // Operator cascade uses the MANUAL end: after A's setup finishes, the
+      // operator is free to start B even if A's machine is still running.
+      const endA = realEndOp(A);
+      const bDate = B.fecha, bTime = tM(B.hora_inicio);
+      let needsMove = false;
+      if (bDate < endA.date) needsMove = true;
+      else if (bDate === endA.date && bTime < endA.time + GAP) needsMove = true;
+      if (needsMove) {
+        let newDate = endA.date, newTime = endA.time + GAP;
+        const bShS = sS(opId);
+        if (newTime < bShS) newTime = bShS;
+        const bShE = sE(opId, newDate);
+        if (newTime >= bShE) { newDate = nwd(newDate); newTime = sS(opId); }
+        if (B.fecha !== newDate || B.hora_inicio !== mT(newTime)) {
+          B.fecha = newDate; B.hora_inicio = mT(newTime);
+          pushed = true;
+        }
+      }
+    }
+    if (!pushed) break;
+  }
+  return snapshot;
+}
+
+// Resolve overlaps within a single operator's timeline, pushing conflicts
+// forward. Walks the operator's activities in chronological order; whenever
+// two consecutive activities overlap, the later one is pushed after the
+// earlier one ends (+GAP), carrying into next days if needed.
+// `priorityActId` (optional): when two activities tie on fecha+hora_inicio,
+// this one wins the tie (goes first), ensuring it stays put while others
+// around it get cascaded.
+async function cascadeOverlapsForOperator(opId, undoBatch, priorityActId) {
+  if (!opId) return;
+  let iter = 0;
+  while (iter < 50) {
+    iter++;
+    const ownActs = acts.filter(a =>
+      a.operario_id === opId && a.estado !== 'sin_planificar' && a.fecha !== '1900-01-01'
+    ).sort((a, b) => {
+      if (a.fecha < b.fecha) return -1;
+      if (a.fecha > b.fecha) return 1;
+      const td = tM(a.hora_inicio) - tM(b.hora_inicio);
+      if (td !== 0) return td;
+      // Tiebreak: the priority activity (the one just placed by the user) goes first
+      if (priorityActId !== undefined) {
+        if (a.id === priorityActId) return -1;
+        if (b.id === priorityActId) return 1;
+      }
+      return a.id - b.id;
+    });
+    let pushedAny = false;
+    for (let i = 0; i < ownActs.length - 1; i++) {
+      const A = ownActs[i], B = ownActs[i + 1];
+      // Operator becomes free when the MANUAL portion ends (Dop-based end).
+      // For automaticas, the machine keeps running alone afterwards but the
+      // operator can already take B.
+      const endA = realEndOp(A);
+      const bDate = B.fecha, bTime = tM(B.hora_inicio);
+      let needsMove = false;
+      if (bDate < endA.date) needsMove = true;
+      else if (bDate === endA.date && bTime < endA.time + GAP) needsMove = true;
+      if (needsMove) {
+        let newDate = endA.date, newTime = endA.time + GAP;
+        const bShS = sS(opId);
+        if (newTime < bShS) newTime = bShS;
+        const bShE = sE(opId, newDate);
+        if (newTime >= bShE) { newDate = nwd(newDate); newTime = sS(opId); }
+        if (B.fecha !== newDate || B.hora_inicio !== mT(newTime)) {
+          const prev = { maquina_id: B.maquina_id, fecha: B.fecha, hora_inicio: B.hora_inicio, estado: B.estado, operario_id: B.operario_id };
+          if (!undoBatch.find(u => u.id === B.id)) undoBatch.push({ id: B.id, prev });
+          await sb.from('actividades_tablero').update({ fecha: newDate, hora_inicio: mT(newTime) }).eq('id', B.id);
+          B.fecha = newDate; B.hora_inicio = mT(newTime);
+          pushedAny = true;
+        }
+      }
+    }
+    if (!pushedAny) break;
+  }
+}
+
+// ========== PLACEMENT ==========
+// `newOpId` (optional): if set, changes act.operario_id as part of this
+// placement. Default = null = keep current operator.
+async function placeAct(actId, machId, fecha, startTime, newOpId) {
+  const act = acts.find(a => a.id === actId);
+  if (!act) return;
+  if (act.estado === 'completada') { toast('Actividad completada'); return; }
+  if (!canPlace(act, machId)) { toast('Maquina no permitida. Ideal: ' + mN(act.maquina_ideal_id)); return; }
+
+  const effectiveOpId = (newOpId !== undefined && newOpId !== null) ? newOpId : act.operario_id;
+  // Auto-adjust hora_inicio to the NEW operator's shift start if needed
+  const opStart = sS(effectiveOpId);
+  if (startTime < opStart) startTime = opStart;
+
+  // Capture prev state BEFORE any mutation (includes operario_id)
+  const prev = { maquina_id: act.maquina_id, fecha: act.fecha, hora_inicio: act.hora_inicio, estado: act.estado, operario_id: act.operario_id };
+  const ns = act.estado === 'sin_planificar' ? 'pendiente' : act.estado;
+  const undoBatch = [{ id: actId, prev }];
+
+  const updatePayload = { maquina_id: machId, fecha: fecha, hora_inicio: mT(startTime), estado: ns };
+  if (effectiveOpId !== act.operario_id) updatePayload.operario_id = effectiveOpId;
+  await sb.from('actividades_tablero').update(updatePayload).eq('id', actId);
+  act.maquina_id = machId; act.fecha = fecha; act.hora_inicio = mT(startTime); act.estado = ns;
+  if (effectiveOpId !== act.operario_id) act.operario_id = effectiveOpId;
+
+  // EXPLICIT PUSH: any activity on same machine+day that would overlap, gets pushed
+  const placedEnd = realEnd(act);
+  const sameCell = acts.filter(a =>
+    a.id !== actId && a.maquina_id === machId && a.estado !== 'sin_planificar' && a.fecha === fecha
+  ).sort((a, b) => tM(a.hora_inicio) - tM(b.hora_inicio));
+  // Track which operators were affected by the machine push (we need to run
+  // an operator-cascade for each, to avoid leaving overlaps within one operator)
+  const affectedOps = new Set();
+  affectedOps.add(effectiveOpId);
+  for (const other of sameCell) {
+    const otherStart = tM(other.hora_inicio);
+    if (other.fecha < placedEnd.date || (other.fecha === placedEnd.date && otherStart < placedEnd.time + GAP)) {
+      const otherEnd = otherStart + D(other);
+      if (otherEnd > startTime) {
+        const oPrev = { maquina_id: other.maquina_id, fecha: other.fecha, hora_inicio: other.hora_inicio, estado: other.estado, operario_id: other.operario_id };
+        if (!undoBatch.find(u => u.id === other.id)) undoBatch.push({ id: other.id, prev: oPrev });
+        let pushTime = placedEnd.time + GAP, pushDate = placedEnd.date;
+        const oShE = sE(other.operario_id, pushDate);
+        if (pushTime >= oShE) { pushDate = nwd(pushDate); pushTime = sS(other.operario_id); }
+        await sb.from('actividades_tablero').update({ fecha: pushDate, hora_inicio: mT(pushTime) }).eq('id', other.id);
+        other.fecha = pushDate; other.hora_inicio = mT(pushTime);
+        affectedOps.add(other.operario_id);
+      }
+    }
+  }
+
+  // OPERATOR CASCADE: for each operator that was affected (the inserted
+  // activity's operator + any operator whose activity was pushed by the
+  // machine cascade), resolve overlaps within that operator's timeline.
+  for (const opIdForCascade of affectedOps) {
+    await cascadeOverlapsForOperator(opIdForCascade, undoBatch, actId);
+  }
+
+  // MACHINE CASCADE AFTER OP CASCADE: any activity of OUR operator that was
+  // moved (including the newly placed one) may now collide on its machine
+  // with activities of OTHER operators. The user explicitly confirmed they
+  // want to cascade, so we push those other-op activities forward to clear
+  // the collision (instead of having globalResolve silently push OURS back).
+  const itemsToCheck = undoBatch.slice();  // snapshot: we may push more items later
+  for (const item of itemsToCheck) {
+    const A = acts.find(x => x.id === item.id);
+    if (!A || A.estado === 'sin_planificar' || A.fecha === '1900-01-01') continue;
+    let more = true;
+    let safety = 0;
+    while (more && safety < 10) {
+      safety++;
+      const confs = findMachineConflictsOtherOps(A.id, A.maquina_id, A.operario_id, A.fecha, tM(A.hora_inicio), D(A));
+      if (confs.length === 0) { more = false; break; }
+      more = false;
+      for (const C of confs) {
+        // Push C to just after A's realEnd + GAP
+        const endA = realEnd(A);
+        let newDate = endA.date, newTime = endA.time + GAP;
+        const cShS = sS(C.operario_id);
+        if (newTime < cShS) newTime = cShS;
+        const cShE = sE(C.operario_id, newDate);
+        if (newTime >= cShE) { newDate = nwd(newDate); newTime = sS(C.operario_id); }
+        if (C.fecha !== newDate || C.hora_inicio !== mT(newTime)) {
+          const cPrev = { maquina_id: C.maquina_id, fecha: C.fecha, hora_inicio: C.hora_inicio, estado: C.estado, operario_id: C.operario_id };
+          if (!undoBatch.find(u => u.id === C.id)) undoBatch.push({ id: C.id, prev: cPrev });
+          await sb.from('actividades_tablero').update({ fecha: newDate, hora_inicio: mT(newTime) }).eq('id', C.id);
+          C.fecha = newDate; C.hora_inicio = mT(newTime);
+          affectedOps.add(C.operario_id);
+          more = true;  // re-check A after this push (in case another conflict appears)
+        }
+      }
+    }
+  }
+
+  // Re-run operator cascade for any newly affected operators (the ones we just
+  // pushed out of the way), so their own timelines stay consistent.
+  for (const opIdForCascade of affectedOps) {
+    await cascadeOverlapsForOperator(opIdForCascade, undoBatch, actId);
+  }
+
+  await globalResolve(undoBatch, actId);
+  uStack.push(undoBatch); updU();
+  const casc = undoBatch.length - 1;
+  if (!suppressNextToast) {
+    let msg = act.descripcion + ' → ' + opN(act.operario_id) + ' ' + mT(startTime);
+    if (casc > 0) msg += ' (cascada: ' + casc + ' actividad' + (casc > 1 ? 'es' : '') + ' movida' + (casc > 1 ? 's' : '') + ')';
+    toast(msg);
+  }
+  suppressNextToast = false;
+  render();
+}
+
+function placeActWithCheck(actId, machId, fecha, startTime, newOpId, skipOpCheck) {
+  const act = acts.find(a => a.id === actId);
+  if (!act) return;
+  const effectiveOpId = (newOpId !== undefined && newOpId !== null) ? newOpId : act.operario_id;
+  if (!effectiveOpId) { placeAct(actId, machId, fecha, startTime, newOpId); return; }
+
+  // STEP 1: simulate the operator cascade that WOULD happen if we placed
+  // the activity here. Then check if ANY of the resulting positions (the
+  // placed activity itself + any cascaded ones) collides with another
+  // operator's machine usage. This catches the case where the placed act
+  // is fine but its cascade pushes another activity into a conflict.
+  const snapshot = simulateOpCascade(effectiveOpId, actId, fecha, startTime, machId);
+  const allMachConflicts = [];
+  const conflictSourceMap = new Map();  // conflictId → the sim act that caused it
+  for (const sim of snapshot) {
+    const orig = acts.find(a => a.id === sim.id);
+    const isPlaced = sim.id === actId;
+    const changed = !orig || orig.fecha !== sim.fecha || orig.hora_inicio !== sim.hora_inicio || orig.operario_id !== sim.operario_id || orig.maquina_id !== sim.maquina_id;
+    if (!isPlaced && !changed) continue;
+    const confs = findMachineConflictsOtherOps(sim.id, sim.maquina_id, sim.operario_id, sim.fecha, tM(sim.hora_inicio), D(sim));
+    confs.forEach(c => {
+      if (!allMachConflicts.find(x => x.id === c.id)) {
+        allMachConflicts.push(c);
+        conflictSourceMap.set(c.id, sim);
+      }
+    });
+  }
+  if (allMachConflicts.length > 0) {
+    console.log('[drop] placeActWithCheck: machine conflicts with other ops (incl. cascaded) = ' + allMachConflicts.length);
+    toast('[DBG] Conflicto de maquina (' + allMachConflicts.length + ') con otro operario');
+    showMachineConflictAlert(act, machId, fecha, startTime, allMachConflicts, newOpId, effectiveOpId, conflictSourceMap);
+    return;
+  }
+
+  // STEP 2: operator conflicts (skipped when dragging within same operator,
+  // since the user's intent is explicit).
+  if (skipOpCheck) {
+    console.log('[drop] placeActWithCheck: skipOpCheck=true, going to placeAct');
+    placeAct(actId, machId, fecha, startTime, newOpId);
+    return;
+  }
+  const conflicts = findOpConflicts(actId, effectiveOpId, machId, fecha, startTime, Dop(act));
+  const level = classifyOpConflict(act, conflicts);
+  console.log('[drop] placeActWithCheck: act=' + act.descripcion + ' op=' + opN(effectiveOpId) + ' mach=' + mN(machId) + ' fecha=' + fecha + ' start=' + mT(startTime) + ' → opConflicts=' + conflicts.length + ' level=' + level);
+  if (level === 'ok') {
+    placeAct(actId, machId, fecha, startTime, newOpId);
+  } else {
+    act._pendingFecha = fecha; act._pendingMachId = machId; act._pendingActId = actId; act._pendingNewOpId = newOpId;
+    if (level === 'yellow') toast('[DBG] Conflicto operario gris (' + conflicts.length + ') — se coloca igual');
+    if (level === 'red') toast('[DBG] Conflicto operario amarillo (' + conflicts.length + ') — pide confirmar');
+    if (level === 'blocked') toast('[DBG] Conflicto operario rojo (' + conflicts.length + ') — bloqueado');
+    showOpAlert(level, act, conflicts, () => { suppressNextToast = true; placeAct(actId, machId, fecha, startTime, newOpId); }, effectiveOpId);
+  }
+}
+
+// Dialog shown when the proposed placement conflicts with activities of
+// OTHER operators using the same machine. Gives the user the choice to:
+//   - Cancel the move
+//   - Accept the move (which will push the other operators' activities via cascade)
+//   - Try an alternative start time (next free slot on this machine+day)
+function showMachineConflictAlert(act, machId, fecha, startTime, conflicts, newOpId, effectiveOpId, conflictSourceMap) {
+  const bd = document.createElement('div'); bd.className = 'mo';
+  const m = document.createElement('div'); m.className = 'md';
+  const fDate = ds => fDn(ds);
+
+  // For each conflict, figure out which of OUR activities (the placed one or
+  // a cascaded one) actually collides with it, and show the overlap range.
+  const cList = conflicts.map(c => {
+    const source = conflictSourceMap ? conflictSourceMap.get(c.id) : null;
+    // `source` is the simulated "our" activity that collides with c. If not
+    // provided (legacy path), default to the placed activity's slices.
+    const ourSlices = source
+      ? simulatePlacement({ duracion_estimada_min: D(source), duracion_margen_min: 0 }, source.operario_id, source.fecha, tM(source.hora_inicio))
+      : simulatePlacement({ duracion_estimada_min: D(act), duracion_margen_min: 0 }, effectiveOpId, fecha, startTime);
+    // Walk c's own slices and find the one that overlaps ours
+    let matched = null;
+    let rem = D(c), cd = c.fecha, ct = tM(c.hora_inicio), safe = 0;
+    while (rem > 0 && safe < 20 && !matched) {
+      safe++;
+      const ds = sS(c.operario_id), de = sE(c.operario_id, cd);
+      if (ct < ds) ct = ds;
+      const av = de - ct;
+      if (av <= 0) { cd = nwd(cd); ct = sS(c.operario_id); continue; }
+      const used = Math.min(rem, av);
+      for (const s of ourSlices) {
+        if (cd === s.date && ct < s.end && ct + used > s.start) {
+          matched = { date: cd, start: ct, end: ct + used };
+          break;
+        }
+      }
+      if (!matched) { rem -= used; if (rem > 0) { cd = nwd(cd); ct = sS(c.operario_id); } else { ct += used; } }
+    }
+    const rangeLabel = matched
+      ? (matched.date !== fecha ? fDate(matched.date) + ' ' : '') + mT(matched.start) + '-' + mT(matched.end)
+      : c.hora_inicio.substring(0, 5);
+    // Hint about which of OUR activities is causing the collision (in case it's
+    // a cascaded one, not the one the user dragged).
+    const sourceLabel = source && source.id !== act.id
+      ? ' <span style="color:#5F5E5A;font-size:11px">(colisiona con <b>' + source.descripcion + '</b> por cascada)</span>'
+      : '';
+    return '<div style="margin:3px 0">• <b>' + c.descripcion + '</b> — Ped. ' + (c.pedido_nro||'-') + ' — <b>' + opN(c.operario_id) + '</b> — ' + rangeLabel + ' (' + c.tipo + ')' + sourceLabel + '</div>';
+  }).join('');
+
+  // Find an alternative start time where the full multi-day expansion of the
+  // incoming activity has NO conflicts: neither machine conflicts with other
+  // operators, NOR operator conflicts (i.e. the operator's own activities).
+  // This gives the "slot where nothing needs to move" — the most conservative
+  // alternative the system can offer.
+  function findAltStart() {
+    const maxDays = 60;
+    let cd = fecha;
+    let cand = startTime;
+    for (let dayIter = 0; dayIter < maxDays; dayIter++) {
+      const dayEnd = sE(effectiveOpId, cd);
+      const dayStart = sS(effectiveOpId);
+      if (cand < dayStart) cand = dayStart;
+      let safety = 0;
+      while (cand < dayEnd && safety < 100) {
+        safety++;
+        const testSlices = simulatePlacement({ duracion_estimada_min: D(act), duracion_margen_min: 0 }, effectiveOpId, cd, cand);
+        if (testSlices.length === 0) break;
+        // Find the earliest collision across all slices, considering both:
+        //   (a) machine blocks of OTHER operators
+        //   (b) any activities of the operator himself
+        let earliestBlockEnd = null;  // time after which candidate can retry
+        let earliestBlockDate = null;
+        for (const s of testSlices) {
+          const machBlocksOther = dayBlocks(machId, s.date, act.id)
+            .filter(b => b.act.operario_id !== effectiveOpId);
+          const opBlocksSelf = dayBlocksForOp(effectiveOpId, s.date, act.id);
+          const allBlocks = [...machBlocksOther, ...opBlocksSelf];
+          for (const b of allBlocks) {
+            if (b.s < s.end && b.e > s.start) {
+              if (!earliestBlockDate
+                  || s.date < earliestBlockDate
+                  || (s.date === earliestBlockDate && b.e < earliestBlockEnd)) {
+                earliestBlockDate = s.date; earliestBlockEnd = b.e;
+              }
+            }
+          }
+          if (earliestBlockDate) break;  // first slice with collision defines the retry point
+        }
+        if (!earliestBlockDate) return { fecha: cd, startMin: cand };
+        // Retry after the blocking activity ends + GAP
+        if (earliestBlockDate === cd) {
+          cand = earliestBlockEnd + GAP;
+        } else {
+          // Collision on a later day: jump the cursor there
+          cd = earliestBlockDate;
+          cand = earliestBlockEnd + GAP;
+        }
+      }
+      // Nothing on this day fit — move to next
+      cd = nwd(cd); cand = sS(effectiveOpId);
+    }
+    return null;
+  }
+
+  const alt = findAltStart();
+  const canAlt = alt !== null && !(alt.fecha === fecha && alt.startMin === startTime);
+  const altLabel = canAlt
+    ? (alt.fecha !== fecha ? 'Setear el ' + fDate(alt.fecha) + ' a las ' + mT(alt.startMin) : 'Setear a las ' + mT(alt.startMin))
+    : '';
+
+  // Collect unique machine names from the actual conflicts (not the placed act,
+  // since a conflict may come from a cascaded activity with a different machine).
+  const conflictMachIds = [...new Set(conflicts.map(c => c.maquina_id))];
+  const machineLabel = conflictMachIds.length === 1
+    ? 'La <b>' + mN(conflictMachIds[0]) + '</b>'
+    : 'Las maquinas <b>' + conflictMachIds.map(id => mN(id)).join(', ') + '</b>';
+
+  m.innerHTML = '<div class="md-t" style="color:#A32D2D">⚠ Maquina ocupada por otro operario</div>' +
+    '<div style="font-size:13px;margin-bottom:12px;line-height:1.5">' + machineLabel + ' ya esta siendo usada por:</div>' +
+    '<div style="font-size:12px;margin-bottom:12px;padding:10px;background:#FEF0F0;border-radius:6px;border:1px solid #E24B4A">' + cList + '</div>' +
+    '<div style="font-size:11px;color:#5F5E5A;margin-bottom:12px">Si confirmas, las actividades afectadas seran movidas hacia adelante (con sus propias cascadas en sus operarios).</div>' +
+    '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+      '<button class="b" id="mc-cancel">Cancelar</button>' +
+      (canAlt ? '<button class="b" id="mc-alt">' + altLabel + '</button>' : '') +
+      '<button class="b" style="background:#FEF0F0;color:#A32D2D;border-color:#E24B4A;font-weight:600" id="mc-confirm">Confirmar con cascada</button>' +
+    '</div>';
+  bd.appendChild(m); document.body.appendChild(bd);
+  document.getElementById('mc-cancel').onclick = () => bd.remove();
+  document.getElementById('mc-confirm').onclick = () => {
+    bd.remove();
+    placeAct(act.id, machId, fecha, startTime, newOpId);
+  };
+  if (canAlt) {
+    document.getElementById('mc-alt').onclick = () => {
+      bd.remove();
+      placeActWithCheck(act.id, machId, alt.fecha, alt.startMin, newOpId);
+    };
+  }
+}
+
+// ========== MOVE (operator board specific) ==========
+// In the operator board, drag & drop:
+//   - Keeps the SAME machine (machine is NOT a column here)
+//   - Changes the operator (target column)
+//   - Changes hora_inicio (based on X position of the drop)
+// All three mutations are bundled into placeAct so undo restores the whole set.
+async function moveActOp(actId, newOpId, fecha, dropMin) {
+  const act = acts.find(a => a.id === actId);
+  if (!act) { toast('[DBG] Actividad no encontrada'); return; }
+  if (!act.maquina_id) { toast('[DBG] Actividad sin maquina asignada'); return; }
+  const fromOp = opN(act.operario_id), toOp = opN(newOpId);
+  const fromDate = act.fecha, fromTime = act.hora_inicio;
+  console.log('[drop] moveActOp: ' + act.descripcion + ' | from ' + fromOp + ' ' + fromDate + ' ' + fromTime + ' → to ' + toOp + ' ' + fecha + ' dropMin=' + mT(dropMin) + ' (mach=' + mN(act.maquina_id) + ')');
+
+  // Snap start time using the OPERATOR's timeline (5-case drop logic).
+  // The operator board's "columns" are operators, so the insertion slot
+  // must respect the operator's existing activities, not the machine's.
+  const rawStart = calcInsertTimeForOp(newOpId, fecha, dropMin, actId);
+  let startTime = rawStart;
+  // Ensure it's within the NEW operator's shift
+  const opStart = sS(newOpId);
+  if (startTime < opStart) startTime = opStart;
+  // Detect no-op movements (same op, same date, ≤1min delta)
+  if (act.operario_id === newOpId && fromDate === fecha && Math.abs(tM(fromTime) - startTime) < 2) {
+    toast('[DBG] Sin cambios — misma posicion');
+    return;
+  }
+  console.log('[drop] calcInsertTimeForOp returned=' + mT(rawStart) + ' adjusted=' + mT(startTime));
+  // If dragging within the SAME operator's column, the user's intent is
+  // explicit: they want to reorder within this operator's timeline. Skip
+  // the operator-conflict dialog (it would block obvious valid rearrangements
+  // because of the 2-manuals-blocked rule). Machine conflicts with OTHER
+  // operators are still checked inside placeActWithCheck.
+  const skipOpCheck = act.operario_id === newOpId;
+  placeActWithCheck(actId, act.maquina_id, fecha, startTime, newOpId, skipOpCheck);
+}
+
+// ========== UNDO ==========
+async function undo() {
+  if (!uStack.length) return;
+  const batch = uStack.pop();
+  for (const a of batch) {
+    const updateObj = { maquina_id: a.prev.maquina_id, fecha: a.prev.fecha, hora_inicio: a.prev.hora_inicio, estado: a.prev.estado };
+    if (a.prev.operario_id !== undefined) updateObj.operario_id = a.prev.operario_id;
+    if (a.prev.urgencia !== undefined) updateObj.urgencia = a.prev.urgencia;
+    if (a.prev.duracion_operario_min !== undefined) updateObj.duracion_operario_min = a.prev.duracion_operario_min;
+    await sb.from('actividades_tablero').update(updateObj).eq('id', a.id);
+    const act = acts.find(x => x.id === a.id); if (act) Object.assign(act, a.prev);
+  }
+  toast('Deshechos ' + batch.length + ' cambio(s)'); updU(); render();
+}
+
+// ========== TRACK ASSIGNMENT (stable across multi-day activities) ==========
+// Assigns each block to a vertical "track". Activities that span multiple days
+// keep the SAME track on all their parts — so a block that starts "below"
+// stays below in every day it appears.
+//
+// Algorithm:
+//   1. Group blocks by operator
+//   2. For each operator, process days in chronological order
+//   3. For each day:
+//      a. Pass 1: blocks whose activity already has a remembered track (from a
+//         previous day) reclaim that track
+//      b. Pass 2: blocks of new activities get the lowest free track that isn't
+//         occupied at their start time
+//
+// Returns: map of "date|opId" -> maxStack for that operator-day cell.
+function assignTracksAcrossDays(vBlocks) {
+  // Group by operator
+  const byOp = {};
+  vBlocks.forEach(b => {
+    const opId = b.act.operario_id;
+    if (!byOp[opId]) byOp[opId] = [];
+    byOp[opId].push(b);
+  });
+
+  const maxStackByDayOp = {};
+
+  Object.keys(byOp).forEach(opId => {
+    // Remembered track per actId (persists across days for this operator)
+    const actTrack = {};
+    // Dates this operator has blocks on, in chronological order
+    const dates = [...new Set(byOp[opId].map(b => b.date))].sort();
+
+    dates.forEach(date => {
+      const dayBlocks = byOp[opId]
+        .filter(b => b.date === date)
+        .sort((a, b) => a.startMin - b.startMin || a.actId - b.actId);
+
+      // trackEnds[i] = endMin of last assignment to track i (on this day)
+      const trackEnds = [];
+
+      // Pass 1: blocks whose activity already has a track from a previous day
+      dayBlocks.forEach(b => {
+        if (actTrack[b.actId] !== undefined) {
+          b.track = actTrack[b.actId];
+          while (trackEnds.length <= b.track) trackEnds.push(0);
+          trackEnds[b.track] = Math.max(trackEnds[b.track], b.startMin + b.dur);
+        }
+      });
+
+      // Pass 2a: MANUAL activities always go to track 0 (upper row)
+      dayBlocks.forEach(b => {
+        if (b.track !== undefined) return;
+        if (!b.act || b.act.tipo === 'automatica') return;
+        b.track = 0;
+        actTrack[b.actId] = 0;
+        while (trackEnds.length <= 0) trackEnds.push(0);
+        trackEnds[0] = Math.max(trackEnds[0], b.startMin + b.dur);
+      });
+
+      // Pass 2b: AUTOMATICAS go to tracks ≥ 1. Sorted by start time ascending,
+      // so earlier-starting automaticas take lower tracks (middle), later ones
+      // go further down. Multi-day consistency is preserved by Pass 1.
+      const autoBlocks = dayBlocks
+        .filter(b => b.track === undefined && b.act && b.act.tipo === 'automatica')
+        .sort((a, b) => a.startMin - b.startMin || a.actId - b.actId);
+      autoBlocks.forEach(b => {
+        let t = 1;
+        while (trackEnds.length > t && trackEnds[t] > b.startMin) t++;
+        b.track = t;
+        actTrack[b.actId] = t;
+        while (trackEnds.length <= t) trackEnds.push(0);
+        trackEnds[t] = Math.max(trackEnds[t], b.startMin + b.dur);
+      });
+
+      // Fallback (edge case): any block without a track yet — lowest free
+      dayBlocks.forEach(b => {
+        if (b.track !== undefined) return;
+        let t = 0;
+        while (t < trackEnds.length && trackEnds[t] > b.startMin) t++;
+        b.track = t;
+        actTrack[b.actId] = t;
+        while (trackEnds.length <= t) trackEnds.push(0);
+        trackEnds[t] = Math.max(trackEnds[t], b.startMin + b.dur);
+      });
+
+      maxStackByDayOp[date + '|' + opId] = trackEnds.length;
+    });
+  });
+
+  return maxStackByDayOp;
+}
+
+// ========== RENDER ==========
+function render() {
+  const board = document.getElementById('bd');
+  const days = getDays();
+  const vBlocks = computeVB();
+
+  // Resolve operator IDs (silently skip any name missing from DB)
+  const colOps = OP_ORDER.map(name => ({ name, id: opI(name) })).filter(o => o.id !== null);
+
+  // Assign tracks ONCE across all days so multi-day activities keep their track
+  const maxStackByDayOp = assignTracksAcrossDays(vBlocks);
+
+  board.style.gridTemplateColumns = '80px repeat(' + colOps.length + ',400px)';
+  board.innerHTML = '';
+  board.appendChild(Object.assign(document.createElement('div'), { className: 'hc', textContent: '6h -> 17h' }));
+  colOps.forEach(co => {
+    const h = document.createElement('div'); h.className = 'ho';
+    h.textContent = co.name;
+    h.style.borderBottom = '3px solid ' + opC(co.id);
+    board.appendChild(h);
+  });
+
+  days.forEach((day, di) => {
+    const dk = dK(day.date), isAlt = di % 2 === 1, isSat = day.date.getDay() === 6;
+
+    // Collect per-operator data for this day
+    const perOp = {};
+    colOps.forEach(co => {
+      const opBlocks = vBlocks.filter(b => b.date === dk && b.act.operario_id === co.id);
+      const maxStack = maxStackByDayOp[dk + '|' + co.id] || 0;
+      perOp[co.id] = { blocks: opBlocks, maxStack };
+    });
+
+    // Row height rule: ALWAYS 2 blocks tall (180px). When an operator has 3+
+    // simultaneous activities, the blocks COMPRESS inside the same row height
+    // — the row does not grow.
+    const rowHeight = DAY_MIN_HEIGHT * 2;
+    // Compensate for border-bottom that eats into content area (box-sizing).
+    // Normal days: 2px black border. Saturday: 8px week separator.
+    const cellPixelHeight = rowHeight + (isSat ? 8 : 2);
+
+    // Day header (sticky left column)
+    const dh = document.createElement('div'); dh.className = 'hr';
+    if (day.type === 'today') dh.classList.add('td');
+    if (day.type === 'past') dh.classList.add('ps');
+    if (isSat) dh.classList.add('wk-sep');
+    dh.style.minHeight = cellPixelHeight + 'px';
+    dh.appendChild(Object.assign(document.createElement('div'), { textContent: fD(day.date) }));
+    const dn = document.createElement('div'); dn.className = 'hr-n';
+    dn.textContent = day.type === 'today' ? 'hoy' : day.type === 'past' ? 'ayer' : '';
+    dh.appendChild(dn);
+    const vacs = getVacaciones(dk);
+    if (vacs.length) {
+      const vw = document.createElement('div');
+      vw.style.cssText = 'position:absolute;right:0;top:0;bottom:0;display:flex';
+      vacs.forEach(v => {
+        const vb2 = document.createElement('div');
+        vb2.style.cssText = 'width:14px;height:100%;display:flex;align-items:center;justify-content:center;writing-mode:vertical-rl;font-size:7px;font-weight:600;color:#fff;letter-spacing:0.3px;background:' + v.color;
+        vb2.textContent = v.nombre;
+        vw.appendChild(vb2);
+      });
+      dh.style.position = 'relative'; dh.style.paddingRight = (14 * vacs.length + 8) + 'px';
+      dh.appendChild(vw);
+    }
+    board.appendChild(dh);
+
+    // One cell per operator
+    colOps.forEach(co => {
+      const cell = document.createElement('div'); cell.className = 'cl';
+      if (day.type === 'past') cell.classList.add('ps');
+      if (day.type === 'today') cell.classList.add('td');
+      if (isAlt) cell.classList.add('ra');
+      if (isSat) cell.classList.add('wk-sep');
+      cell.style.height = cellPixelHeight + 'px';
+      cell.dataset.opId = co.id; cell.dataset.date = dk;
+      cell.appendChild(Object.assign(document.createElement('div'), { className: 'nl' }));
+      if (isSat) cell.appendChild(Object.assign(document.createElement('div'), { className: 'sg' }));
+
+      // DRAG & DROP: cell is the drop target
+      cell.addEventListener('dragover', e => { e.preventDefault(); cell.classList.add('dov'); });
+      cell.addEventListener('dragleave', () => cell.classList.remove('dov'));
+      cell.addEventListener('drop', e => {
+        e.preventDefault(); cell.classList.remove('dov');
+        if (!dragD) return;
+        const rect = cell.getBoundingClientRect();
+        const dropMin = Math.round(360 + (e.clientX - rect.left) / rect.width * 660);
+        const targetOpId = parseInt(cell.dataset.opId);
+        moveActOp(dragD.actId, targetOpId, dk, dropMin);
+        dragD = null;
+      });
+
+      const data = perOp[co.id];
+      if (data.maxStack > 0) {
+        // Per-operator effective stack: never less than 2 (so a single block
+        // shows at half cell height, not full), but at least as tall as needed.
+        const effectiveOpStack = Math.max(2, data.maxStack);
+        const blockH = rowHeight / effectiveOpStack;
+        data.blocks.forEach(bl => {
+          const act = bl.act;
+          const block = document.createElement('div'); block.className = 'bk';
+          block.classList.add(act.urgencia === 'urgente' ? 'bk-u' : act.urgencia === 'alta' ? 'bk-a' : act.urgencia === 'media' ? 'bk-m' : 'bk-b');
+          if (act.estado === 'completada') block.classList.add('bk-d');
+          block.style.borderColor = machColor(act.maquina_id);
+
+          block.style.left = 'calc(' + pL(bl.startMin) + '% + 1px)';
+          block.style.width = 'calc(' + Math.min(pW(bl.dur), 100 - pL(bl.startMin)) + '%)';
+          block.style.top = (bl.track * blockH + 2) + 'px';
+          block.style.height = (blockH - 4) + 'px';
+
+          // DRAG: block is the drag source
+          block.draggable = act.estado !== 'completada';
+          block.addEventListener('dragstart', e => {
+            dragD = { actId: act.id }; block.classList.add('dg');
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', String(act.id));
+          });
+          block.addEventListener('dragend', () => {
+            block.classList.remove('dg');
+            document.querySelectorAll('.dov').forEach(c => c.classList.remove('dov'));
+          });
+
+          block.addEventListener('click', e => { e.stopPropagation(); hideTip(); showEdit(act, bl); });
+          let tt; block.addEventListener('mouseenter', e => { tt = setTimeout(() => showTip(e, act, bl), 800); });
+          block.addEventListener('mouseleave', () => { clearTimeout(tt); hideTip(); });
+          block.addEventListener('mousemove', e => { if (tipEl) { tipEl.style.left = Math.min(e.clientX + 12, window.innerWidth - 290) + 'px'; tipEl.style.top = (e.clientY + 16) + 'px'; } });
+
+          const bE = bl.startMin + bl.dur;
+          const foto = act.foto_url || act.foto_proyecto_url;
+          const showPhoto = bl.dur >= 150 && blockH >= 56 && foto;
+
+          if (showPhoto) {
+            block.style.flexDirection = 'row';
+            block.style.alignItems = 'stretch';
+            block.style.gap = '3px';
+            block.style.justifyContent = 'flex-start';
+          }
+
+          const tx = document.createElement('div');
+          tx.style.cssText = 'display:flex;flex-direction:column;justify-content:center;overflow:hidden' + (showPhoto ? ';flex:1;min-width:0' : '');
+          tx.appendChild(Object.assign(document.createElement('div'), { className: 'bt', textContent: act.descripcion }));
+          tx.appendChild(Object.assign(document.createElement('div'), { className: 'bs', textContent: clN(act.cliente_id) }));
+          tx.appendChild(Object.assign(document.createElement('div'), { className: 'bm', textContent: mT(bl.startMin) + '-' + mT(bE) }));
+          // Show machine name only when machine is "Otra" (there's no column that identifies it)
+          if (mN(act.maquina_id) === 'Otra') {
+            const mq = document.createElement('div'); mq.className = 'bma';
+            const idealName = act.maquina_ideal_id ? mN(act.maquina_ideal_id) : null;
+            mq.textContent = (idealName && idealName !== 'Otra') ? idealName : 'Otra';
+            tx.appendChild(mq);
+          }
+          if (act.pedido_nro) {
+            const ped = document.createElement('div');
+            ped.style.cssText = 'font-size:9px;font-weight:700;color:inherit;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+            ped.textContent = 'Ped. ' + act.pedido_nro;
+            tx.appendChild(ped);
+          }
+          // Part badge (N/M) — top right corner, shown when activity spans multiple blocks
+          if (bl.totalParts > 1) {
+            const pb = document.createElement('div');
+            pb.style.cssText = 'position:absolute;top:2px;right:3px;background:rgba(0,0,0,.65);color:#fff;font-size:8px;font-weight:700;padding:1px 4px;border-radius:3px;line-height:1.2';
+            pb.textContent = bl.part + '/' + bl.totalParts;
+            block.appendChild(pb);
+          }
+          if (act.tipo === 'automatica') {
+            const ai = document.createElement('div'); ai.className = 'ba';
+            ai.textContent = 'A';
+            if (bl.totalParts > 1) ai.style.right = '30px';
+            tx.appendChild(ai);
+          }
+          block.appendChild(tx);
+
+          // AUTOMATICA: split the block into "setup" (solid) vs "machine-alone"
+          // (diagonal stripes). Computed per-block so multi-day automaticas
+          // handle each slice correctly.
+          if (act.tipo === 'automatica') {
+            // Figure out how much of THIS visible block is setup (manual) vs
+            // machine-alone. We walk the activity's slices up to this block's
+            // `.part` and track how many setup-minutes we've "used" so far.
+            const setupTotal = Dop(act);
+            let setupUsedBefore = 0;
+            let setupInThisBlock = 0;
+            let rem = D(act), cd = act.fecha, ct = tM(act.hora_inicio), partIdx = 0, safe = 0;
+            while (rem > 0 && safe < 30) {
+              safe++;
+              const ds = sS(act.operario_id), de = sE(act.operario_id, cd);
+              if (ct < ds) ct = ds;
+              const av = de - ct;
+              if (av <= 0) { cd = nwd(cd); ct = sS(act.operario_id); continue; }
+              const used = Math.min(rem, av);
+              partIdx++;
+              if (partIdx === bl.part) {
+                const remainingSetup = Math.max(0, setupTotal - setupUsedBefore);
+                setupInThisBlock = Math.min(remainingSetup, used);
+                break;
+              }
+              const remainingSetup = Math.max(0, setupTotal - setupUsedBefore);
+              setupUsedBefore += Math.min(remainingSetup, used);
+              rem -= used;
+              if (rem > 0) { cd = nwd(cd); ct = sS(act.operario_id); } else { ct += used; }
+            }
+            if (setupInThisBlock < bl.dur) {
+              const setupPct = (setupInThisBlock / bl.dur) * 100;
+              // Diagonal-stripe overlay for the machine-alone portion
+              const overlay = document.createElement('div');
+              overlay.style.cssText = 'position:absolute;top:0;bottom:0;left:' + setupPct.toFixed(3) + '%;right:0;' +
+                'background:repeating-linear-gradient(135deg,rgba(0,0,0,.08) 0 6px,rgba(0,0,0,0) 6px 12px);' +
+                'pointer-events:none;border-radius:0 4px 4px 0;z-index:1';
+              block.appendChild(overlay);
+              // Vertical separator line at the setup/machine boundary
+              if (setupInThisBlock > 0) {
+                const sep = document.createElement('div');
+                sep.style.cssText = 'position:absolute;top:0;bottom:0;left:' + setupPct.toFixed(3) + '%;' +
+                  'width:2px;background:rgba(0,0,0,.55);pointer-events:none;z-index:2';
+                block.appendChild(sep);
+                // Vertical "MANUAL" label inside the setup zone — one letter per line.
+                // Shown ONLY if the setup width in PIXELS can fit 6 stacked letters
+                // (roughly 60px tall); otherwise hidden to avoid overlap with the
+                // machine-alone stripes.
+                const blockWidthPx = (Math.min(pW(bl.dur), 100 - pL(bl.startMin)) / 100) * 400;  // col width=400px
+                const setupWidthPx = blockWidthPx * (setupInThisBlock / bl.dur);
+                const blockHeightPx = blockH - 4;
+                const canFit = setupWidthPx >= 12 && blockHeightPx >= 56;
+                if (canFit) {
+                  const lbl = document.createElement('div');
+                  lbl.textContent = 'MANUAL';
+                  lbl.style.cssText = 'position:absolute;top:2px;left:0;' +
+                    'width:' + setupPct.toFixed(3) + '%;' +
+                    'display:flex;flex-direction:column;align-items:center;' +
+                    'font-size:9px;font-weight:800;letter-spacing:0;' +
+                    'color:rgba(0,0,0,.85);line-height:1;pointer-events:none;' +
+                    'writing-mode:vertical-rl;text-orientation:upright;' +
+                    'z-index:2;user-select:none';
+                  block.appendChild(lbl);
+                }
+                // Shift the tx container so the description/client/order info
+                // starts to the RIGHT of the separator, not overlapping setup zone.
+                tx.style.paddingLeft = 'calc(' + setupPct.toFixed(3) + '% + 6px)';
+              }
+            }
+          }
+
+          if (showPhoto) {
+            const img = document.createElement('img');
+            img.src = foto;
+            img.style.cssText = 'width:35px;object-fit:cover;border-radius:2px;flex-shrink:0;align-self:stretch';
+            img.onerror = function() { this.style.display = 'none' };
+            block.appendChild(img);
+          }
+          cell.appendChild(block);
+        });
+
+        // GHOST BLOCKS: for each automatica in this cell, render a non-interactive
+        // "ghost" in the upper row (track 0) spanning its setup portion. Visually
+        // signals that the operator IS busy during setup even though the real
+        // block sits on the lower row. Not draggable, not clickable.
+        data.blocks.forEach(bl => {
+          const act = bl.act;
+          if (act.tipo !== 'automatica') return;
+          if (bl.track === 0) return;  // real block already sits on top row (no ghost needed)
+          // Compute setup minutes that fall within THIS visible block
+          const setupTotal = Dop(act);
+          let setupUsedBefore = 0;
+          let setupInThisBlock = 0;
+          let rem = D(act), cd = act.fecha, ct = tM(act.hora_inicio), partIdx = 0, safe = 0;
+          while (rem > 0 && safe < 30) {
+            safe++;
+            const ds = sS(act.operario_id), de = sE(act.operario_id, cd);
+            if (ct < ds) ct = ds;
+            const av = de - ct;
+            if (av <= 0) { cd = nwd(cd); ct = sS(act.operario_id); continue; }
+            const used = Math.min(rem, av);
+            partIdx++;
+            if (partIdx === bl.part) {
+              const remainingSetup = Math.max(0, setupTotal - setupUsedBefore);
+              setupInThisBlock = Math.min(remainingSetup, used);
+              break;
+            }
+            const remainingSetup = Math.max(0, setupTotal - setupUsedBefore);
+            setupUsedBefore += Math.min(remainingSetup, used);
+            rem -= used;
+            if (rem > 0) { cd = nwd(cd); ct = sS(act.operario_id); } else { ct += used; }
+          }
+          if (setupInThisBlock <= 0) return;  // no setup in this slice (already past setup)
+
+          const ghost = document.createElement('div');
+          ghost.className = 'bk';
+          ghost.style.cssText =
+            'position:absolute;left:calc(' + pL(bl.startMin) + '% + 1px);' +
+            'width:calc(' + Math.min(pW(setupInThisBlock), 100 - pL(bl.startMin)) + '%);' +
+            'top:2px;height:' + (blockH - 4) + 'px;' +
+            'background:repeating-linear-gradient(135deg,rgba(128,128,128,.22) 0 6px,rgba(200,200,200,.12) 6px 12px);' +
+            'border:1px dashed rgba(0,0,0,.35);border-radius:4px;' +
+            'cursor:default;pointer-events:auto;' +
+            'display:flex;align-items:center;justify-content:center;gap:4px;' +
+            'font-size:10px;color:#5F5E5A;font-weight:600;overflow:hidden;padding:0 6px';
+          ghost.title = 'Setup de ' + act.descripcion + (act.pedido_nro ? ' (Ped. ' + act.pedido_nro + ')' : '') + '. Editar desde el bloque real abajo.';
+          // Lock icon + short label (description, truncated)
+          const icon = document.createElement('span');
+          icon.textContent = '🔒';
+          icon.style.cssText = 'font-size:10px;flex-shrink:0';
+          ghost.appendChild(icon);
+          const lbl = document.createElement('span');
+          lbl.textContent = act.descripcion + (act.pedido_nro ? ' — Ped. ' + act.pedido_nro : '');
+          lbl.style.cssText = 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+          ghost.appendChild(lbl);
+          cell.appendChild(ghost);
+        });
+      }
+
+      // "+" button: opens assign selector for this operator+day
+      const ab = document.createElement('div'); ab.className = 'ab';
+      ab.textContent = '+';
+      ab.title = 'Asignar actividad';
+      ab.addEventListener('click', e => {
+        e.stopPropagation();
+        showOpSelector(co.id, co.name, dk);
+      });
+      cell.appendChild(ab);
+
+      board.appendChild(cell);
+    });
+  });
+}
+
+// ========== TOOLTIP ==========
+function showTip(e, act, bl) {
+  hideTip();
+  const bE = bl.startMin + bl.dur;
+  const tot = D(act);
+  const el = document.createElement('div'); el.className = 'tip';
+  el.innerHTML =
+    '<div style="font-weight:700;font-size:12px;margin-bottom:6px">' + act.descripcion + '</div>' +
+    '<div>' + clN(act.cliente_id) + (act.pedido_nro ? ' - Ped. ' + act.pedido_nro : '') + '</div>' +
+    '<div>Urgencia: ' + (act.urgencia || '-') + '</div>' +
+    '<div>Maquina: ' + mN(act.maquina_id) + '</div>' +
+    '<div>Operario: ' + opN(act.operario_id) + '</div>' +
+    '<div>Bloque: ' + mT(bl.startMin) + '-' + mT(bE) + ' (' + Math.floor(bl.dur / 60) + 'h' + (bl.dur % 60 ? (bl.dur % 60) + 'm' : '') + ')</div>' +
+    (bl.totalParts > 1 ? '<div>Parte ' + bl.part + '/' + bl.totalParts + ' | Total ' + Math.floor(tot / 60) + 'h' + (tot % 60 ? (tot % 60) + 'm' : '') + '</div>' : '') +
+    '<div>Tipo: ' + (act.tipo || 'manual') + '</div>';
+  // Set initial position BEFORE appending (bug fix: tooltip was showing at 0,0
+  // when user hovered without moving the mouse, because mousemove was the only
+  // thing setting position).
+  el.style.left = Math.min(e.clientX + 12, window.innerWidth - 290) + 'px';
+  el.style.top = (e.clientY + 16) + 'px';
+  document.body.appendChild(el); tipEl = el;
+}
+function hideTip() { if (tipEl) { tipEl.remove(); tipEl = null; } }
+
+// ========== EDIT MODAL ==========
+// Editable fields: operario (ideal+suplentes), maquina (ideal+suplentes),
+// hora_inicio, urgencia. Read-only: descripción, cliente, pedido, tipo, fin,
+// duración, parte N/M, foto.
+function showEdit(act, bl) {
+  const bd = document.createElement('div'); bd.className = 'mo';
+  bd.addEventListener('click', e => { if (e.target === bd) bd.remove(); });
+  const m = document.createElement('div'); m.className = 'md';
+  const bE = bl.startMin + bl.dur;
+  const tot = D(act);
+  const foto = act.foto_url || act.foto_proyecto_url;
+
+  // Build operator options: ideal first, then suplentes (in order)
+  const opIdealId = act.operario_ideal_id;
+  const opSuplIds = Array.isArray(act.operarios_suplentes_ids)
+    ? act.operarios_suplentes_ids.map(x => parseInt(x))
+    : [];
+  const opOptions = [];
+  if (opIdealId) opOptions.push({ id: opIdealId, isIdeal: true });
+  opSuplIds.forEach(sid => { if (!opOptions.find(o => o.id === sid)) opOptions.push({ id: sid, isIdeal: false }); });
+  // Safety: if current operario isn't in ideal/suplentes (data inconsistency),
+  // include it so the user can still see + change it.
+  if (act.operario_id && !opOptions.find(o => o.id === act.operario_id)) {
+    opOptions.push({ id: act.operario_id, isIdeal: false, isOther: true });
+  }
+
+  // Build machine options: ideal first, then suplentes
+  const mqIdealId = act.maquina_ideal_id;
+  const mqSuplIds = Array.isArray(act.maquinas_suplentes_ids)
+    ? act.maquinas_suplentes_ids.map(x => parseInt(x))
+    : [];
+  const mqOptions = [];
+  if (mqIdealId) mqOptions.push({ id: mqIdealId, isIdeal: true });
+  mqSuplIds.forEach(sid => { if (!mqOptions.find(o => o.id === sid)) mqOptions.push({ id: sid, isIdeal: false }); });
+  if (act.maquina_id && !mqOptions.find(o => o.id === act.maquina_id)) {
+    mqOptions.push({ id: act.maquina_id, isIdeal: false, isOther: true });
+  }
+
+  const opOptionsHtml = opOptions.map(o => {
+    const label = opN(o.id) + (o.isIdeal ? ' (ideal)' : (o.isOther ? ' (otro)' : ''));
+    const sel = o.id === act.operario_id ? ' selected' : '';
+    return '<option value="' + o.id + '"' + sel + '>' + label + '</option>';
+  }).join('');
+
+  const mqOptionsHtml = mqOptions.map(o => {
+    const label = mN(o.id) + (o.isIdeal ? ' (ideal)' : (o.isOther ? ' (otro)' : ''));
+    const sel = o.id === act.maquina_id ? ' selected' : '';
+    return '<option value="' + o.id + '"' + sel + '>' + label + '</option>';
+  }).join('');
+
+  const urgencias = ['urgente', 'alta', 'media', 'baja'];
+  const urgOptionsHtml = urgencias.map(u =>
+    '<option value="' + u + '"' + (u === act.urgencia ? ' selected' : '') + '>' + u.charAt(0).toUpperCase() + u.slice(1) + '</option>'
+  ).join('');
+
+  // Read-only info block
+  let infoHtml = '<div style="font-size:12px;line-height:1.7;margin-bottom:14px">';
+  infoHtml += '<div><b>Cliente:</b> ' + clN(act.cliente_id) + '</div>';
+  if (act.pedido_nro) infoHtml += '<div><b>Pedido:</b> ' + act.pedido_nro + '</div>';
+  infoHtml += '<div><b>Tipo:</b> ' + (act.tipo || 'manual') + '</div>';
+  infoHtml += '<div><b>Bloque actual:</b> ' + mT(bl.startMin) + '-' + mT(bE) + ' (' + Math.floor(bl.dur / 60) + 'h' + (bl.dur % 60 ? (bl.dur % 60) + 'm' : '') + ')</div>';
+  if (bl.totalParts > 1) infoHtml += '<div><b>Parte:</b> ' + bl.part + '/' + bl.totalParts + ' | <b>Total:</b> ' + Math.floor(tot / 60) + 'h' + (tot % 60 ? (tot % 60) + 'm' : '') + '</div>';
+  infoHtml += '</div>';
+
+  // Editable fields block
+  let editHtml = '<div style="border-top:1px solid #C8C6BE;padding-top:14px">';
+  editHtml += '<div class="ef"><div class="ef-l">Operario</div><select class="ef-i" id="ed-op">' + opOptionsHtml + '</select></div>';
+  editHtml += '<div class="ef"><div class="ef-l">Maquina</div><select class="ef-i" id="ed-mq">' + mqOptionsHtml + '</select></div>';
+  editHtml += '<div style="display:flex;gap:10px">';
+  editHtml += '<div class="ef" style="flex:1"><div class="ef-l">Hora de inicio</div><input type="time" class="ef-i" id="ed-h" value="' + act.hora_inicio.substring(0, 5) + '" step="600"></div>';
+  editHtml += '<div class="ef" style="flex:1"><div class="ef-l">Urgencia</div><select class="ef-i" id="ed-u">' + urgOptionsHtml + '</select></div>';
+  editHtml += '</div>';
+  // Operator-time field: ONLY shown for automaticas. For manuals the
+  // operator-time equals the total duration, so no need to expose it.
+  if (act.tipo === 'automatica') {
+    const currentOpMin = (act.duracion_operario_min !== null && act.duracion_operario_min !== undefined)
+      ? act.duracion_operario_min : '';
+    editHtml += '<div class="ef"><div class="ef-l">Tiempo del operario (min) <span style="color:#888780;font-weight:400">— setup/programacion</span></div>';
+    editHtml += '<input type="number" class="ef-i" id="ed-dop" value="' + currentOpMin + '" min="0" step="5" placeholder="ej. 30"></div>';
+  }
+  editHtml += '</div>';
+
+  m.innerHTML =
+    '<button class="md-x" onclick="this.closest(\'.mo\').remove()">&times;</button>' +
+    '<div class="md-t">' + act.descripcion + '</div>' +
+    infoHtml +
+    editHtml +
+    (foto ? '<img src="' + foto + '" style="max-width:100%;max-height:160px;margin-top:12px;border-radius:6px;display:block" onerror="this.style.display=\'none\'">' : '') +
+    '<div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">' +
+      '<button class="b" onclick="this.closest(\'.mo\').remove()">Cerrar</button>' +
+      '<button class="b b-p" id="ed-save">Guardar</button>' +
+      '<button class="b" style="color:#A32D2D;border-color:#E24B4A" id="ed-remove">Quitar</button>' +
+    '</div>';
+  bd.appendChild(m); document.body.appendChild(bd);
+
+  document.getElementById('ed-save').onclick = () => { saveEdit(act.id); bd.remove(); };
+  document.getElementById('ed-remove').onclick = () => { removeAct(act.id); bd.remove(); };
+}
+
+// Reads all editable fields from the modal, diffs against current state,
+// applies the smallest operation possible:
+//   - Only urgency changed → direct update, no cascade
+//   - Any of operator/machine/time changed → placeActWithCheck to run cascade
+async function saveEdit(actId) {
+  const act = acts.find(a => a.id === actId); if (!act) return;
+  const newOpId = parseInt(document.getElementById('ed-op').value);
+  const newMqId = parseInt(document.getElementById('ed-mq').value);
+  const newHora = document.getElementById('ed-h').value + ':00';
+  const newUrg = document.getElementById('ed-u').value;
+  // Operator-time only editable for automaticas
+  let newDopMin = act.duracion_operario_min;
+  if (act.tipo === 'automatica') {
+    const dopInput = document.getElementById('ed-dop');
+    if (dopInput) {
+      const v = dopInput.value.trim();
+      newDopMin = v === '' ? null : parseInt(v);
+      if (isNaN(newDopMin)) newDopMin = null;
+    }
+  }
+
+  const opChanged = newOpId !== act.operario_id;
+  const mqChanged = newMqId !== act.maquina_id;
+  const timeChanged = newHora !== act.hora_inicio;
+  const urgChanged = newUrg !== act.urgencia;
+  const dopChanged = newDopMin !== act.duracion_operario_min;
+
+  // Urgency + duracion_operario_min can be updated independently (don't alone
+  // move the activity, though dop change can affect future cascades).
+  if (urgChanged || dopChanged) {
+    const prev = { maquina_id: act.maquina_id, fecha: act.fecha, hora_inicio: act.hora_inicio, estado: act.estado, operario_id: act.operario_id, urgencia: act.urgencia, duracion_operario_min: act.duracion_operario_min };
+    const payload = {};
+    if (urgChanged) payload.urgencia = newUrg;
+    if (dopChanged) payload.duracion_operario_min = newDopMin;
+    await sb.from('actividades_tablero').update(payload).eq('id', actId);
+    if (urgChanged) act.urgencia = newUrg;
+    if (dopChanged) act.duracion_operario_min = newDopMin;
+    uStack.push([{ id: actId, prev }]);
+    updU();
+    if (!opChanged && !mqChanged && !timeChanged) {
+      toast('Actualizado: ' + act.descripcion);
+      render(); return;
+    }
+  }
+
+  if (opChanged || mqChanged || timeChanged) {
+    placeActWithCheck(actId, newMqId, act.fecha, tM(newHora), newOpId);
+  } else if (!urgChanged && !dopChanged) {
+    toast('Sin cambios');
+  }
+}
+
+async function removeAct(actId) {
+  const act = acts.find(a => a.id === actId); if (!act) return;
+  const prev = { maquina_id: act.maquina_id, fecha: act.fecha, hora_inicio: act.hora_inicio, estado: act.estado, operario_id: act.operario_id };
+  await sb.from('actividades_tablero').update({ fecha: '1900-01-01', estado: 'sin_planificar', maquina_id: null }).eq('id', actId);
+  act.fecha = '1900-01-01'; act.estado = 'sin_planificar'; act.maquina_id = null;
+  uStack.push([{ id: actId, prev }]); updU();
+  toast('Quitado: ' + act.descripcion); render();
+}
+
+// ========== ASSIGN SELECTOR (operator board specific) ==========
+// First step: list of sin_planificar activities where this operator is ideal or suplente.
+// Second step: after picking an activity, user chooses a machine (ideal + suplentes).
+// Third step: if chosen machine is free, assign. Otherwise show informative card.
+
+let opSelectorState = {
+  opId: null, opName: null, fecha: null,
+  filterMachines: [],       // array of machine ids (empty = all)
+  filterUrgency: 'all',     // 'all' | 'urgente' | 'alta' | 'media' | 'baja'
+  sortBy: 'urgencia',       // 'urgencia' | 'maquina'
+  ddOpen: null              // which dropdown is open: 'maq' | null
+};
+
+function showOpSelector(opId, opName, fecha) {
+  opSelectorState = { opId, opName, fecha, filterMachines: [], filterUrgency: 'all', sortBy: 'urgencia', ddOpen: null };
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'op-selector-modal';
+  bd.addEventListener('click', e => { if (e.target === bd) bd.remove() });
+  const m = document.createElement('div'); m.className = 'md'; m.style.minWidth = '540px'; m.style.maxWidth = '620px';
+  m.id = 'op-selector-content';
+  bd.appendChild(m); document.body.appendChild(bd);
+  renderOpSelector();
+}
+
+function renderOpSelector() {
+  const m = document.getElementById('op-selector-content'); if (!m) return;
+  const S = opSelectorState;
+  const { opId, opName, fecha } = S;
+
+  // Pre-filter: sin_planificar activities where this operator is ideal or suplente
+  const eligible = acts.filter(a => {
+    if (a.estado !== 'sin_planificar') return false;
+    if (a.operario_ideal_id === opId) return true;
+    const sup = a.operarios_suplentes_ids || [];
+    return sup.map(x => parseInt(x)).includes(opId);
+  });
+
+  // Machines that appear in eligible activities (for the machine filter)
+  const relevantMachIds = new Set();
+  eligible.forEach(a => {
+    if (a.maquina_ideal_id) relevantMachIds.add(a.maquina_ideal_id);
+    (a.maquinas_suplentes_ids || []).forEach(id => relevantMachIds.add(parseInt(id)));
+  });
+  const MCH_NAMES = ['VF4','VF3-YT','Perfect-Jet','ST-30','TR-1','AR-3300','AR-1000','TC-Alfredo','Otra'];
+  const relevantMachines = MCH_NAMES.filter(mn => { const id = mI(mn); return id && relevantMachIds.has(id); });
+
+  let h = '<button class="md-x" onclick="this.closest(\'.mo\').remove()">&times;</button>';
+  h += '<div class="md-t">Asignar a ' + opName + '</div>';
+  h += '<div style="font-size:12px;color:#888780;margin-bottom:14px">Fecha: ' + fecha + '</div>';
+
+  if (eligible.length === 0) {
+    h += '<div style="padding:24px 0;text-align:center;color:#888780">No hay actividades disponibles para este operario</div>';
+    h += '<div style="margin-top:14px"><button class="b" onclick="this.closest(\'.mo\').remove()">Cerrar</button></div>';
+    m.innerHTML = h; return;
+  }
+
+  // ROW 1: Machine filter + Urgency filter
+  h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">';
+  // Machine multi-select
+  h += '<div style="flex:1;min-width:160px"><div style="font-size:10px;color:#888780;margin-bottom:3px">Maquina</div>';
+  h += '<div class="ms-wrap">';
+  let maqLabel = 'Todas';
+  if (S.filterMachines.length) maqLabel = S.filterMachines.map(id => mN(id)).join(', ');
+  h += '<div class="ms-btn" onclick="opSelectorState.ddOpen=opSelectorState.ddOpen===\'maq\'?null:\'maq\';renderOpSelector()">' + maqLabel + '</div>';
+  if (S.ddOpen === 'maq') {
+    h += '<div class="ms-dd">';
+    h += '<label onclick="opSelectorState.filterMachines=[];opSelectorState.ddOpen=null;renderOpSelector()"><input type="checkbox" ' + (S.filterMachines.length === 0 ? 'checked' : '') + '>Todas</label>';
+    h += '<div style="border-top:1px solid #E8E6DF;margin:2px 0"></div>';
+    relevantMachines.forEach(mn => {
+      const id = mI(mn); const chk = S.filterMachines.includes(id);
+      h += '<label onclick="event.preventDefault();toggleOpSelMachFilter(' + id + ')"><input type="checkbox" ' + (chk ? 'checked' : '') + '>' + mn + '</label>';
+    });
+    h += '</div>';
+  }
+  h += '</div></div>';
+
+  // Urgency — only show urgencies that exist among eligible activities
+  const availableUrg = [...new Set(eligible.map(a => a.urgencia))];
+  const urgAll = [['urgente', 'Urgente'], ['alta', 'Alta'], ['media', 'Media'], ['baja', 'Baja']].filter(([v]) => availableUrg.includes(v));
+  h += '<div style="flex:1;min-width:110px"><div style="font-size:10px;color:#888780;margin-bottom:3px">Urgencia</div>';
+  h += '<select onchange="opSelectorState.filterUrgency=this.value;renderOpSelector()" style="width:100%;padding:5px;border:1px solid #C8C6BE;border-radius:4px;font-size:12px">';
+  h += '<option value="all"' + (S.filterUrgency === 'all' ? ' selected' : '') + '>Todas</option>';
+  urgAll.forEach(([v, l]) => {
+    h += '<option value="' + v + '"' + (S.filterUrgency === v ? ' selected' : '') + '>' + l + '</option>';
+  });
+  h += '</select></div>';
+  h += '</div>';
+
+  // ROW 2: Sort
+  h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">';
+  h += '<div style="flex:1;min-width:110px"><div style="font-size:10px;color:#888780;margin-bottom:3px">Ordenar por</div>';
+  h += '<select onchange="opSelectorState.sortBy=this.value;renderOpSelector()" style="width:100%;padding:5px;border:1px solid #C8C6BE;border-radius:4px;font-size:12px">';
+  h += '<option value="urgencia"' + (S.sortBy === 'urgencia' ? ' selected' : '') + '>Urgencia</option>';
+  h += '<option value="maquina"' + (S.sortBy === 'maquina' ? ' selected' : '') + '>Maquina principal</option>';
+  h += '</select></div>';
+  h += '</div>';
+
+  // Apply filters
+  let list = eligible.slice();
+  if (S.filterMachines.length) {
+    list = list.filter(a => {
+      const aMachIds = [a.maquina_ideal_id, ...(a.maquinas_suplentes_ids || []).map(x => parseInt(x))];
+      return S.filterMachines.some(fid => aMachIds.includes(fid));
+    });
+  }
+  if (S.filterUrgency !== 'all') list = list.filter(a => a.urgencia === S.filterUrgency);
+
+  const urgOrder = { urgente: 0, alta: 1, media: 2, baja: 3 };
+  list.sort((a, b) => {
+    if (S.sortBy === 'urgencia') {
+      // Bug fix: urgOrder['urgente'] === 0, and 0 || 3 is 3 in JS (falsy).
+      // Use explicit `in` check / nullish coalescing to preserve 0.
+      const aOrd = a.urgencia in urgOrder ? urgOrder[a.urgencia] : 3;
+      const bOrd = b.urgencia in urgOrder ? urgOrder[b.urgencia] : 3;
+      return aOrd - bOrd;
+    }
+    if (S.sortBy === 'maquina') return mN(a.maquina_ideal_id).localeCompare(mN(b.maquina_ideal_id));
+    return 0;
+  });
+
+  h += '<div style="font-size:11px;color:#888780;margin-bottom:6px">' + list.length + ' actividad(es) disponible(s)</div>';
+
+  if (!list.length) {
+    h += '<div style="padding:24px 0;text-align:center;color:#888780">Sin actividades que coincidan con los filtros</div>';
+  } else {
+    list.forEach(a => { h += opSelectorItem(a, opId, fecha); });
+  }
+
+  h += '<div style="margin-top:14px"><button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button></div>';
+  m.innerHTML = h;
+}
+
+function toggleOpSelMachFilter(id) {
+  const S = opSelectorState;
+  const idx = S.filterMachines.indexOf(id);
+  if (idx >= 0) S.filterMachines.splice(idx, 1); else S.filterMachines.push(id);
+  renderOpSelector();
+}
+
+function opSelectorItem(a, opId, fecha) {
+  const dt = Math.floor(a.duracion_estimada_min / 60) + 'h' + (a.duracion_estimada_min % 60 ? ' ' + a.duracion_estimada_min % 60 + 'm' : '');
+  const foto = a.foto_url || a.foto_proyecto_url;
+  const urgColor = a.urgencia === 'urgente' ? '#1A1A1A' : a.urgencia === 'alta' ? '#C62828' : a.urgencia === 'media' ? '#854F0B' : '#1B6B1B';
+  let img;
+  if (foto) {
+    img = '<img src="' + foto + '" style="width:40px;height:40px;border-radius:4px;object-fit:cover;flex-shrink:0;background:#E8E6DF" onerror="this.style.visibility=\'hidden\'">';
+  } else {
+    img = '<div style="width:40px;height:40px;border-radius:4px;background:#E8E6DF;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:8px;color:#888780">sin foto</div>';
+  }
+  // Indicate if this operator is ideal or suplente for the activity
+  const isIdealOp = a.operario_ideal_id === opId;
+  const opMark = isIdealOp ? '<span style="color:#0C447C;font-weight:600">Operario ideal</span>' : '<span style="color:#5F5E5A">Operario suplente</span>';
+  // Machine hint
+  let machInfo = '<b>MP:</b> ' + mN(a.maquina_ideal_id);
+  if (a.maquinas_suplentes_ids && a.maquinas_suplentes_ids.length) {
+    machInfo += ' | <b>MS:</b> ' + a.maquinas_suplentes_ids.map(id => mN(parseInt(id))).join(', ');
+  }
+  let h = '<div class="ao" onclick="chooseMachineForAssign(' + a.id + ',' + opId + ',\'' + fecha + '\')" style="display:flex;align-items:center;gap:10px">';
+  h += img;
+  h += '<div style="flex:1;min-width:0">';
+  // Title row with type badge (manual/automatica)
+  const typeBadge = a.tipo === 'automatica'
+    ? '<span style="display:inline-block;background:#1A1A1A;color:#fff;font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;margin-left:6px;vertical-align:middle">AUTO</span>'
+    : '<span style="display:inline-block;background:#E8E6DF;color:#5F5E5A;font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;margin-left:6px;vertical-align:middle">MAN</span>';
+  h += '<div class="ao-t">' + a.descripcion + typeBadge + ' <span style="font-weight:400;color:#5F5E5A">— ' + a.proceso + '</span></div>';
+  h += '<div class="ao-s">' + clN(a.cliente_id) + ' | Ped. <b>' + (a.pedido_nro || '-') + '</b> | <span style="color:' + urgColor + ';font-weight:600">' + a.urgencia + '</span> | ' + dt + '</div>';
+  h += '<div class="ao-s" style="font-size:10px">' + opMark + ' | ' + machInfo + '</div>';
+  h += '</div></div>';
+  return h;
+}
+
+// Second step: after user picks activity, show machine selector
+function chooseMachineForAssign(actId, opId, fecha) {
+  const act = acts.find(a => a.id === actId);
+  if (!act) return;
+  // Close the first selector
+  const first = document.getElementById('op-selector-modal');
+  if (first) first.remove();
+  // Build machine options: ideal + suplentes
+  const mqOptions = [];
+  if (act.maquina_ideal_id) mqOptions.push({ id: act.maquina_ideal_id, isIdeal: true });
+  (act.maquinas_suplentes_ids || []).map(x => parseInt(x)).forEach(sid => {
+    if (!mqOptions.find(o => o.id === sid)) mqOptions.push({ id: sid, isIdeal: false });
+  });
+
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'mach-chooser-modal';
+  bd.addEventListener('click', e => { if (e.target === bd) bd.remove() });
+  const m = document.createElement('div'); m.className = 'md';
+  let h = '<button class="md-x" onclick="this.closest(\'.mo\').remove()">&times;</button>';
+  h += '<div class="md-t">Elegir maquina</div>';
+  h += '<div style="font-size:12px;color:#5F5E5A;margin-bottom:14px"><b>' + act.descripcion + '</b> — Ped. ' + (act.pedido_nro || '-') + ' — ' + opN(opId) + ' — ' + fecha + '</div>';
+  mqOptions.forEach(o => {
+    const labelBase = mN(o.id);
+    const idealBadge = o.isIdeal ? ' <span style="color:#0C447C;font-weight:600;font-size:11px">(ideal)</span>' : '';
+    h += '<div class="ao" onclick="tryAssignToMachine(' + actId + ',' + opId + ',' + o.id + ',\'' + fecha + '\')" style="display:flex;align-items:center;gap:10px">';
+    h += '<div style="width:30px;height:30px;border:3px solid ' + (MACH_COLORS[labelBase] || '#888') + ';border-radius:4px;flex-shrink:0;background:#fff"></div>';
+    h += '<div style="flex:1;font-size:13px;font-weight:600">' + labelBase + idealBadge + '</div>';
+    h += '<div style="font-size:18px;color:#888">→</div>';
+    h += '</div>';
+  });
+  h += '<div id="mach-err" style="display:none;color:#A32D2D;font-size:12px;font-weight:600;margin-top:12px;padding:10px;background:#FEF0F0;border-radius:6px;border:1px solid #E24B4A"></div>';
+  h += '<div style="margin-top:14px;display:flex;gap:8px">' +
+       '<button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button>' +
+       '<button class="b" onclick="showOpSelector(' + opId + ',\'' + opN(opId) + '\',\'' + fecha + '\');this.closest(\'.mo\').remove()">Volver</button>' +
+       '</div>';
+  m.innerHTML = h;
+  bd.appendChild(m); document.body.appendChild(bd);
+}
+
+// Third step: try to assign on the chosen machine, given:
+//   - Machine must be free that day at the natural insertion point
+//   - If busy, show inline error and stay on modal
+// When an automatica can't be placed at the end of the operator's day,
+// offer insertion options: start-of-day, or "after activity X" for each
+// existing activity that does NOT cross to the next day.
+function showAutoInsertOptions(actId, opId, machId, fecha) {
+  const act = acts.find(a => a.id === actId);
+  if (!act) return;
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'auto-insert-modal';
+  bd.addEventListener('click', e => { if (e.target === bd) bd.remove() });
+  const m = document.createElement('div'); m.className = 'md';
+
+  // Gather the operator's activities on this day whose MANUAL portion ends
+  // on this same day (i.e. they don't cross to the next day through setup).
+  const dayActs = [];
+  acts.forEach(a => {
+    if (a.id === actId) return;
+    if (a.operario_id !== opId) return;
+    if (a.estado === 'sin_planificar') return;
+    // Walk a's Dop slices; keep only if there's a slice that starts AND ends on fecha
+    let rem = Dop(a), cd = a.fecha, ct = tM(a.hora_inicio), safe = 0;
+    let dayEnd = null, started = false;
+    while (rem > 0 && safe < 20) {
+      safe++;
+      const ds = sS(a.operario_id), de = sE(a.operario_id, cd);
+      if (ct < ds) ct = ds;
+      const av = de - ct;
+      if (av <= 0) { cd = nwd(cd); ct = sS(a.operario_id); continue; }
+      const used = Math.min(rem, av);
+      if (cd === fecha) {
+        // Has a slice on this day; track its end
+        if (!started) started = true;
+        dayEnd = ct + used;
+      }
+      rem -= used;
+      if (rem > 0) {
+        if (cd === fecha && started) {
+          // Crosses to next day → skip (not eligible)
+          dayEnd = null; break;
+        }
+        cd = nwd(cd); ct = sS(a.operario_id);
+      } else { ct += used; }
+    }
+    if (dayEnd !== null) dayActs.push({ act: a, endMin: dayEnd });
+  });
+  dayActs.sort((a, b) => a.endMin - b.endMin);
+
+  let h = '<button class="md-x" onclick="this.closest(\'.mo\').remove()">&times;</button>';
+  h += '<div class="md-t">Donde insertar <b>' + act.descripcion + '</b>?</div>';
+  h += '<div style="font-size:12px;color:#5F5E5A;margin-bottom:14px">Ped. ' + (act.pedido_nro || '-') + ' — ' + opN(opId) + ' — ' + mN(machId) + ' — ' + fDn(fecha) + '</div>';
+  h += '<div style="font-size:11px;color:#5F5E5A;margin-bottom:10px">' + opN(opId) + ' tiene el dia completo. Elegi donde colocar esta actividad automatica (su tiempo manual es ' + Dop(act) + ' min):</div>';
+
+  // Option 1: start of day
+  const dayStart = sS(opId);
+  h += '<div class="ao" onclick="assignAutoAt(' + actId + ',' + opId + ',' + machId + ',\'' + fecha + '\',' + dayStart + ')">';
+  h += '<div class="ao-t">Al inicio de la jornada</div>';
+  h += '<div class="ao-s">Arranca a las ' + mT(dayStart) + '</div>';
+  h += '</div>';
+
+  // Options 2+: after each day-activity
+  dayActs.forEach(({ act: a, endMin }) => {
+    const afterMin = endMin + GAP;
+    h += '<div class="ao" onclick="assignAutoAt(' + actId + ',' + opId + ',' + machId + ',\'' + fecha + '\',' + afterMin + ')">';
+    h += '<div class="ao-t">Despues de <b>' + a.descripcion + '</b> — Ped. ' + (a.pedido_nro || '-') + '</div>';
+    h += '<div class="ao-s">Arranca a las ' + mT(afterMin) + '</div>';
+    h += '</div>';
+  });
+
+  if (dayActs.length === 0) {
+    h += '<div style="font-size:11px;color:#888780;padding:10px 0">(No hay actividades que terminen ese dia — todas cruzan al siguiente)</div>';
+  }
+
+  h += '<div style="margin-top:14px;display:flex;gap:8px">' +
+       '<button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button>' +
+       '</div>';
+  m.innerHTML = h;
+  bd.appendChild(m); document.body.appendChild(bd);
+}
+
+// User picked an option in showAutoInsertOptions. Call placeActWithCheck which
+// handles any machine/operator conflicts via the standard red alert flow.
+function assignAutoAt(actId, opId, machId, fecha, startMin) {
+  const modal = document.getElementById('auto-insert-modal');
+  if (modal) modal.remove();
+  const act = acts.find(a => a.id === actId);
+  if (!act) return;
+  placeActWithCheck(actId, machId, fecha, startMin, opId);
+}
+
+
+function tryAssignToMachine(actId, opId, machId, fecha) {
+  const act = acts.find(a => a.id === actId);
+  if (!act) return;
+  const errEl = document.getElementById('mach-err');
+  const hideErr = () => { if (errEl) errEl.style.display = 'none'; };
+  hideErr();
+
+  // Determine insertion time: first free moment in the day considering BOTH
+  // the operator's existing activities AND the machine's existing activities.
+  // Operator uses Dop (only setup blocks operator for automaticas).
+  const machBlocks = dayBlocks(machId, fecha, actId);
+  const dayStart = sS(opId);
+  const dayEnd = sE(opId, fecha);
+  const machineLatest = machBlocks.length === 0 ? dayStart : Math.max(...machBlocks.map(b => b.e)) + GAP;
+
+  // Find end of each activity's operator-attached portion on this day.
+  // For manuals this is the whole activity; for automaticas just the setup.
+  const opEndsOnDay = [];
+  acts.forEach(a => {
+    if (a.id === actId) return;
+    if (a.operario_id !== opId) return;
+    if (a.estado === 'sin_planificar') return;
+    let rem = Dop(a), cd = a.fecha, ct = tM(a.hora_inicio), safe = 0;
+    while (rem > 0 && safe < 20) {
+      safe++;
+      const ds = sS(a.operario_id), de = sE(a.operario_id, cd);
+      if (ct < ds) ct = ds;
+      const av = de - ct;
+      if (av <= 0) { cd = nwd(cd); ct = sS(a.operario_id); continue; }
+      const used = Math.min(rem, av);
+      if (cd === fecha) opEndsOnDay.push(ct + used);
+      if (cd > fecha) break;
+      rem -= used;
+      if (rem > 0) { cd = nwd(cd); ct = sS(a.operario_id); } else { ct += used; }
+    }
+  });
+  const operatorLatest = opEndsOnDay.length === 0 ? dayStart : Math.max(...opEndsOnDay) + GAP;
+  const startTime = Math.max(machineLatest, operatorLatest);
+
+  if (startTime >= dayEnd) {
+    // Activity doesn't fit at the end of the day.
+    // For automaticas: offer options to insert BEFORE existing activities
+    // (since an automatica's setup might fit in earlier gaps).
+    if (act.tipo === 'automatica') {
+      const chooser = document.getElementById('mach-chooser-modal');
+      if (chooser) chooser.remove();
+      showAutoInsertOptions(actId, opId, machId, fecha);
+      return;
+    }
+    // Manual: show error
+    let msg = 'No hay espacio el ' + fDn(fecha) + '.';
+    const lastMach = machBlocks[machBlocks.length - 1];
+    if (lastMach && machineLatest >= dayEnd) msg += ' Maquina ' + mN(machId) + ' ocupada hasta ' + mT(lastMach.e) + '.';
+    if (opEndsOnDay.length && operatorLatest >= dayEnd) msg += ' ' + opN(opId) + ' ocupado hasta ' + mT(Math.max(...opEndsOnDay)) + '.';
+    if (errEl) { errEl.innerHTML = msg; errEl.style.display = 'block'; }
+    return;
+  }
+
+  // Close the modal and proceed
+  const chooser = document.getElementById('mach-chooser-modal');
+  if (chooser) chooser.remove();
+
+  // placeActWithCheck: sets operator, machine, date, time; runs cascade + conflict dialogs
+  placeActWithCheck(actId, machId, fecha, startTime, opId);
+}
+
+// ========== LEGEND ==========
+function renderLg() {
+  const lg = document.getElementById('lg');
+  let h = '<span style="font-weight:600">Urgencia:</span>';
+  h += '<div class="li"><div class="ls" style="background:#1A1A1A"></div>Urgente</div>';
+  h += '<div class="li"><div class="ls" style="background:#FF9B9B"></div>Alta</div>';
+  h += '<div class="li"><div class="ls" style="background:#F0D47A"></div>Media</div>';
+  h += '<div class="li"><div class="ls" style="background:#BDECB6"></div>Baja</div>';
+  h += '<div class="ld"></div><span style="font-weight:600">Maquinas:</span>';
+  Object.entries(MACH_COLORS).forEach(([name, color]) => {
+    h += '<div class="li"><div class="lo" style="border-color:' + color + '"></div>' + name + '</div>';
+  });
+  h += '<div class="ld"></div><span style="font-size:9px">| = 12:00</span>';
+  lg.innerHTML = h;
+}
+
+// ========== MODAL BEHAVIORS: draggable + minimizable + resizable ==========
+// Enhance any .md modal that gets added to the DOM: drag by title, minimize
+// button, and CSS-native resize (via resize:both in the stylesheet).
+function makeModalInteractive(md) {
+  if (md._interactive) return; // idempotent
+  md._interactive = true;
+  const title = md.querySelector('.md-t');
+  if (!title) return;
+
+  // Add "minimize" button (toggles .minimized class)
+  const minBtn = document.createElement('button');
+  minBtn.className = 'md-min-btn';
+  minBtn.innerHTML = '&minus;';
+  minBtn.title = 'Minimizar / Restaurar';
+  minBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    if (md.classList.contains('minimized')) {
+      md.classList.remove('minimized');
+      minBtn.innerHTML = '&minus;';
+    } else {
+      md.classList.add('minimized');
+      minBtn.innerHTML = '+';
+    }
+  });
+  md.appendChild(minBtn);
+
+  // Drag by title
+  let dragging = false, offsetX = 0, offsetY = 0;
+  title.addEventListener('mousedown', e => {
+    // Don't drag if click is on the min or close button
+    if (e.target.closest('.md-min-btn') || e.target.closest('.md-x')) return;
+    const rect = md.getBoundingClientRect();
+    // Switch to fixed positioning on first drag (decouples from flex centering)
+    if (!md.classList.contains('dragging')) {
+      md.classList.add('dragging');
+      md.style.left = rect.left + 'px';
+      md.style.top = rect.top + 'px';
+      // Remove centering constraints
+      const overlay = md.closest('.mo');
+      if (overlay) overlay.style.display = 'block';
+    }
+    dragging = true;
+    offsetX = e.clientX - rect.left;
+    offsetY = e.clientY - rect.top;
+    document.body.style.userSelect = 'none';
+  });
+  document.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    let newX = e.clientX - offsetX;
+    let newY = e.clientY - offsetY;
+    // Keep within viewport
+    const rect = md.getBoundingClientRect();
+    newX = Math.max(0, Math.min(window.innerWidth - rect.width, newX));
+    newY = Math.max(0, Math.min(window.innerHeight - rect.height, newY));
+    md.style.left = newX + 'px';
+    md.style.top = newY + 'px';
+  });
+  document.addEventListener('mouseup', () => {
+    if (dragging) { dragging = false; document.body.style.userSelect = ''; }
+  });
+}
+
+// Observe for new .md elements and enhance them
+const modalObserver = new MutationObserver(mutations => {
+  mutations.forEach(m => {
+    m.addedNodes.forEach(node => {
+      if (node.nodeType !== 1) return;
+      if (node.classList && node.classList.contains('md')) makeModalInteractive(node);
+      const found = node.querySelectorAll ? node.querySelectorAll('.md') : [];
+      found.forEach(md => makeModalInteractive(md));
+    });
+  });
+});
+modalObserver.observe(document.body, { childList: true, subtree: true });
+
+// ========== INIT ==========
+async function init() {
+  const { data: mD } = await sb.from('maquinas').select('id,nombre'); maq = mD || [];
+  const { data: oD } = await sb.from('operarios').select('*'); ops = oD || [];
+  const { data: cD } = await sb.from('clientes').select('*'); cls = cD || [];
+  const { data: aD } = await sb.from('actividades_tablero').select('*'); acts = aD || [];
+  document.getElementById('hd-d').textContent = new Date().toLocaleDateString('es-AR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  renderLg(); render();
+}
+init();
+</script>
+</body>
+</html>
