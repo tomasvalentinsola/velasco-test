@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Velasco App 2.0 — Tablero por Operario v24</title>
+<title>Velasco App 2.0 — Tablero por Operario v25</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -161,7 +161,20 @@ function getVacaciones(dateStr){
 }
 
 // ========== STATE ==========
-let maq=[],ops=[],cls=[],acts=[],uStack=[],dragD=null,tipEl=null,weekOffset=0;
+let maq=[],ops=[],cls=[],acts=[],items=[],proys=[],uStack=[],dragD=null,tipEl=null,weekOffset=0;
+// States that allow an activity to appear in the "+" picker
+const PROJ_ACTIVE_FOR_TABLERO = new Set(['Confirmado']);
+const ITEM_ACTIVE_FOR_TABLERO = new Set(['Espera MP', 'Llegó MP', 'Proceso', 'Enviar a TT', 'TT', 'Llegó TT']);
+function isActAvailableForPlanning(a) {
+  if (a.estado !== 'sin_planificar') return false;
+  const it = items.find(x => x.id === a.item_id);
+  if (!it) return true;  // legacy activities without item_id: allow
+  if (!ITEM_ACTIVE_FOR_TABLERO.has(it.estado || 'Espera MP')) return false;
+  const p = proys.find(x => x.id === it.proyecto_id);
+  if (!p) return true;  // legacy
+  if (!PROJ_ACTIVE_FOR_TABLERO.has(p.estado || 'Confirmado')) return false;
+  return true;
+}
 let alertCounter = 0;
 let suppressNextToast = false;
 
@@ -1903,9 +1916,10 @@ function renderOpSelector() {
   const S = opSelectorState;
   const { opId, opName, fecha } = S;
 
-  // Pre-filter: sin_planificar activities where this operator is ideal or suplente
+  // Pre-filter: sin_planificar activities where this operator is ideal or suplente,
+  // AND the activity belongs to an item/proyecto in active states.
   const eligible = acts.filter(a => {
-    if (a.estado !== 'sin_planificar') return false;
+    if (!isActAvailableForPlanning(a)) return false;
     if (a.operario_ideal_id === opId) return true;
     const sup = a.operarios_suplentes_ids || [];
     return sup.map(x => parseInt(x)).includes(opId);
@@ -2337,6 +2351,8 @@ async function init() {
   const { data: oD } = await sb.from('operarios').select('*'); ops = oD || [];
   const { data: cD } = await sb.from('clientes').select('*'); cls = cD || [];
   const { data: aD } = await sb.from('actividades_tablero').select('*'); acts = aD || [];
+  const { data: iD } = await sb.from('items').select('*'); items = iD || [];
+  const { data: pD } = await sb.from('proyectos').select('*'); proys = pD || [];
   document.getElementById('hd-d').textContent = new Date().toLocaleDateString('es-AR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
   renderLg(); render();
 }
