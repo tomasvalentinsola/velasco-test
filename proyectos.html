@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v6</title>
+<title>Velasco App 2.0 — Proyectos v6.1</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -938,6 +938,68 @@ async function confirmDeleteProceso(procesoId) {
   render();
 }
 
+
+// ========== Helpers para modal de proceso ==========
+function toggleSetupField() {
+  const sel = document.getElementById('p-tipo');
+  const wrap = document.getElementById('p-setup-wrap');
+  if (sel && wrap) wrap.style.display = sel.value === 'automatica' ? '' : 'none';
+}
+function toggleProcCustom() {
+  const sel = document.getElementById('p-proceso');
+  const input = document.getElementById('p-proceso-custom');
+  if (!input) return;
+  if (sel.value === 'Otro') { input.style.display = 'block'; input.focus(); }
+  else { input.style.display = 'none'; input.value = ''; }
+}
+function toggleMaqOtra() {
+  const sel = document.getElementById('p-maq-ideal');
+  const input = document.getElementById('p-maq-otra');
+  if (!input) return;
+  if (sel.value === 'OTRA') { input.style.display = 'block'; input.focus(); }
+  else { input.style.display = 'none'; input.value = ''; }
+}
+
+// Chip multi-select state for machines/operators "suplentes"
+const chipState = { maq: new Set(), op: new Set() };
+function buildChips(containerId, list, selectedIds, kind) {
+  chipState[kind] = new Set(selectedIds);
+  renderChips(containerId, list, kind);
+}
+function renderChips(containerId, list, kind) {
+  const wrap = document.getElementById(containerId);
+  if (!wrap) return;
+  let h = '';
+  chipState[kind].forEach(id => {
+    const it = list.find(x => x.id === id);
+    if (!it) return;
+    h += '<span class="chip">' + escapeHtml(it.nombre) + ' <span class="chip-x" onclick="removeChip(\'' + kind + '\',' + id + ')">&times;</span></span>';
+  });
+  const remaining = list.filter(x => !chipState[kind].has(x.id));
+  h += '<input type="text" class="chip-add" id="chip-add-' + kind + '" placeholder="' + (chipState[kind].size === 0 ? 'Agregar...' : '') + '" list="datalist-' + kind + '" onchange="addChipFromInput(\'' + kind + '\')">';
+  h += '<datalist id="datalist-' + kind + '">';
+  remaining.forEach(it => { h += '<option value="' + escapeHtml(it.nombre) + '">'; });
+  h += '</datalist>';
+  wrap.innerHTML = h;
+}
+function addChipFromInput(kind) {
+  const input = document.getElementById('chip-add-' + kind);
+  const val = input.value.trim();
+  if (!val) return;
+  const list = kind === 'maq' ? maquinas : operarios;
+  const it = list.find(x => x.nombre.toLowerCase() === val.toLowerCase());
+  if (!it) { toast('No se encontro: ' + val, true); input.value = ''; return; }
+  if (chipState[kind].has(it.id)) { input.value = ''; return; }
+  chipState[kind].add(it.id);
+  input.value = '';
+  renderChips(kind === 'maq' ? 'chips-maq' : 'chips-op', list, kind);
+  document.getElementById('chip-add-' + kind).focus();
+}
+function removeChip(kind, id) {
+  chipState[kind].delete(id);
+  const list = kind === 'maq' ? maquinas : operarios;
+  renderChips(kind === 'maq' ? 'chips-maq' : 'chips-op', list, kind);
+}
 
 function buildPhotoWrapHtml(currentUrl, kind) {
   let h = '<div class="photo-wrap" id="photo-wrap-' + kind + '" onclick="document.getElementById(\'photo-input-' + kind + '\').click()">';
