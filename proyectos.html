@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v8</title>
+<title>Velasco App 2.0 — Proyectos v8.2</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -848,6 +848,36 @@ function renderItemDetail() {
   main.innerHTML = h;
 }
 
+// Render the chips of predecessors of a given activity (used in the modal).
+function renderPredsChipsHtml(actId) {
+  const myPreds = correlatividades.filter(c => c.sucesor_id === actId);
+  if (myPreds.length === 0) {
+    return '<span style="color:#888780;font-style:italic;font-size:11px">Sin predecesores</span>';
+  }
+  return myPreds.map(c => {
+    const predAct = actividades.find(x => x.id === c.predecesor_id);
+    if (!predAct) return '';
+    const predItem = items.find(x => x.id === predAct.item_id);
+    const predProj = predItem ? proyectos.find(p => p.id === predItem.proyecto_id) : null;
+    const label = (predItem ? predItem.descripcion + ' / ' : '') + (predAct.proceso || '?') + (predProj && predProj.pedido_nro ? ' (Ped. ' + predProj.pedido_nro + ')' : '');
+    return '<span style="display:inline-flex;align-items:center;gap:4px;background:#E6F1FB;color:#0C447C;padding:2px 6px;border-radius:3px;font-size:11px;font-weight:500">↶ ' + escapeHtml(label) + ' <span onclick="removeCorrelatividad(' + c.id + ')" style="cursor:pointer;font-weight:700;opacity:.6" title="Quitar">×</span></span>';
+  }).join('');
+}
+
+// Refresh the predecesores chips in the modal if it's currently open.
+function refreshPredsInModal() {
+  const list = document.getElementById('p-preds-list');
+  if (!list) return;
+  // Find which proceso the modal is currently editing — encoded in the
+  // Save button's onclick: saveProceso(<id>)
+  const saveBtn = document.querySelector('#proc-modal button.b-p');
+  if (!saveBtn) return;
+  const m = (saveBtn.getAttribute('onclick') || '').match(/saveProceso\((\d+)\)/);
+  if (!m) return;
+  const actId = parseInt(m[1]);
+  list.innerHTML = renderPredsChipsHtml(actId);
+}
+
 async function moveProceso(procesoId, delta) {
   const proceso = actividades.find(a => a.id === procesoId);
   if (!proceso) return;
@@ -870,6 +900,7 @@ async function removeCorrelatividad(corrId) {
   await sb.from('correlatividades').delete().eq('id', corrId);
   await loadAll();
   toast('Predecesor quitado');
+  refreshPredsInModal();
   render();
 }
 
@@ -942,8 +973,11 @@ async function addPredecesor(predId) {
   const { error } = await sb.from('correlatividades').insert({ predecesor_id: predId, sucesor_id: sucesorId });
   if (error) { toast('Error: ' + error.message, true); return; }
   await loadAll();
-  document.getElementById('pred-modal').remove();
+  // Close only the predecessor-search modal (not the editing modal if it's open)
+  const predModal = document.getElementById('pred-modal');
+  if (predModal) predModal.remove();
   toast('Predecesor agregado');
+  refreshPredsInModal();
   render();
 }
 
@@ -1032,6 +1066,14 @@ function showProcesoForm(procesoId) {
     });
     h += '</select>';
     h += '<div class="ef-help" style="color:' + peColor.fg + '">Cuando un proceso esta Cerrado, no aparece en el "+" del tablero ni bloquea a sus sucesores.</div></div>';
+
+    // Predecesores editables
+    h += '<div class="ef"><div class="ef-l">Predecesores (procesos que deben terminar antes que este)</div>';
+    h += '<div id="p-preds-list" style="display:flex;flex-wrap:wrap;gap:5px;align-items:center;padding:6px;border:1px solid #C8C6BE;border-radius:5px;background:#fff;min-height:34px">';
+    h += renderPredsChipsHtml(procesoId);
+    h += '</div>';
+    h += '<button type="button" class="b" style="padding:4px 10px;font-size:11px;margin-top:6px" onclick="showAddPredecesorModal(' + procesoId + ')">+ Agregar predecesor</button>';
+    h += '<div class="ef-help">Tambien podes agregar y quitar predecesores desde la vista del item.</div></div>';
   }
 
   h += '<div style="margin-top:18px;padding-top:14px;border-top:1px solid #E8E6DF">';
@@ -1553,7 +1595,15 @@ body { font-family: Arial, sans-serif; font-size: 11px; color: #000; }
       <tbody>`;
   procesos.forEach((p, idx) => {
     const cls = idx % 2 === 1 ? ' class="shade"' : '';
-    html += `<tr${cls}><td class="num">${idx + 1}</td><td>${escapeHtml((p.proceso || p.descripcion || '').toUpperCase())}</td><td class="center">${escapeHtml(opN(p.operario_ideal_id).toUpperCase())}</td><td class="realizado"></td></tr>`;
+    // Responsable: ideal + suplentes concatenados con " / "
+    const respIds = [];
+    if (p.operario_ideal_id) respIds.push(p.operario_ideal_id);
+    (p.operarios_suplentes_ids || []).forEach(sid => {
+      const id = parseInt(sid);
+      if (id && !respIds.includes(id)) respIds.push(id);
+    });
+    const respStr = respIds.map(id => opN(id)).join(' / ').toUpperCase();
+    html += `<tr${cls}><td class="num">${idx + 1}</td><td>${escapeHtml((p.proceso || p.descripcion || '').toUpperCase())}</td><td class="center">${escapeHtml(respStr)}</td><td class="realizado"></td></tr>`;
   });
   // Empty rows to fill
   const filled = procesos.length;
@@ -1600,7 +1650,14 @@ const DESPACHO_CHECKLIST = [
 function renderOT(p, idx, total, item, meta, clienteDisplay) {
   const fmt = d => { if (!d) return ''; const [y, m, da] = d.split('-'); return da + '/' + m + '/' + y; };
   const tarea = (p.proceso || p.descripcion || '').toUpperCase();
-  const responsable = opN(p.operario_ideal_id).toUpperCase();
+  // Responsable: ideal + suplentes concatenados con " / "
+  const respIds = [];
+  if (p.operario_ideal_id) respIds.push(p.operario_ideal_id);
+  (p.operarios_suplentes_ids || []).forEach(sid => {
+    const id = parseInt(sid);
+    if (id && !respIds.includes(id)) respIds.push(id);
+  });
+  const responsable = respIds.map(id => opN(id)).join(' / ').toUpperCase();
   // Resolve machine display name (real machine, "Otra" custom name, or "Ninguna")
   let maquina;
   if (p.maquina_ideal_id) maquina = mN(p.maquina_ideal_id);
