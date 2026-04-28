@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v7</title>
+<title>Velasco App 2.0 — Proyectos v7.1</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -604,7 +604,7 @@ function showProjectStateModal(projectId) {
   h += '<div class="actions">';
   h += '<button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button>';
   h += '<button class="b b-p" onclick="saveProjectState(' + projectId + ')">Aplicar</button></div>';
-  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd);
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
 }
 
 function onProjStateChange() {
@@ -674,7 +674,7 @@ function showItemForm(itemId) {
     h += '<button class="b b-d" onclick="confirmDeleteItem(' + itemId + ')">Eliminar' + (procCount > 0 ? ' (' + procCount + ' procesos)' : '') + '</button>';
   }
   h += '<button class="b b-p" onclick="saveItem(' + (itemId || 'null') + ')">' + (isNew ? 'Crear' : 'Guardar') + '</button></div>';
-  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd);
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
   setupPhotoPaste();
 }
 
@@ -913,7 +913,7 @@ function showProcesoForm(procesoId) {
   h += '<button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button>';
   h += '<button class="b b-p" onclick="saveProceso(' + (procesoId || 'null') + ')">' + (isNew ? 'Agregar' : 'Guardar') + '</button>';
   h += '</div>';
-  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd);
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
   buildChips('chips-maq', maquinas, supMaqIds, 'maq');
   buildChips('chips-op', operarios, supOpIds, 'op');
 }
@@ -1198,7 +1198,7 @@ function showClienteForm(clienteId) {
   h += '<div class="actions">';
   h += '<button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button>';
   h += '<button class="b b-p" onclick="saveCliente(' + (clienteId || 'null') + ')">' + (isNew ? 'Crear' : 'Guardar') + '</button></div>';
-  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd);
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
 }
 
 async function saveCliente(clienteId) {
@@ -1560,7 +1560,7 @@ const modalObserver = new MutationObserver((mutations) => {
     });
   });
 });
-modalObserver.observe(document.body, { childList: true, subtree: false });
+modalObserver.observe(document.body, { childList: true, subtree: true });
 
 async function init() {
   document.getElementById('hd-logo').src = LOGO_DATA_URL;
