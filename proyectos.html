@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v7.1</title>
+<title>Velasco App 2.0 — Proyectos v8</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -80,7 +80,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .combo-item:last-child{border-bottom:none}
 .combo-item:hover,.combo-item.combo-active{background:#E6F1FB;color:#0C447C}
 .combo-empty{padding:10px;color:#888780;font-size:11px;font-style:italic;text-align:center}
-.to{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#2C2C2A;color:#fff;padding:10px 24px;border-radius:8px;font-size:12px;z-index:300;opacity:0;transition:opacity .3s;pointer-events:none}
+.to{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#2C2C2A;color:#fff;padding:10px 24px;border-radius:8px;font-size:12px;z-index:1000;opacity:0;transition:opacity .3s;pointer-events:none}
 .to.sh{opacity:1}
 .to.err{background:#A32D2D}
 </style>
@@ -106,7 +106,7 @@ const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 const sb = supabase.createClient(SB_URL, SB_KEY);
 const PHOTO_BUCKET = 'proyecto-fotos';
 
-let clientes = [], maquinas = [], operarios = [], proyectos = [], items = [], actividades = [];
+let clientes = [], maquinas = [], operarios = [], proyectos = [], items = [], actividades = [], correlatividades = [];
 let nav = { view: 'projects' };
 // Default filter for projects list: all states except closed/anulado/perdido
 let projectFilters = new Set(['Proyectando', 'Presupuestar', 'Confirmado']);
@@ -149,6 +149,16 @@ const PROJ_STATES_ACTIVE_TABLERO = new Set(['Confirmado']);
 
 // Item states. Order matters for display.
 const ITEM_STATES = ['Espera MP', 'Llegó MP', 'Proceso', 'Enviar a TT', 'TT', 'Llegó TT', 'Terminado', 'Enviado', 'Stockeado', 'Anulado'];
+// Process states (estado_proceso column on actividades_tablero)
+const PROC_STATES = ['Planificación Pendiente', 'Planificado', 'Cerrado'];
+function procStateColor(estado) {
+  switch (estado) {
+    case 'Planificación Pendiente': return { bg: '#FFF4D5', fg: '#854F0B' };  // yellow
+    case 'Planificado': return { bg: '#E6F1FB', fg: '#0C447C' };  // blue
+    case 'Cerrado': return { bg: '#E5F5E1', fg: '#1B6B1B' };  // green
+    default: return { bg: '#fff', fg: '#000' };
+  }
+}
 // Which item states keep the activities visible in the tablero "+"?
 const ITEM_STATES_ACTIVE_TABLERO = new Set(['Espera MP', 'Llegó MP', 'Proceso', 'Enviar a TT', 'TT', 'Llegó TT']);
 
@@ -181,16 +191,18 @@ function itemStateColor(estado) {
 }
 
 async function loadAll() {
-  const [c, m, o, p, it, a] = await Promise.all([
+  const [c, m, o, p, it, a, co] = await Promise.all([
     sb.from('clientes').select('*').order('nombre'),
     sb.from('maquinas').select('*').order('nombre'),
     sb.from('operarios').select('*').order('nombre'),
     sb.from('proyectos').select('*').order('id', { ascending: false }),
     sb.from('items').select('*').order('id'),
-    sb.from('actividades_tablero').select('*').order('orden', { ascending: true, nullsFirst: false })
+    sb.from('actividades_tablero').select('*').order('orden', { ascending: true, nullsFirst: false }),
+    sb.from('correlatividades').select('*')
   ]);
   clientes = c.data || []; maquinas = m.data || []; operarios = o.data || [];
   proyectos = p.data || []; items = it.data || []; actividades = a.data || [];
+  correlatividades = co.data || [];
 }
 
 function navigate(newNav) { nav = newNav; render(); }
@@ -442,7 +454,7 @@ function renderProjectDetail() {
 
   let h = '<button class="b" style="margin-bottom:10px" onclick="navigate({view:\'projects\'})">← Volver a Proyectos</button>';
   // Use the new blue background color for the project recuadro
-  h += '<div class="form" style="background:#cddffa">';
+  h += '<div class="form" style="background:#f0f6fc">';
   h += '<div class="form-t" style="display:flex;align-items:center;justify-content:space-between;gap:8px">';
   h += '<span style="display:flex;align-items:center;gap:10px"><span>' + escapeHtml(proj.descripcion || '(sin descripcion)') + '</span>' + stBadge + '</span>';
   h += '<div style="display:flex;gap:6px">';
@@ -482,6 +494,15 @@ function renderProjectDetail() {
   h += '<button class="b b-p" onclick="saveProjectMeta()">Guardar cambios</button></div>';
 
   h += '<div class="section-t">Items del proyecto <button class="b b-p" onclick="showItemForm(null)">+ Agregar item</button></div>';
+  if (proj.items.length > 0) {
+    // Header row with column titles
+    h += '<div style="display:flex;gap:10px;align-items:center;padding:4px 12px;font-size:10px;font-weight:700;color:#5F5E5A;text-transform:uppercase;letter-spacing:0.5px">';
+    h += '<div style="width:32px;text-align:center">Nº</div>';
+    h += '<div style="width:48px;text-align:center">Cant.</div>';
+    h += '<div style="width:42px"></div>';  // photo column spacer
+    h += '<div style="flex:1">Item</div>';
+    h += '</div>';
+  }
   if (proj.items.length === 0) {
     h += '<div class="list-empty" style="padding:20px">Aun no hay items cargados.</div>';
   } else {
@@ -496,9 +517,9 @@ function renderProjectDetail() {
         : '<div style="width:42px;height:42px;border-radius:5px;background:#E8E6DF;display:flex;align-items:center;justify-content:center;color:#888780;font-size:8px;flex-shrink:0">sin foto</div>';
       h += '<div class="card-item card-clickable" style="background:' + cardBg + '" onclick="navigate({view:\'item\',projectId:' + nav.projectId + ',itemId:' + it.id + '})">';
       // Nº column
-      h += '<div style="width:32px;text-align:center;font-weight:700;color:#5F5E5A;font-size:13px">' + (idx + 1) + '</div>';
-      // Cantidad column
-      h += '<div style="width:48px;text-align:center;font-size:12px;color:#2C2C2A"><div style="font-size:9px;color:#888780">cant.</div><div style="font-weight:700">' + it.cantidad + '</div></div>';
+      h += '<div style="width:32px;text-align:center;color:#2C2C2A;font-size:14px">' + (idx + 1) + '</div>';
+      // Cantidad column (bold number)
+      h += '<div style="width:48px;text-align:center;font-size:16px;font-weight:700;color:#2C2C2A">' + it.cantidad + '</div>';
       h += img;
       // Body: descripcion + estado + procesos
       h += '<div style="flex:1;min-width:0">';
@@ -787,18 +808,33 @@ function renderItemDetail() {
       const supMaqs = (p.maquinas_suplentes_ids || []).map(id => mN(parseInt(id))).join(', ');
       const supOps = (p.operarios_suplentes_ids || []).map(id => opN(parseInt(id))).join(', ');
       const isPlanificada = p.estado && p.estado !== 'sin_planificar' && p.fecha !== '1900-01-01';
+      const procEstado = p.estado_proceso || 'Planificación Pendiente';
+      const peColors = procStateColor(procEstado);
+      const peBadge = '<span class="tag" style="background:' + peColors.bg + ';color:' + peColors.fg + ';margin-left:4px;border:1px solid ' + peColors.fg + '">' + procEstado.toUpperCase() + '</span>';
+      // Predecessors of this proceso
+      const myPreds = correlatividades.filter(c => c.sucesor_id === p.id);
       h += '<div class="proc-card"><div class="proc-card-body">';
-      h += '<div class="proc-card-t"><span style="color:#888780;font-weight:400;margin-right:6px">' + (idx + 1) + '.</span>' + escapeHtml(p.proceso || p.descripcion) + tag;
-      if (isPlanificada) h += '<span class="tag" style="background:#0C447C;color:#fff;margin-left:4px">PLANIFICADA</span>';
+      h += '<div class="proc-card-t"><span style="color:#888780;font-weight:400;margin-right:6px">' + (idx + 1) + '.</span>' + escapeHtml(p.proceso || p.descripcion) + tag + peBadge;
       h += '</div>';
       h += '<div class="proc-card-s">';
       h += '<b>Duracion estimada:</b> ' + dur + setup + '<br>';
       h += '<b>Maq. ideal:</b> ' + escapeHtml(p.maquina_ideal_id ? mN(p.maquina_ideal_id) : (p.maquina_ideal_nombre ? p.maquina_ideal_nombre + ' (otra)' : '— ninguna —')) + (supMaqs ? ' · <b>Suplentes:</b> ' + escapeHtml(supMaqs) : '') + '<br>';
       h += '<b>Op. ideal:</b> ' + escapeHtml(opN(p.operario_ideal_id)) + (supOps ? ' · <b>Suplentes:</b> ' + escapeHtml(supOps) : '');
       if (p.descripcion_trabajo) h += '<br><b>Trabajo:</b> ' + escapeHtml(p.descripcion_trabajo);
+      // Predecesores
+      h += '<br><b>Predecesores:</b> ';
+      if (myPreds.length === 0) h += '<span style="color:#888780;font-style:italic">ninguno</span> ';
+      myPreds.forEach(c => {
+        const predAct = actividades.find(x => x.id === c.predecesor_id);
+        if (!predAct) return;
+        const predItem = items.find(x => x.id === predAct.item_id);
+        const predProj = predItem ? proyectos.find(p2 => p2.id === predItem.proyecto_id) : null;
+        const label = (predItem ? predItem.descripcion + ' / ' : '') + (predAct.proceso || '?') + (predProj && predProj.pedido_nro ? ' (Ped. ' + predProj.pedido_nro + ')' : '');
+        h += '<span style="display:inline-flex;align-items:center;gap:4px;background:#E6F1FB;color:#0C447C;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:500;margin-right:3px;margin-bottom:2px">↶ ' + escapeHtml(label) + ' <span onclick="removeCorrelatividad(' + c.id + ')" style="cursor:pointer;font-weight:700;opacity:.6" title="Quitar predecesor">×</span></span>';
+      });
+      h += '<button class="b" style="padding:2px 6px;font-size:10px;margin-left:4px" onclick="showAddPredecesorModal(' + p.id + ')">+ Predecesor</button>';
       h += '</div></div>';
       h += '<div class="card-actions" style="display:flex;flex-direction:column;gap:4px">';
-      // Up/down buttons
       h += '<div style="display:flex;gap:2px">';
       h += '<button class="b b-icon" ' + (idx === 0 ? 'disabled' : 'onclick="moveProceso(' + p.id + ',-1)"') + ' title="Subir">▲</button>';
       h += '<button class="b b-icon" ' + (idx === procesos.length - 1 ? 'disabled' : 'onclick="moveProceso(' + p.id + ',1)"') + ' title="Bajar">▼</button>';
@@ -825,6 +861,89 @@ async function moveProceso(procesoId, delta) {
   await sb.from('actividades_tablero').update({ orden: swap.orden }).eq('id', proceso.id);
   await sb.from('actividades_tablero').update({ orden: proceso.orden }).eq('id', swap.id);
   await loadAll();
+  render();
+}
+
+// ========== Correlatividad: agregar y eliminar predecesores ==========
+async function removeCorrelatividad(corrId) {
+  if (!confirm('Quitar este predecesor?')) return;
+  await sb.from('correlatividades').delete().eq('id', corrId);
+  await loadAll();
+  toast('Predecesor quitado');
+  render();
+}
+
+let predSearchTargetId = null;
+function showAddPredecesorModal(sucesorId) {
+  predSearchTargetId = sucesorId;
+  const sucesor = actividades.find(a => a.id === sucesorId);
+  if (!sucesor) return;
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'pred-modal';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '600px';
+  let h = '<div class="md-t">Agregar predecesor</div>';
+  h += '<div style="font-size:12px;color:#5F5E5A;margin-bottom:10px">Buscar el proceso predecesor por descripcion del item, proyecto, o tipo de proceso.</div>';
+  h += '<input type="text" class="ef-i" id="pred-search" placeholder="Buscar..." autocomplete="off" oninput="renderPredecesorList()" style="margin-bottom:10px">';
+  h += '<div id="pred-list" style="max-height:380px;overflow-y:auto;border:1px solid #C8C6BE;border-radius:5px"></div>';
+  h += '<div class="actions"><button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button></div>';
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
+  renderPredecesorList();
+}
+
+function renderPredecesorList() {
+  const sucesorId = predSearchTargetId;
+  const sucesor = actividades.find(a => a.id === sucesorId);
+  if (!sucesor) return;
+  const search = document.getElementById('pred-search').value.trim().toLowerCase();
+  const existingPredIds = new Set(correlatividades.filter(c => c.sucesor_id === sucesorId).map(c => c.predecesor_id));
+  // List of all activities except: itself, already-linked predecessors, and any that would create cycles (will check at insert)
+  const candidates = actividades
+    .filter(a => a.id !== sucesorId && !existingPredIds.has(a.id))
+    .map(a => {
+      const it = items.find(x => x.id === a.item_id);
+      const pr = it ? proyectos.find(p => p.id === it.proyecto_id) : null;
+      const itLabel = it ? it.descripcion : '?';
+      const projLabel = pr ? (pr.descripcion || ('P.' + pr.id)) : '?';
+      const pedLabel = pr && pr.pedido_nro ? pr.pedido_nro : '-';
+      const procLabel = a.proceso || a.descripcion || '?';
+      const searchable = (itLabel + ' ' + projLabel + ' ' + pedLabel + ' ' + procLabel).toLowerCase();
+      return { a, it, pr, itLabel, projLabel, pedLabel, procLabel, searchable };
+    })
+    .filter(x => !search || x.searchable.includes(search));
+  candidates.sort((x, y) => x.itLabel.localeCompare(y.itLabel));
+  const list = document.getElementById('pred-list');
+  if (candidates.length === 0) {
+    list.innerHTML = '<div style="padding:14px;text-align:center;color:#888780;font-size:11px;font-style:italic">No hay procesos que coincidan.</div>';
+    return;
+  }
+  let h = '';
+  candidates.slice(0, 60).forEach(x => {
+    h += '<div onclick="addPredecesor(' + x.a.id + ')" style="padding:8px 10px;border-bottom:1px solid #F5F3EC;cursor:pointer;font-size:12px" onmouseenter="this.style.background=\'#E6F1FB\'" onmouseleave="this.style.background=\'\'">';
+    h += '<b>' + escapeHtml(x.procLabel) + '</b> — ' + escapeHtml(x.itLabel);
+    h += '<div style="font-size:10px;color:#5F5E5A">Proyecto: ' + escapeHtml(x.projLabel) + ' · Pedido: ' + escapeHtml(x.pedLabel) + '</div>';
+    h += '</div>';
+  });
+  list.innerHTML = h;
+}
+
+async function addPredecesor(predId) {
+  const sucesorId = predSearchTargetId;
+  if (!sucesorId) return;
+  // Avoid simple cycles: if predId already has sucesorId in its ancestor chain, block
+  const ancestors = new Set();
+  function gatherAncestors(id) {
+    const direct = correlatividades.filter(c => c.sucesor_id === id).map(c => c.predecesor_id);
+    direct.forEach(p => { if (!ancestors.has(p)) { ancestors.add(p); gatherAncestors(p); } });
+  }
+  gatherAncestors(predId);
+  if (ancestors.has(sucesorId)) {
+    toast('No se puede: crearia un ciclo de correlatividades', true);
+    return;
+  }
+  const { error } = await sb.from('correlatividades').insert({ predecesor_id: predId, sucesor_id: sucesorId });
+  if (error) { toast('Error: ' + error.message, true); return; }
+  await loadAll();
+  document.getElementById('pred-modal').remove();
+  toast('Predecesor agregado');
   render();
 }
 
@@ -902,6 +1021,18 @@ function showProcesoForm(procesoId) {
 
   h += '<div class="ef"><div class="ef-l">Operarios suplentes</div>';
   h += '<div class="chip-wrap" id="chips-op" onclick="document.getElementById(\'chip-add-op\').focus()"></div></div>';
+
+  if (!isNew) {
+    const procEstado = proceso.estado_proceso || 'Planificación Pendiente';
+    const peColor = procStateColor(procEstado);
+    h += '<div class="ef" style="background:' + peColor.bg + ';padding:8px 10px;border-radius:5px;border:1px solid ' + peColor.fg + '"><div class="ef-l" style="color:' + peColor.fg + '">Estado del proceso</div>';
+    h += '<select class="ef-i" id="p-estado">';
+    PROC_STATES.forEach(st => {
+      h += '<option value="' + st + '"' + (procEstado === st ? ' selected' : '') + '>' + st + '</option>';
+    });
+    h += '</select>';
+    h += '<div class="ef-help" style="color:' + peColor.fg + '">Cuando un proceso esta Cerrado, no aparece en el "+" del tablero ni bloquea a sus sucesores.</div></div>';
+  }
 
   h += '<div style="margin-top:18px;padding-top:14px;border-top:1px solid #E8E6DF">';
   h += '<div style="font-size:12px;font-weight:600;color:#5F5E5A;margin-bottom:8px">Para la orden de trabajo (impresion)</div>';
@@ -993,18 +1124,31 @@ async function saveProceso(procesoId) {
       // Not planned: also reset planificador-driven duration to default
       payload.duracion_planificador_min = dur + margen;
     }
+    // Process state, only set if user changed it (only present when editing)
+    const peEl = document.getElementById('p-estado');
+    if (peEl) payload.estado_proceso = peEl.value;
     await sb.from('actividades_tablero').update(payload).eq('id', procesoId);
     toast('Proceso actualizado');
   } else {
     // New: assign next orden value
-    const sameItem = actividades.filter(a => a.item_id === nav.itemId);
+    const sameItem = actividades.filter(a => a.item_id === nav.itemId)
+      .sort((a, b) => (a.orden || 999999) - (b.orden || 999999));
     const maxOrden = sameItem.reduce((mx, a) => Math.max(mx, a.orden || 0), 0);
     payload.orden = maxOrden + 1;
     payload.estado = 'sin_planificar';
     payload.fecha = '1900-01-01';
     payload.hora_inicio = '06:00:00';
     payload.duracion_planificador_min = dur + margen;
-    await sb.from('actividades_tablero').insert(payload);
+    payload.estado_proceso = 'Planificación Pendiente';
+    const { data: newAct, error: insErr } = await sb.from('actividades_tablero').insert(payload).select().single();
+    if (insErr) { toast('Error: ' + insErr.message, true); return; }
+    // Auto-link as successor of the previous proceso of the same item, if any
+    if (sameItem.length > 0) {
+      const prev = sameItem[sameItem.length - 1];
+      await sb.from('correlatividades').insert({
+        predecesor_id: prev.id, sucesor_id: newAct.id
+      });
+    }
     toast('Proceso agregado');
   }
   await loadAll();

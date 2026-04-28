@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Velasco App 2.0 — Tablero por Operario v26</title>
+<title>Velasco App 2.0 — Tablero por Operario v27</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -161,7 +161,7 @@ function getVacaciones(dateStr){
 }
 
 // ========== STATE ==========
-let maq=[],ops=[],cls=[],acts=[],items=[],proys=[],uStack=[],dragD=null,tipEl=null,weekOffset=0;
+let maq=[],ops=[],cls=[],acts=[],items=[],proys=[],corrs=[],uStack=[],dragD=null,tipEl=null,weekOffset=0;
 // States that allow an activity to appear in the "+" picker
 const PROJ_ACTIVE_FOR_TABLERO = new Set(['Confirmado']);
 const ITEM_ACTIVE_FOR_TABLERO = new Set(['Espera MP', 'Llegó MP', 'Proceso', 'Enviar a TT', 'TT', 'Llegó TT']);
@@ -173,6 +173,21 @@ function isActAvailableForPlanning(a) {
   const p = proys.find(x => x.id === it.proyecto_id);
   if (!p) return true;  // legacy
   if (!PROJ_ACTIVE_FOR_TABLERO.has(p.estado || 'Confirmado')) return false;
+  return true;
+}
+
+// Returns true when ALL predecessors are either Planificado (in board) or Cerrado.
+// If any predecessor is still in 'Planificación Pendiente', this activity should
+// appear greyed out in the "+" picker.
+function hasPredecessorsReady(actId) {
+  const preds = corrs.filter(c => c.sucesor_id === actId).map(c => c.predecesor_id);
+  if (preds.length === 0) return true;
+  for (const pid of preds) {
+    const pa = acts.find(a => a.id === pid);
+    if (!pa) continue;  // missing — treat as not blocking
+    const ps = pa.estado_proceso || 'Planificación Pendiente';
+    if (ps === 'Planificación Pendiente') return false;
+  }
   return true;
 }
 let alertCounter = 0;
@@ -917,6 +932,12 @@ async function placeAct(actId, machId, fecha, startTime, newOpId) {
   if (!act) return;
   if (act.estado === 'completada') { toast('Actividad completada'); return; }
   if (!canPlace(act, machId)) { toast('Maquina no permitida. Ideal: ' + mN(act.maquina_ideal_id)); return; }
+  // Correlatividad check
+  const corrConflict = checkCorrelatividadConflict(actId, fecha, startTime);
+  if (corrConflict) {
+    alert(describeCorrelatividadConflict(corrConflict));
+    return;
+  }
 
   const effectiveOpId = (newOpId !== undefined && newOpId !== null) ? newOpId : act.operario_id;
   // Auto-adjust hora_inicio to the NEW operator's shift start if needed
@@ -928,10 +949,11 @@ async function placeAct(actId, machId, fecha, startTime, newOpId) {
   const ns = act.estado === 'sin_planificar' ? 'pendiente' : act.estado;
   const undoBatch = [{ id: actId, prev }];
 
-  const updatePayload = { maquina_id: machId, fecha: fecha, hora_inicio: mT(startTime), estado: ns };
+  const updatePayload = { maquina_id: machId, fecha: fecha, hora_inicio: mT(startTime), estado: ns, estado_proceso: 'Planificado' };
   if (effectiveOpId !== act.operario_id) updatePayload.operario_id = effectiveOpId;
   await sb.from('actividades_tablero').update(updatePayload).eq('id', actId);
   act.maquina_id = machId; act.fecha = fecha; act.hora_inicio = mT(startTime); act.estado = ns;
+  act.estado_proceso = 'Planificado';
   if (effectiveOpId !== act.operario_id) act.operario_id = effectiveOpId;
 
   // EXPLICIT PUSH: any activity on same machine+day that would overlap, gets pushed
@@ -1021,11 +1043,81 @@ async function placeAct(actId, machId, fecha, startTime, newOpId) {
   render();
 }
 
+// Returns null when the move is allowed, or an object with the conflicting
+// predecessor or successor activity that violates correlatividad.
+// fecha + startTime: where the activity is being moved.
+function checkCorrelatividadConflict(actId, fecha, startTime) {
+  const act = acts.find(a => a.id === actId);
+  if (!act) return null;
+  // Compute new end of the moved activity for successor checks
+  const dur = D(act);
+  const newEndDate = fecha;
+  const newEndTime = startTime + dur;
+  // Predecessors: must finish BEFORE startTime (in chronological order)
+  const predIds = corrs.filter(c => c.sucesor_id === actId).map(c => c.predecesor_id);
+  for (const pid of predIds) {
+    const pa = acts.find(a => a.id === pid);
+    if (!pa) continue;
+    const ps = pa.estado_proceso || 'Planificación Pendiente';
+    // A Cerrado predecessor doesn't constrain
+    if (ps === 'Cerrado') continue;
+    // If predecessor is unplaced, block
+    if (ps === 'Planificación Pendiente' || pa.estado === 'sin_planificar') {
+      return { type: 'pred-unplaced', other: pa };
+    }
+    // Compare predecessor end vs sucesor start
+    const pe = realEnd(pa);
+    if (pe.date > fecha || (pe.date === fecha && pe.time > startTime)) {
+      return { type: 'pred-overlap', other: pa };
+    }
+  }
+  // Successors: must start AFTER newEndTime
+  const sucIds = corrs.filter(c => c.predecesor_id === actId).map(c => c.sucesor_id);
+  for (const sid of sucIds) {
+    const sa = acts.find(a => a.id === sid);
+    if (!sa) continue;
+    const ss = sa.estado_proceso || 'Planificación Pendiente';
+    if (ss === 'Cerrado') continue;
+    // Unplaced successor doesn't block (it'll be placed later respecting our new end)
+    if (sa.estado === 'sin_planificar') continue;
+    const sStart = tM(sa.hora_inicio);
+    // Compare successor start vs predecessor (this) end
+    if (sa.fecha < newEndDate || (sa.fecha === newEndDate && sStart < newEndTime)) {
+      return { type: 'suc-overlap', other: sa };
+    }
+  }
+  return null;
+}
+
+function describeCorrelatividadConflict(conflict) {
+  const o = conflict.other;
+  const oItem = items.find(x => x.id === o.item_id);
+  const oLabel = (oItem ? oItem.descripcion + ' / ' : '') + (o.proceso || '?');
+  if (conflict.type === 'pred-unplaced') {
+    return 'No se puede mover: el predecesor "' + oLabel + '" todavia no esta planificado/cerrado.';
+  }
+  if (conflict.type === 'pred-overlap') {
+    return 'No se puede mover: el predecesor "' + oLabel + '" termina despues del nuevo inicio.';
+  }
+  if (conflict.type === 'suc-overlap') {
+    return 'No se puede mover: el sucesor "' + oLabel + '" empieza antes del nuevo fin.';
+  }
+  return 'Conflicto de correlatividad';
+}
+
 function placeActWithCheck(actId, machId, fecha, startTime, newOpId, skipOpCheck) {
   const act = acts.find(a => a.id === actId);
   if (!act) return;
   const effectiveOpId = (newOpId !== undefined && newOpId !== null) ? newOpId : act.operario_id;
   if (!effectiveOpId) { placeAct(actId, machId, fecha, startTime, newOpId); return; }
+
+  // STEP 0: correlatividad. Block if a predecessor would end after our start
+  // or a successor would start before our end.
+  const corrConflict = checkCorrelatividadConflict(actId, fecha, startTime);
+  if (corrConflict) {
+    alert(describeCorrelatividadConflict(corrConflict));
+    return;
+  }
 
   // STEP 1: simulate the operator cascade that WOULD happen if we placed
   // the activity here. Then check if ANY of the resulting positions (the
@@ -1605,9 +1697,9 @@ function render() {
                 if (canFit) {
                   const lbl = document.createElement('div');
                   lbl.textContent = 'MANUAL';
-                  lbl.style.cssText = 'position:absolute;top:2px;left:0;' +
-                    'width:' + setupPct.toFixed(3) + '%;' +
-                    'display:flex;flex-direction:column;align-items:center;' +
+                  lbl.style.cssText = 'position:absolute;top:0;left:0;' +
+                    'width:' + setupPct.toFixed(3) + '%;height:100%;' +
+                    'display:flex;flex-direction:column;align-items:center;justify-content:center;' +
                     'font-size:9px;font-weight:800;letter-spacing:0;' +
                     'color:rgba(0,0,0,.85);line-height:1;pointer-events:none;' +
                     'writing-mode:vertical-rl;text-orientation:upright;' +
@@ -1881,9 +1973,9 @@ async function saveEdit(actId) {
 
 async function removeAct(actId) {
   const act = acts.find(a => a.id === actId); if (!act) return;
-  const prev = { maquina_id: act.maquina_id, fecha: act.fecha, hora_inicio: act.hora_inicio, estado: act.estado, operario_id: act.operario_id };
-  await sb.from('actividades_tablero').update({ fecha: '1900-01-01', estado: 'sin_planificar', maquina_id: null }).eq('id', actId);
-  act.fecha = '1900-01-01'; act.estado = 'sin_planificar'; act.maquina_id = null;
+  const prev = { maquina_id: act.maquina_id, fecha: act.fecha, hora_inicio: act.hora_inicio, estado: act.estado, operario_id: act.operario_id, estado_proceso: act.estado_proceso };
+  await sb.from('actividades_tablero').update({ fecha: '1900-01-01', estado: 'sin_planificar', maquina_id: null, estado_proceso: 'Planificación Pendiente' }).eq('id', actId);
+  act.fecha = '1900-01-01'; act.estado = 'sin_planificar'; act.maquina_id = null; act.estado_proceso = 'Planificación Pendiente';
   uStack.push([{ id: actId, prev }]); updU();
   toast('Quitado: ' + act.descripcion); render();
 }
@@ -2031,30 +2123,51 @@ function opSelectorItem(a, opId, fecha) {
   const dt = Math.floor(a.duracion_estimada_min / 60) + 'h' + (a.duracion_estimada_min % 60 ? ' ' + a.duracion_estimada_min % 60 + 'm' : '');
   const foto = a.foto_url || a.foto_proyecto_url;
   const urgColor = a.urgencia === 'urgente' ? '#1A1A1A' : a.urgencia === 'alta' ? '#C62828' : a.urgencia === 'media' ? '#854F0B' : '#1B6B1B';
+  // Check if predecessors are ready (Planificado or Cerrado).
+  // If not, the activity is shown but disabled with grey overlay.
+  const predsReady = hasPredecessorsReady(a.id);
+  // Find unmet predecessor labels for tooltip
+  let pendingPreds = [];
+  if (!predsReady) {
+    const myPreds = corrs.filter(c => c.sucesor_id === a.id).map(c => c.predecesor_id);
+    myPreds.forEach(pid => {
+      const pa = acts.find(x => x.id === pid);
+      if (pa && (pa.estado_proceso || 'Planificación Pendiente') === 'Planificación Pendiente') {
+        const pi = items.find(x => x.id === pa.item_id);
+        pendingPreds.push((pi ? pi.descripcion + ' / ' : '') + (pa.proceso || '?'));
+      }
+    });
+  }
   let img;
   if (foto) {
     img = '<img src="' + foto + '" style="width:40px;height:40px;border-radius:4px;object-fit:cover;flex-shrink:0;background:#E8E6DF" onerror="this.style.visibility=\'hidden\'">';
   } else {
     img = '<div style="width:40px;height:40px;border-radius:4px;background:#E8E6DF;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:8px;color:#888780">sin foto</div>';
   }
-  // Indicate if this operator is ideal or suplente for the activity
   const isIdealOp = a.operario_ideal_id === opId;
   const opMark = isIdealOp ? '<span style="color:#0C447C;font-weight:600">Operario ideal</span>' : '<span style="color:#5F5E5A">Operario suplente</span>';
-  // Machine hint
   let machInfo = '<b>MP:</b> ' + mN(a.maquina_ideal_id);
   if (a.maquinas_suplentes_ids && a.maquinas_suplentes_ids.length) {
     machInfo += ' | <b>MS:</b> ' + a.maquinas_suplentes_ids.map(id => mN(parseInt(id))).join(', ');
   }
-  let h = '<div class="ao" onclick="chooseMachineForAssign(' + a.id + ',' + opId + ',\'' + fecha + '\')" style="display:flex;align-items:center;gap:10px">';
+  // If predecessors not ready: render greyed-out, no click handler
+  const containerStyle = predsReady ? '' : 'opacity:.45;pointer-events:none;background:#F5F3EC';
+  const onclickAttr = predsReady ? 'onclick="chooseMachineForAssign(' + a.id + ',' + opId + ',\'' + fecha + '\')"' : '';
+  const tooltip = predsReady ? '' : ' title="Bloqueado: predecesores aun no planificados/cerrados"';
+  let h = '<div class="ao" ' + onclickAttr + tooltip + ' style="display:flex;align-items:center;gap:10px;' + containerStyle + '">';
   h += img;
   h += '<div style="flex:1;min-width:0">';
-  // Title row with type badge (manual/automatica)
   const typeBadge = a.tipo === 'automatica'
     ? '<span style="display:inline-block;background:#1A1A1A;color:#fff;font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;margin-left:6px;vertical-align:middle">AUTO</span>'
     : '<span style="display:inline-block;background:#E8E6DF;color:#5F5E5A;font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;margin-left:6px;vertical-align:middle">MAN</span>';
-  h += '<div class="ao-t">' + a.descripcion + typeBadge + ' <span style="font-weight:400;color:#5F5E5A">— ' + a.proceso + '</span></div>';
+  // Predecessor block badge
+  const blockedBadge = predsReady ? '' : '<span style="display:inline-block;background:#FEDADA;color:#A32D2D;font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;margin-left:6px;vertical-align:middle">⚠ BLOQUEADA</span>';
+  h += '<div class="ao-t">' + a.descripcion + typeBadge + blockedBadge + ' <span style="font-weight:400;color:#5F5E5A">— ' + a.proceso + '</span></div>';
   h += '<div class="ao-s">' + clN(a.cliente_id) + ' | Ped. <b>' + (a.pedido_nro || '-') + '</b> | <span style="color:' + urgColor + ';font-weight:600">' + a.urgencia + '</span> | ' + dt + '</div>';
   h += '<div class="ao-s" style="font-size:10px">' + opMark + ' | ' + machInfo + '</div>';
+  if (!predsReady && pendingPreds.length) {
+    h += '<div class="ao-s" style="font-size:10px;color:#A32D2D"><b>Esperando:</b> ' + pendingPreds.slice(0, 3).map(s => s.replace(/[<>&]/g, '')).join(', ') + (pendingPreds.length > 3 ? ' (+' + (pendingPreds.length - 3) + ' más)' : '') + '</div>';
+  }
   h += '</div></div>';
   return h;
 }
@@ -2353,6 +2466,7 @@ async function init() {
   const { data: aD } = await sb.from('actividades_tablero').select('*'); acts = aD || [];
   const { data: iD } = await sb.from('items').select('*'); items = iD || [];
   const { data: pD } = await sb.from('proyectos').select('*'); proys = pD || [];
+  const { data: corrD } = await sb.from('correlatividades').select('*'); corrs = corrD || [];
   document.getElementById('hd-d').textContent = new Date().toLocaleDateString('es-AR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
   renderLg(); render();
 }
