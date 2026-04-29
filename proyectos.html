@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v9</title>
+<title>Velasco App 2.0 — Proyectos v9.2</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -353,6 +353,13 @@ function renderNewProjectForm() {
   h += '<input type="text" class="ef-i" id="f-item-desc" placeholder="Ej. Eje principal"></div>';
   h += '<div class="ef" style="flex:1"><div class="ef-l">Cantidad</div>';
   h += '<input type="number" class="ef-i" id="f-item-cant" value="1" min="1" step="1"></div></div>';
+  h += '<div class="ef" style="background:#FFF4D5;padding:8px 10px;border-radius:5px;border:1px solid #F5C842"><div class="ef-l" style="color:#854F0B">Estado del item</div>';
+  h += '<select class="ef-i" id="f-item-estado">';
+  ITEM_STATES.forEach(st => {
+    h += '<option value="' + st + '"' + (st === 'Espera MP' ? ' selected' : '') + '>' + st + '</option>';
+  });
+  h += '</select>';
+  h += '<div class="ef-help" style="color:#854F0B">Si la materia prima ya esta en el taller, podes setearlo en "Llego MP" o el estado real.</div></div>';
   h += '<div class="row">';
   h += '<div class="ef" style="flex:1"><div class="ef-l">Material</div>';
   h += '<input type="text" class="ef-i" id="f-item-mat" placeholder="Ej. SAE 1010"></div>';
@@ -414,6 +421,8 @@ async function saveNewProject() {
   const itemPres = document.getElementById('f-item-pres').value.trim() || null;
   const itemFechaFin = document.getElementById('f-item-fechafin').value || null;
   const itemFotoUrl = document.getElementById('photo-url-item').value.trim() || null;
+  const itemEstadoEl = document.getElementById('f-item-estado');
+  const itemEstado = itemEstadoEl ? itemEstadoEl.value : 'Espera MP';
   const fotoUrl = document.getElementById('photo-url-proj').value.trim() || null;
   const fechaIngreso = document.getElementById('f-fechaing').value || null;
   const clienteFinal = document.getElementById('f-clifinal').value.trim() || null;
@@ -436,7 +445,7 @@ async function saveNewProject() {
     descripcion: itemDesc, cantidad: itemCant,
     foto_url: itemFotoUrl, material: itemMat,
     presentacion_mat_prima: itemPres, fecha_fin_estipulada: itemFechaFin,
-    estado: 'Espera MP'
+    estado: itemEstado
   });
   if (itemErr) { toast('Error creando item: ' + itemErr.message, true); return; }
   await loadAll();
@@ -1512,8 +1521,11 @@ body { font-family: Arial, sans-serif; font-size: 11px; color: #000; }
 .cover-photo img { max-width: 100%; max-height: 320px; object-fit: contain; border: 1px solid #000; }
 
 /* ===== ORDEN DE TRABAJO (mitad de hoja) ===== */
-.ot { border: 1.5px solid #000; padding: 0; display: flex; flex-direction: column; height: 144.5mm; min-height: 144.5mm; max-height: 144.5mm; overflow: hidden; position: relative; page-break-inside: avoid; }
+.ot { border: 1.5px solid #000; padding: 0; display: flex; flex-direction: column; height: 142mm; min-height: 142mm; max-height: 142mm; overflow: hidden; position: relative; page-break-inside: avoid; }
 .ot-page { display: flex; flex-direction: column; gap: 0; }
+.ot-cut { border: none; height: 5mm; margin: 0; position: relative; display: flex; align-items: center; justify-content: center; z-index: 5; }
+.ot-cut::before { content: '\\2702 - - - - - - - - - - - - cortar aqui - - - - - - - - - - - -'; font-size: 9px; color: #888; letter-spacing: 1px; background: #fff; padding: 0 8px; }
+.ot-cut::after { content: ''; position: absolute; top: 50%; left: 0; right: 0; border-top: 1px dashed #888; z-index: -1; }
 .ot::before {
   content: '';
   position: absolute;
@@ -1531,8 +1543,6 @@ body { font-family: Arial, sans-serif; font-size: 11px; color: #000; }
   z-index: 0;
 }
 .ot > * { position: relative; z-index: 1; }
-.ot-cut { border: none; border-top: 1px dashed #888; height: 0; margin: 0; position: relative; z-index: 5; }
-.ot-cut::before { content: '\\2702 - - - - - - - cortar aqui - - - - - - -'; position: absolute; top: -7px; left: 50%; transform: translateX(-50%); background: #fff; padding: 0 8px; font-size: 8px; color: #888; letter-spacing: 1px; }
 
 /* Tarea: black band, white text, big font, full width */
 .ot-tarea-band { display: flex; justify-content: space-between; align-items: center; background: #000; color: #fff; padding: 7px 12px; font-size: 16px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; }
@@ -1627,7 +1637,7 @@ body { font-family: Arial, sans-serif; font-size: 11px; color: #000; }
     const p2 = procesos[i + 1];
     html += `<div class="page ot-page">`;
     html += renderOT(p1, i + 1, procesos.length, item, meta, clienteDisplay);
-    html += `<hr class="ot-cut">`;
+    html += `<div class="ot-cut"></div>`;
     if (p2) html += renderOT(p2, i + 2, procesos.length, item, meta, clienteDisplay);
     else html += `<div style="flex:1"></div>`;
     html += `</div>`;

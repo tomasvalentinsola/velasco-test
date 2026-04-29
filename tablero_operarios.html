@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Velasco App 2.0 — Tablero por Operario v31.1</title>
+<title>Velasco App 2.0 — Tablero por Operario v31.2</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -1695,10 +1695,12 @@ function render() {
           }
 
           const tx = document.createElement('div');
-          tx.style.cssText = 'display:flex;flex-direction:column;justify-content:center;overflow:hidden;text-align:center' + (showPhoto ? ';flex:1;min-width:0' : '');
+          // Activities default to left-align. Pulmones override to center below.
+          tx.style.cssText = 'display:flex;flex-direction:column;justify-content:center;overflow:hidden;text-align:left' + (showPhoto ? ';flex:1;min-width:0' : '');
 
           if (act.es_pulmon) {
-            // Pulmón block: just "Pulmón" centered + hora_inicio - hora_fin below
+            // Pulmón block: "Pulmón" centered + hora_inicio - hora_fin below
+            tx.style.textAlign = 'center';
             const lbl = document.createElement('div');
             lbl.className = 'bt';
             lbl.style.fontWeight = '700';
@@ -1819,15 +1821,26 @@ function render() {
                 const blockHeightPx = blockH - 4;
                 const canFit = setupWidthPx >= 12 && blockHeightPx >= 56;
                 if (canFit) {
+                  // Build the "MANUAL" label as a stack of single-letter spans
+                  // with controlled height. This avoids the gaps that
+                  // writing-mode + text-orientation:upright introduce in some
+                  // fonts (where each glyph reserves its natural cap-height).
                   const lbl = document.createElement('div');
-                  lbl.textContent = 'MANUAL';
                   lbl.style.cssText = 'position:absolute;top:0;left:0;' +
                     'width:' + setupPct.toFixed(3) + '%;height:100%;' +
                     'display:flex;flex-direction:column;align-items:center;justify-content:center;' +
-                    'font-size:9px;font-weight:800;letter-spacing:0;' +
-                    'color:rgba(0,0,0,.85);line-height:1;pointer-events:none;' +
-                    'writing-mode:vertical-rl;text-orientation:upright;' +
-                    'z-index:2;user-select:none';
+                    'pointer-events:none;z-index:2;user-select:none';
+                  // Pick a letter-cell height such that 6 letters fit comfortably.
+                  // We have blockHeightPx pixels (already >=56). Reserve 70% for letters.
+                  const letterCellPx = Math.min(11, Math.max(7, Math.floor(blockHeightPx * 0.70 / 6)));
+                  'MANUAL'.split('').forEach(ch => {
+                    const s = document.createElement('div');
+                    s.textContent = ch;
+                    s.style.cssText = 'font-size:' + letterCellPx + 'px;line-height:' + letterCellPx + 'px;' +
+                      'height:' + letterCellPx + 'px;font-weight:800;color:rgba(0,0,0,.85);' +
+                      'text-align:center;font-family:Arial,sans-serif';
+                    lbl.appendChild(s);
+                  });
                   block.appendChild(lbl);
                 }
                 // Shift the tx container so the description/client/order info
@@ -2302,11 +2315,43 @@ function showMoveAfterPredecessorModal(actId, machId, latestPred, adjStart, newO
   h += '</div>';
   h += '<div style="font-size:12px;color:#5F5E5A;margin-bottom:14px">¿Que hacer?</div>';
   h += '<div style="display:flex;flex-direction:column;gap:8px">';
+  // Option A: accept the suggestion
   h += '<button class="b b-p" style="text-align:left;padding:10px" onclick="acceptMoveAfterPred(' + actId + ',' + machId + ',\'' + adjStart.date + '\',' + adjStart.time + ',' + (newOpId === null || newOpId === undefined ? 'null' : newOpId) + ')"><b>Mover justo despues del predecesor</b><br><span style="font-size:11px;color:#5F5E5A;font-weight:400">Inicio: ' + fmtDate(adjStart.date) + ' ' + mT(adjStart.time) + '</span></button>';
+  // Option B: pick a custom time on a date >= predecessor end date
+  h += '<div style="border:1px solid #C8C6BE;border-radius:5px;padding:10px">';
+  h += '<div style="font-size:12px;font-weight:600;margin-bottom:6px">Elegir fecha y hora manualmente</div>';
+  h += '<div style="display:flex;gap:6px;align-items:center">';
+  h += '<input type="date" id="mvp-fecha" value="' + adjStart.date + '" min="' + latestPred.date + '" style="padding:5px;border:1px solid #C8C6BE;border-radius:4px;font-size:12px">';
+  h += '<input type="time" id="mvp-hora" value="' + mT(adjStart.time) + '" step="600" style="padding:5px;border:1px solid #C8C6BE;border-radius:4px;font-size:12px">';
+  h += '<button class="b" id="mvp-use" style="padding:5px 10px">Usar esta hora</button>';
+  h += '</div>';
+  h += '<div id="mvp-err" style="display:none;color:#A32D2D;font-size:11px;margin-top:6px"></div>';
+  h += '</div>';
   h += '<button class="b" onclick="this.closest(\'.mo\').remove()" style="padding:10px">Cancelar</button>';
   h += '</div>';
   m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd);
   if (typeof makeModalDraggable === 'function') makeModalDraggable(m);
+  // Wire up the "Use this time" button
+  document.getElementById('mvp-use').onclick = () => {
+    const fechaSel = document.getElementById('mvp-fecha').value;
+    const horaSel = document.getElementById('mvp-hora').value;
+    const errEl = document.getElementById('mvp-err');
+    errEl.style.display = 'none';
+    if (!fechaSel || !horaSel) {
+      errEl.textContent = 'Completa fecha y hora'; errEl.style.display = 'block'; return;
+    }
+    const userTime = tM(horaSel + ':00');
+    // Verify it's after predecessor end
+    const predEndDate = latestPred.date;
+    const predEndTime = latestPred.time;
+    if (fechaSel < predEndDate || (fechaSel === predEndDate && userTime < predEndTime)) {
+      errEl.textContent = 'La hora elegida es anterior al fin del predecesor (' + fmtDate(predEndDate) + ' ' + mT(predEndTime) + ')';
+      errEl.style.display = 'block';
+      return;
+    }
+    bd.remove();
+    placeActWithCheck(actId, machId, fechaSel, userTime, newOpId);
+  };
 }
 
 function acceptMoveAfterPred(actId, machId, fecha, startTime, newOpId) {
