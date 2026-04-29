@@ -1175,13 +1175,16 @@ function placeActWithCheck(actId, machId, fecha, startTime, newOpId, skipOpCheck
   // - pred-unplaced or suc-overlap → block with alert (can't auto-resolve).
   // - pred-overlap → offer to move just-after the latest predecessor end.
   const corrConflict = checkCorrelatividadConflict(actId, fecha, startTime);
+  console.log('[placeActWithCheck] actId=' + actId + ' fecha=' + fecha + ' startTime=' + startTime + ' corrConflict=', corrConflict);
   if (corrConflict) {
     if (corrConflict.type === 'pred-overlap') {
       // Offer "move just after predecessor" option
       const latestPred = latestPredecessorEnd(actId);
+      console.log('[placeActWithCheck] latestPred=', latestPred);
       if (latestPred) {
         // New start = predEnd + GAP, adjusted to working hours
         const adjStart = adjustToWorkingHours(effectiveOpId, latestPred.date, latestPred.time + GAP);
+        console.log('[placeActWithCheck] adjStart=', adjStart);
         showMoveAfterPredecessorModal(actId, machId, latestPred, adjStart, newOpId);
         return;
       }
