@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Velasco App 2.0 — Tablero por Operario v31</title>
+<title>Velasco App 2.0 — Tablero por Operario v31.1</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -166,6 +166,10 @@ function getVacaciones(dateStr){
 
 // ========== STATE ==========
 let maq=[],ops=[],cls=[],acts=[],items=[],proys=[],corrs=[],uStack=[],dragD=null,tipEl=null,weekOffset=0;
+// HTML escape (used by modals when rendering names that may have & < > " ').
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
 // States that allow an activity to appear in the "+" picker
 const PROJ_ACTIVE_FOR_TABLERO = new Set(['Confirmado']);
 const ITEM_ACTIVE_FOR_TABLERO = new Set(['Espera MP', 'Llegó MP', 'Proceso', 'Enviar a TT', 'TT', 'Llegó TT']);
@@ -1175,16 +1179,13 @@ function placeActWithCheck(actId, machId, fecha, startTime, newOpId, skipOpCheck
   // - pred-unplaced or suc-overlap → block with alert (can't auto-resolve).
   // - pred-overlap → offer to move just-after the latest predecessor end.
   const corrConflict = checkCorrelatividadConflict(actId, fecha, startTime);
-  console.log('[placeActWithCheck] actId=' + actId + ' fecha=' + fecha + ' startTime=' + startTime + ' corrConflict=', corrConflict);
   if (corrConflict) {
     if (corrConflict.type === 'pred-overlap') {
       // Offer "move just after predecessor" option
       const latestPred = latestPredecessorEnd(actId);
-      console.log('[placeActWithCheck] latestPred=', latestPred);
       if (latestPred) {
         // New start = predEnd + GAP, adjusted to working hours
         const adjStart = adjustToWorkingHours(effectiveOpId, latestPred.date, latestPred.time + GAP);
-        console.log('[placeActWithCheck] adjStart=', adjStart);
         showMoveAfterPredecessorModal(actId, machId, latestPred, adjStart, newOpId);
         return;
       }
