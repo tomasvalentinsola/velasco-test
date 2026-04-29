@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Velasco App 2.0 — Tablero por Operario v31.2</title>
+<title>Velasco App 2.0 — Tablero por Operario v32</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -169,6 +169,17 @@ let maq=[],ops=[],cls=[],acts=[],items=[],proys=[],corrs=[],uStack=[],dragD=null
 // HTML escape (used by modals when rendering names that may have & < > " ').
 function escapeHtml(s) {
   return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+// Sticky preference for what to do with pulmones in the way of a move.
+// 'cascadear' (default) treats them like any activity and shifts them forward.
+// 'pisar' deletes them when they overlap. Persisted in localStorage.
+let pulmonActionPref = (function () {
+  try { return localStorage.getItem('velasco_pulmonAction') || 'cascadear'; }
+  catch (e) { return 'cascadear'; }
+})();
+function setPulmonActionPref(v) {
+  pulmonActionPref = v;
+  try { localStorage.setItem('velasco_pulmonAction', v); } catch (e) {}
 }
 // States that allow an activity to appear in the "+" picker
 const PROJ_ACTIVE_FOR_TABLERO = new Set(['Confirmado']);
@@ -818,12 +829,14 @@ function showCascadePreview(act, targetOpId, targetFecha, startMin, machId, over
 // are its proposed values. If `placedActId` isn't currently owned by opId,
 // it's added to the snapshot (for the case where we're reassigning an act
 // from another operator).
-function simulateOpCascade(opId, placedActId, placedFecha, placedStart, placedMachId) {
+function simulateOpCascade(opId, placedActId, placedFecha, placedStart, placedMachId, omitPulmonIds) {
   if (!opId) return [];
-  // Clone activities of this operator (they're the only ones the cascade touches)
+  const omit = omitPulmonIds instanceof Set ? omitPulmonIds : new Set();
+  // Clone activities of this operator (they're the only ones the cascade touches).
+  // Excludes activities flagged in `omit` (pulmones to be deleted by 'pisar').
   const snapshot = acts
-    .filter(a => a.operario_id === opId && a.estado !== 'sin_planificar' && a.fecha !== '1900-01-01' && a.id !== placedActId)
-    .map(a => ({ id: a.id, operario_id: a.operario_id, maquina_id: a.maquina_id, fecha: a.fecha, hora_inicio: a.hora_inicio, duracion_estimada_min: a.duracion_estimada_min, duracion_margen_min: a.duracion_margen_min, duracion_operario_min: a.duracion_operario_min, descripcion: a.descripcion, pedido_nro: a.pedido_nro, tipo: a.tipo }));
+    .filter(a => a.operario_id === opId && a.estado !== 'sin_planificar' && a.fecha !== '1900-01-01' && a.id !== placedActId && !omit.has(a.id))
+    .map(a => ({ id: a.id, operario_id: a.operario_id, maquina_id: a.maquina_id, fecha: a.fecha, hora_inicio: a.hora_inicio, duracion_estimada_min: a.duracion_estimada_min, duracion_margen_min: a.duracion_margen_min, duracion_operario_min: a.duracion_operario_min, descripcion: a.descripcion, pedido_nro: a.pedido_nro, tipo: a.tipo, es_pulmon: a.es_pulmon }));
   // Add the placed activity (pulling its other fields from the actual act)
   const srcAct = acts.find(a => a.id === placedActId);
   if (srcAct) {
@@ -1181,10 +1194,8 @@ function placeActWithCheck(actId, machId, fecha, startTime, newOpId, skipOpCheck
   const corrConflict = checkCorrelatividadConflict(actId, fecha, startTime);
   if (corrConflict) {
     if (corrConflict.type === 'pred-overlap') {
-      // Offer "move just after predecessor" option
       const latestPred = latestPredecessorEnd(actId);
       if (latestPred) {
-        // New start = predEnd + GAP, adjusted to working hours
         const adjStart = adjustToWorkingHours(effectiveOpId, latestPred.date, latestPred.time + GAP);
         showMoveAfterPredecessorModal(actId, machId, latestPred, adjStart, newOpId);
         return;
@@ -1194,40 +1205,33 @@ function placeActWithCheck(actId, machId, fecha, startTime, newOpId, skipOpCheck
     return;
   }
 
-  // STEP 0.5: detect pulmones del mismo operario que se cruzan temporalmente
-  // con la actividad colocada. Si hay alguno, preguntar pisar vs cascadear.
-  // Esto solo se hace en la primera pasada (pulmonesAPisar undefined).
-  if (!act._pulmonesAPisar) {
-    const dur = D(act);
-    const placedEnd = startTime + dur;
-    const pulmonesAfectados = acts.filter(a => {
-      if (!a.es_pulmon) return false;
-      if (a.operario_id !== effectiveOpId) return false;
-      if (a.fecha !== fecha) return false;
-      if (a.id === actId) return false;
-      const pStart = tM(a.hora_inicio);
-      const pEnd = pStart + D(a);
-      // Overlap check
-      return !(pEnd <= startTime || pStart >= placedEnd);
-    });
-    if (pulmonesAfectados.length > 0) {
-      // Show pre-decision modal with pulmón options
-      showPulmonDecisionModal(actId, machId, fecha, startTime, newOpId, pulmonesAfectados);
-      return;
-    }
-  }
+  // STEP 0.5: detectar pulmones del mismo operario que se cruzan con la activ.
+  // Aplica la preferencia sticky (pisar / cascadear) sin preguntar al usuario.
+  // Si pisar → eliminamos el pulmón antes de la simulación.
+  // Si cascadear → no hacemos nada acá; la cascada de simulación los va a mover.
+  const placedDur = D(act);
+  const pulmonesAfectadosIds = acts.filter(a => {
+    if (!a.es_pulmon) return false;
+    if (a.operario_id !== effectiveOpId) return false;
+    if (a.fecha !== fecha) return false;
+    if (a.id === actId) return false;
+    const pStart = tM(a.hora_inicio);
+    const pEnd = pStart + D(a);
+    return !(pEnd <= startTime || pStart >= startTime + placedDur);
+  }).map(p => p.id);
 
-  // If we reach here, any decisions about pulmones were already taken.
-  // The "pisar" pulmones are already deleted from `acts` by the decision modal.
+  // Build the simulation. If pulmonActionPref === 'pisar', remove the affected
+  // pulmones from the snapshot before simulating (so the cascade doesn't "see" them).
+  // We'll delete them from DB only if the user confirms the move.
+  const pulmonesAPisar = (pulmonActionPref === 'pisar') ? new Set(pulmonesAfectadosIds) : new Set();
 
-  // STEP 1: simulate the operator cascade that WOULD happen if we placed
-  // the activity here. Then check if ANY of the resulting positions (the
-  // placed activity itself + any cascaded ones) collides with another
-  // operator's machine usage. This catches the case where the placed act
-  // is fine but its cascade pushes another activity into a conflict.
-  const snapshot = simulateOpCascade(effectiveOpId, actId, fecha, startTime, machId);
+  // STEP 1: simulate the operator cascade with the placed activity.
+  // Pass the pulmonesAPisar set so simulateOpCascade ignores them.
+  const snapshot = simulateOpCascade(effectiveOpId, actId, fecha, startTime, machId, pulmonesAPisar);
+
+  // STEP 2: check for inter-operator machine conflicts on any cascaded item.
   const allMachConflicts = [];
-  const conflictSourceMap = new Map();  // conflictId → the sim act that caused it
+  const conflictSourceMap = new Map();
   for (const sim of snapshot) {
     const orig = acts.find(a => a.id === sim.id);
     const isPlaced = sim.id === actId;
@@ -1242,31 +1246,141 @@ function placeActWithCheck(actId, machId, fecha, startTime, newOpId, skipOpCheck
     });
   }
   if (allMachConflicts.length > 0) {
-    console.log('[drop] placeActWithCheck: machine conflicts with other ops (incl. cascaded) = ' + allMachConflicts.length);
-    toast('[DBG] Conflicto de maquina (' + allMachConflicts.length + ') con otro operario');
     showMachineConflictAlert(act, machId, fecha, startTime, allMachConflicts, newOpId, effectiveOpId, conflictSourceMap);
     return;
   }
 
-  // STEP 2: operator conflicts (skipped when dragging within same operator,
-  // since the user's intent is explicit).
+  // STEP 3: build "actividades afectadas" list — activities that the simulation
+  // moves (different from current state), excluding the placed one.
+  const affectedItems = [];
+  for (const sim of snapshot) {
+    if (sim.id === actId) continue;
+    const orig = acts.find(a => a.id === sim.id);
+    if (!orig) continue;
+    if (orig.fecha !== sim.fecha || orig.hora_inicio !== sim.hora_inicio) {
+      affectedItems.push({
+        id: sim.id,
+        descripcion: orig.descripcion,
+        cliente: clN(orig.cliente_id),
+        es_pulmon: !!orig.es_pulmon,
+        oldFecha: orig.fecha, oldHora: orig.hora_inicio,
+        newFecha: sim.fecha, newHora: sim.hora_inicio
+      });
+    }
+  }
+
+  // CASE: nothing else moved AND no pulmones to delete → apply directly.
+  if (affectedItems.length === 0 && pulmonesAPisar.size === 0) {
+    proceedWithPlacement(actId, machId, fecha, startTime, newOpId, skipOpCheck, []);
+    return;
+  }
+
+  // CASE: only pulmones touched (deleted by 'pisar' OR shifted by 'cascadear'), and no other activities.
+  // The "only-pulmones" rule: if every affectedItem is a pulmón AND no other criteria.
+  const onlyPulmones = affectedItems.every(it => it.es_pulmon);
+  if (onlyPulmones && affectedItems.length + pulmonesAPisar.size > 0) {
+    // Apply directly (per user spec: don't ask for pulmón-only impacts)
+    proceedWithPlacement(actId, machId, fecha, startTime, newOpId, skipOpCheck, [...pulmonesAPisar]);
+    return;
+  }
+
+  // CASE: other activities are affected → show "Actividades afectadas" modal.
+  showAffectedActivitiesModal(actId, machId, fecha, startTime, newOpId, skipOpCheck,
+    affectedItems, [...pulmonesAPisar]);
+}
+
+// Helper called when we've confirmed (or auto-decided) to apply.
+// pulmonIdsToDelete: ids of pulmones to delete from DB before placing.
+async function proceedWithPlacement(actId, machId, fecha, startTime, newOpId, skipOpCheck, pulmonIdsToDelete) {
+  // Delete pulmones to "pisar"
+  for (const pid of (pulmonIdsToDelete || [])) {
+    await sb.from('actividades_tablero').delete().eq('id', pid);
+    const idx = acts.findIndex(x => x.id === pid);
+    if (idx >= 0) acts.splice(idx, 1);
+  }
+  const act = acts.find(a => a.id === actId);
+  if (!act) return;
+  const effectiveOpId = (newOpId !== undefined && newOpId !== null) ? newOpId : act.operario_id;
+
+  // STEP 4: operator conflicts (skipped when dragging within same operator)
   if (skipOpCheck) {
-    console.log('[drop] placeActWithCheck: skipOpCheck=true, going to placeAct');
     placeAct(actId, machId, fecha, startTime, newOpId);
     return;
   }
   const conflicts = findOpConflicts(actId, effectiveOpId, machId, fecha, startTime, Dop(act));
   const level = classifyOpConflict(act, conflicts);
-  console.log('[drop] placeActWithCheck: act=' + act.descripcion + ' op=' + opN(effectiveOpId) + ' mach=' + mN(machId) + ' fecha=' + fecha + ' start=' + mT(startTime) + ' → opConflicts=' + conflicts.length + ' level=' + level);
   if (level === 'ok') {
     placeAct(actId, machId, fecha, startTime, newOpId);
   } else {
     act._pendingFecha = fecha; act._pendingMachId = machId; act._pendingActId = actId; act._pendingNewOpId = newOpId;
-    if (level === 'yellow') toast('[DBG] Conflicto operario gris (' + conflicts.length + ') — se coloca igual');
-    if (level === 'red') toast('[DBG] Conflicto operario amarillo (' + conflicts.length + ') — pide confirmar');
-    if (level === 'blocked') toast('[DBG] Conflicto operario rojo (' + conflicts.length + ') — bloqueado');
     showOpAlert(level, act, conflicts, () => { suppressNextToast = true; placeAct(actId, machId, fecha, startTime, newOpId); }, effectiveOpId);
   }
+}
+
+// Modal listing all activities (and pulmones) that the simulation would move.
+// Includes a sticky checkbox to switch pulmón handling between "cascadear" and
+// "pisar". Changing the checkbox re-runs placeActWithCheck so the list refreshes.
+function showAffectedActivitiesModal(actId, machId, fecha, startTime, newOpId, skipOpCheck, affectedItems, pulmonIdsToDelete) {
+  const act = acts.find(a => a.id === actId);
+  if (!act) return;
+  const fmtDate = d => { const [y, m, da] = d.split('-'); return da + '/' + m + '/' + y; };
+  // Remove any existing instance of this modal first (e.g. on checkbox toggle)
+  const existing = document.getElementById('affected-modal');
+  if (existing) existing.remove();
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'affected-modal';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '720px';
+  let h = '<div class="md-t">Actividades afectadas</div>';
+  h += '<div style="font-size:12px;color:#5F5E5A;margin-bottom:10px">El movimiento desplaza ' + affectedItems.length + ' actividad(es)' + (pulmonIdsToDelete.length ? ' y elimina ' + pulmonIdsToDelete.length + ' pulmon(es)' : '') + '. Revisa la lista y confirma.</div>';
+  // Sticky checkbox
+  h += '<div style="background:#F5F3EC;border:1px solid #C8C6BE;border-radius:5px;padding:8px 10px;margin-bottom:10px;font-size:12px">';
+  h += '<label style="display:flex;align-items:center;gap:8px;cursor:pointer">';
+  h += '<input type="checkbox" id="aff-pisar"' + (pulmonActionPref === 'pisar' ? ' checked' : '') + ' onchange="toggleAffectedPulmonAction(' + actId + ',' + machId + ',\'' + fecha + '\',' + startTime + ',' + (newOpId === null || newOpId === undefined ? 'null' : newOpId) + ',' + (skipOpCheck ? 'true' : 'false') + ')">';
+  h += '<span><b>Pisar (eliminar) pulmones afectados</b><br><span style="font-size:11px;color:#5F5E5A">Si esta desmarcado, los pulmones se desplazan junto con las demas actividades.</span></span>';
+  h += '</label></div>';
+  // List
+  h += '<div style="max-height:340px;overflow-y:auto;border:1px solid #C8C6BE;border-radius:5px">';
+  h += '<table style="width:100%;border-collapse:collapse;font-size:12px">';
+  h += '<thead><tr style="background:#F5F3EC"><th style="padding:6px 8px;text-align:left;border-bottom:1px solid #C8C6BE">Actividad</th><th style="padding:6px 8px;text-align:left;border-bottom:1px solid #C8C6BE">Cliente</th><th style="padding:6px 8px;text-align:left;border-bottom:1px solid #C8C6BE">Actual</th><th style="padding:6px 8px;text-align:left;border-bottom:1px solid #C8C6BE">Nuevo</th></tr></thead><tbody>';
+  // Rows for affected (shifted) activities
+  affectedItems.forEach(it => {
+    const oldStr = fmtDate(it.oldFecha) + ' ' + it.oldHora.substring(0,5);
+    const newStr = fmtDate(it.newFecha) + ' ' + it.newHora.substring(0,5);
+    const icon = it.es_pulmon ? '🫁 ' : '';
+    h += '<tr><td style="padding:5px 8px;border-bottom:1px solid #F5F3EC">' + icon + escapeHtml(it.descripcion) + '</td>' +
+         '<td style="padding:5px 8px;border-bottom:1px solid #F5F3EC">' + escapeHtml(it.cliente) + '</td>' +
+         '<td style="padding:5px 8px;border-bottom:1px solid #F5F3EC;color:#888780">' + oldStr + '</td>' +
+         '<td style="padding:5px 8px;border-bottom:1px solid #F5F3EC;color:#0C447C;font-weight:600">' + newStr + '</td></tr>';
+  });
+  // Rows for pulmones to be deleted
+  pulmonIdsToDelete.forEach(pid => {
+    const p = acts.find(a => a.id === pid);
+    if (!p) return;
+    const oldStr = fmtDate(p.fecha) + ' ' + p.hora_inicio.substring(0,5);
+    h += '<tr><td style="padding:5px 8px;border-bottom:1px solid #F5F3EC">🫁 Pulmón</td>' +
+         '<td style="padding:5px 8px;border-bottom:1px solid #F5F3EC">—</td>' +
+         '<td style="padding:5px 8px;border-bottom:1px solid #F5F3EC;color:#888780">' + oldStr + '</td>' +
+         '<td style="padding:5px 8px;border-bottom:1px solid #F5F3EC;color:#A32D2D;font-weight:600">SE ELIMINA</td></tr>';
+  });
+  h += '</tbody></table></div>';
+  h += '<div class="actions" style="margin-top:14px">';
+  h += '<button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button>';
+  h += '<button class="b b-p" onclick="confirmAffectedAndProceed(' + actId + ',' + machId + ',\'' + fecha + '\',' + startTime + ',' + (newOpId === null || newOpId === undefined ? 'null' : newOpId) + ',' + (skipOpCheck ? 'true' : 'false') + ',[' + pulmonIdsToDelete.join(',') + '])">Aceptar y aplicar</button>';
+  h += '</div>';
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd);
+  if (typeof makeModalDraggable === 'function') makeModalDraggable(m);
+}
+
+function toggleAffectedPulmonAction(actId, machId, fecha, startTime, newOpId, skipOpCheck) {
+  const checked = document.getElementById('aff-pisar').checked;
+  setPulmonActionPref(checked ? 'pisar' : 'cascadear');
+  // Re-run placeActWithCheck — it'll recompute and refresh the modal
+  placeActWithCheck(actId, machId, fecha, startTime, newOpId, skipOpCheck);
+}
+
+function confirmAffectedAndProceed(actId, machId, fecha, startTime, newOpId, skipOpCheck, pulmonIdsToDelete) {
+  const modal = document.getElementById('affected-modal');
+  if (modal) modal.remove();
+  proceedWithPlacement(actId, machId, fecha, startTime, newOpId, skipOpCheck, pulmonIdsToDelete);
 }
 
 // Dialog shown when the proposed placement conflicts with activities of
