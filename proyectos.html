@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v8.2</title>
+<title>Velasco App 2.0 — Proyectos v9</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -62,7 +62,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .b-icon{padding:4px 8px;font-size:11px}
 .mo{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:200;display:flex;align-items:center;justify-content:center}
 .md{background:#fff;border-radius:10px;padding:22px;min-width:480px;max-width:680px;max-height:88vh;overflow-y:auto;border:1px solid #C8C6BE;position:relative}
-.md-t{font-size:16px;font-weight:600;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid #E8E6DF;cursor:move;user-select:none}
+.md-t{font-size:16px;font-weight:600;margin-bottom:14px;padding-bottom:10px;padding-right:34px;border-bottom:1px solid #E8E6DF;cursor:move;user-select:none}
+.md-x{position:absolute;top:14px;right:16px;width:26px;height:26px;display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:700;color:#5F5E5A;cursor:pointer;border-radius:4px;user-select:none}
+.md-x:hover{background:#FEDADA;color:#A32D2D}
 .chip-wrap{display:flex;flex-wrap:wrap;gap:5px;padding:5px;border:1px solid #C8C6BE;border-radius:5px;background:#fff;min-height:34px;cursor:text}
 .chip{display:inline-flex;align-items:center;gap:5px;padding:3px 6px 3px 8px;background:#E6F1FB;color:#0C447C;border-radius:4px;font-size:11px;font-weight:500}
 .chip-x{cursor:pointer;font-weight:700;opacity:.6}
@@ -667,17 +669,18 @@ function showItemForm(itemId) {
   h += '<input type="text" class="ef-i" id="i-desc" value="' + escapeHtml(item ? item.descripcion : '') + '" placeholder="Ej. Eje principal"></div>';
   h += '<div class="ef" style="flex:1"><div class="ef-l">Cantidad</div>';
   h += '<input type="number" class="ef-i" id="i-cant" value="' + (item ? item.cantidad : 1) + '" min="1" step="1"></div></div>';
-  if (!isNew) {
-    h += '<div class="ef" style="background:#FFF4D5;padding:8px 10px;border-radius:5px;border:1px solid #F5C842"><div class="ef-l" style="color:#854F0B">Estado del item</div>';
-    h += '<select class="ef-i" id="i-estado" onchange="onItemStateChange()">';
-    ITEM_STATES.forEach(st => {
-      h += '<option value="' + st + '"' + ((item.estado || 'Espera MP') === st ? ' selected' : '') + '>' + st + '</option>';
-    });
-    h += '</select></div>';
-    h += '<div class="ef" id="i-obs-wrap" style="display:' + ((item.estado === 'Anulado') ? 'block' : 'none') + '">';
-    h += '<div class="ef-l">Observaciones de anulacion <span style="color:#A32D2D">*</span></div>';
-    h += '<textarea class="ef-i" id="i-obs" rows="3" placeholder="Ej. Cliente ya no quiso la pieza, se asume perdida">' + escapeHtml(item.observaciones_anulacion || '') + '</textarea></div>';
-  }
+  // Estado del item visible siempre (para que se pueda elegir al crear).
+  // Default 'Espera MP'. Solo al crear se muestra opción de saltar al estado real.
+  const currentEstado = item ? (item.estado || 'Espera MP') : 'Espera MP';
+  h += '<div class="ef" style="background:#FFF4D5;padding:8px 10px;border-radius:5px;border:1px solid #F5C842"><div class="ef-l" style="color:#854F0B">Estado del item</div>';
+  h += '<select class="ef-i" id="i-estado" onchange="onItemStateChange()">';
+  ITEM_STATES.forEach(st => {
+    h += '<option value="' + st + '"' + (currentEstado === st ? ' selected' : '') + '>' + st + '</option>';
+  });
+  h += '</select></div>';
+  h += '<div class="ef" id="i-obs-wrap" style="display:' + (currentEstado === 'Anulado' ? 'block' : 'none') + '">';
+  h += '<div class="ef-l">Observaciones de anulacion <span style="color:#A32D2D">*</span></div>';
+  h += '<textarea class="ef-i" id="i-obs" rows="3" placeholder="Ej. Cliente ya no quiso la pieza, se asume perdida">' + escapeHtml((item && item.observaciones_anulacion) || '') + '</textarea></div>';
   h += '<div class="row">';
   h += '<div class="ef" style="flex:1"><div class="ef-l">Material</div>';
   h += '<input type="text" class="ef-i" id="i-mat" value="' + escapeHtml(item && item.material ? item.material : '') + '" placeholder="Ej. SAE 1010"></div>';
@@ -716,8 +719,9 @@ async function saveItem(itemId) {
   if (!desc) { toast('Descripcion requerida', true); return; }
   let estado = 'Espera MP';
   let obs = null;
-  if (itemId) {
-    estado = document.getElementById('i-estado').value;
+  const estadoEl = document.getElementById('i-estado');
+  if (estadoEl) {
+    estado = estadoEl.value;
     if (estado === 'Anulado') {
       obs = document.getElementById('i-obs').value.trim();
       if (!obs) { toast('Las observaciones son obligatorias al anular', true); return; }
@@ -1456,7 +1460,7 @@ function generateCarpeta(itemId) {
   let html = `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
 <title>Carpeta - ${escapeHtml(item.descripcion)} - Ped. ${escapeHtml(item.pedido_nro)}</title>
 <style>
-@page { size: A4; margin: 12mm; }
+@page { size: A4; margin: 4mm; }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: Arial, sans-serif; font-size: 11px; color: #000; }
 .page { page-break-after: always; }
@@ -1488,7 +1492,7 @@ body { font-family: Arial, sans-serif; font-size: 11px; color: #000; }
 }
 .wm-wrap > * { position: relative; z-index: 1; }
 .cover-info { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
-.cover-info tr.shade td { background: rgba(0, 0, 0, 0.06); }
+.cover-info tr.shade td { background: rgba(0, 0, 0, 0.13); }
 .cover-info td { border: 1px solid #000; padding: 6px 9px; vertical-align: middle; font-size: 11px; }
 .cover-info td.label { font-weight: 700; width: 38%; text-transform: uppercase; }
 .cover-info td.value.bold { font-weight: 700; }
@@ -1499,7 +1503,7 @@ body { font-family: Arial, sans-serif; font-size: 11px; color: #000; }
 .proc-table { width: 100%; border-collapse: collapse; margin: 14px 0 10px; }
 .proc-table th, .proc-table td { border: 1px solid #000; padding: 5px 6px; font-size: 11px; text-align: left; }
 .proc-table th { background: #000; color: #fff; font-weight: 700; text-transform: uppercase; text-align: center; font-size: 10.5px; letter-spacing: 1px; }
-.proc-table tr.shade td { background: rgba(0, 0, 0, 0.06); }
+.proc-table tr.shade td { background: rgba(0, 0, 0, 0.13); }
 .proc-table td.center { text-align: center; }
 .proc-table td.num { width: 32px; text-align: center; font-weight: 700; }
 .proc-table td.realizado { width: 90px; }
@@ -1508,8 +1512,8 @@ body { font-family: Arial, sans-serif; font-size: 11px; color: #000; }
 .cover-photo img { max-width: 100%; max-height: 320px; object-fit: contain; border: 1px solid #000; }
 
 /* ===== ORDEN DE TRABAJO (mitad de hoja) ===== */
-.ot { border: 1.5px solid #000; padding: 0; display: flex; flex-direction: column; height: 134mm; min-height: 134mm; max-height: 134mm; overflow: hidden; position: relative; page-break-inside: avoid; }
-.ot-page { display: flex; flex-direction: column; gap: 4mm; }
+.ot { border: 1.5px solid #000; padding: 0; display: flex; flex-direction: column; height: 144.5mm; min-height: 144.5mm; max-height: 144.5mm; overflow: hidden; position: relative; page-break-inside: avoid; }
+.ot-page { display: flex; flex-direction: column; gap: 0; }
 .ot::before {
   content: '';
   position: absolute;
@@ -1527,7 +1531,7 @@ body { font-family: Arial, sans-serif; font-size: 11px; color: #000; }
   z-index: 0;
 }
 .ot > * { position: relative; z-index: 1; }
-.ot-cut { border: none; border-top: 1px dashed #888; height: 1px; margin: 0; position: relative; }
+.ot-cut { border: none; border-top: 1px dashed #888; height: 0; margin: 0; position: relative; z-index: 5; }
 .ot-cut::before { content: '\\2702 - - - - - - - cortar aqui - - - - - - -'; position: absolute; top: -7px; left: 50%; transform: translateX(-50%); background: #fff; padding: 0 8px; font-size: 8px; color: #888; letter-spacing: 1px; }
 
 /* Tarea: black band, white text, big font, full width */
@@ -1723,6 +1727,29 @@ function renderOT(p, idx, total, item, meta, clienteDisplay) {
 // ========== Modal drag ==========
 // Allows any .md element to be dragged by its .md-t header.
 function makeModalDraggable(modalEl) {
+  // Inject the X close button if it isn't already present.
+  if (!modalEl.querySelector('.md-x')) {
+    const x = document.createElement('div');
+    x.className = 'md-x';
+    x.textContent = '×';
+    x.title = 'Cerrar';
+    x.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const mo = modalEl.closest('.mo');
+      if (mo) mo.remove();
+    });
+    modalEl.appendChild(x);
+  }
+  // Close on Esc (only the topmost modal)
+  if (!window._escHooked) {
+    window._escHooked = true;
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      const modals = document.querySelectorAll('.mo');
+      if (modals.length === 0) return;
+      modals[modals.length - 1].remove();
+    });
+  }
   const header = modalEl.querySelector('.md-t');
   if (!header) return;
   let dragX = 0, dragY = 0;

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Velasco App 2.0 — Tablero por Operario v27</title>
+<title>Velasco App 2.0 — Tablero por Operario v30</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -26,12 +26,16 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .cl.ps{background:#9E9C96}.cl.td{background:#fff}.cl.ra{background:#F3F2EC}.cl.ra.ps{background:#9E9C96}
 .wk-sep{border-bottom:8px solid #1a1a1a !important}
 .ab{position:absolute;bottom:2px;right:4px;border:1px dashed #C8C6BE;border-radius:3px;padding:2px 6px;font-size:8px;color:#888780;background:rgba(255,255,255,.8);z-index:6;cursor:pointer}
+.ab.pb{right:30px;font-size:10px}
+.ab.pb:hover{border-color:#854F0B;background:#FFF4D5}
 .ab:hover{background:#F1EFE8;border-color:#A8A79F;color:#5F5E5A}
 .nl{position:absolute;top:0;bottom:0;left:54.55%;border-left:1.5px dashed #C8C6BE;pointer-events:none;z-index:2}
 .sg{position:absolute;top:0;bottom:0;right:0;width:45.45%;background:#9E9C96;pointer-events:none;z-index:1}
 .bk{position:absolute;border-radius:4px;padding:3px 5px;cursor:pointer;font-size:9px;line-height:1.3;border-style:solid;border-width:5px 2.5px;user-select:none;z-index:5;display:flex;flex-direction:column;justify-content:center;overflow:hidden;min-width:6px}
 .bk-u{background:#1A1A1A;color:#fff}.bk-u .bt,.bk-u .bs,.bk-u .bm,.bk-u .bma{color:#fff}
 .bk-a{background:#FF9B9B;color:#000}.bk-m{background:#F0D47A;color:#000}.bk-b{background:#BDECB6;color:#000}
+.bk-pulmon{background:repeating-linear-gradient(45deg,#FFF4D5,#FFF4D5 6px,#F0E0A0 6px,#F0E0A0 12px);color:#5F4811}
+.bk-pulmon .bt,.bk-pulmon .bs,.bk-pulmon .bm,.bk-pulmon .bma{color:#5F4811}
 .bk-d{background:#E0DEDA;opacity:.5}
 .bt{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:10px}
 .bs{color:#2C2C2A;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:9px}
@@ -1119,6 +1123,32 @@ function placeActWithCheck(actId, machId, fecha, startTime, newOpId, skipOpCheck
     return;
   }
 
+  // STEP 0.5: detect pulmones del mismo operario que se cruzan temporalmente
+  // con la actividad colocada. Si hay alguno, preguntar pisar vs cascadear.
+  // Esto solo se hace en la primera pasada (pulmonesAPisar undefined).
+  if (!act._pulmonesAPisar) {
+    const dur = D(act);
+    const placedEnd = startTime + dur;
+    const pulmonesAfectados = acts.filter(a => {
+      if (!a.es_pulmon) return false;
+      if (a.operario_id !== effectiveOpId) return false;
+      if (a.fecha !== fecha) return false;
+      if (a.id === actId) return false;
+      const pStart = tM(a.hora_inicio);
+      const pEnd = pStart + D(a);
+      // Overlap check
+      return !(pEnd <= startTime || pStart >= placedEnd);
+    });
+    if (pulmonesAfectados.length > 0) {
+      // Show pre-decision modal with pulmón options
+      showPulmonDecisionModal(actId, machId, fecha, startTime, newOpId, pulmonesAfectados);
+      return;
+    }
+  }
+
+  // If we reach here, any decisions about pulmones were already taken.
+  // The "pisar" pulmones are already deleted from `acts` by the decision modal.
+
   // STEP 1: simulate the operator cascade that WOULD happen if we placed
   // the activity here. Then check if ANY of the resulting positions (the
   // placed activity itself + any cascaded ones) collides with another
@@ -1469,7 +1499,6 @@ function render() {
   colOps.forEach(co => {
     const h = document.createElement('div'); h.className = 'ho';
     h.textContent = co.name;
-    h.style.borderBottom = '3px solid ' + opC(co.id);
     board.appendChild(h);
   });
 
@@ -1551,7 +1580,8 @@ function render() {
         data.blocks.forEach(bl => {
           const act = bl.act;
           const block = document.createElement('div'); block.className = 'bk';
-          block.classList.add(act.urgencia === 'urgente' ? 'bk-u' : act.urgencia === 'alta' ? 'bk-a' : act.urgencia === 'media' ? 'bk-m' : 'bk-b');
+          if (act.es_pulmon) block.classList.add('bk-pulmon');
+          else block.classList.add(act.urgencia === 'urgente' ? 'bk-u' : act.urgencia === 'alta' ? 'bk-a' : act.urgencia === 'media' ? 'bk-m' : 'bk-b');
           if (act.estado === 'completada') block.classList.add('bk-d');
           block.style.borderColor = machColor(act.maquina_id);
 
@@ -1572,14 +1602,19 @@ function render() {
             document.querySelectorAll('.dov').forEach(c => c.classList.remove('dov'));
           });
 
-          block.addEventListener('click', e => { e.stopPropagation(); hideTip(); showEdit(act, bl); });
+          // Click: pulmones abren modal de pulmón, activs normales abren edit
+          if (act.es_pulmon) {
+            block.addEventListener('click', e => { e.stopPropagation(); hideTip(); showPulmonEditModal(act.id); });
+          } else {
+            block.addEventListener('click', e => { e.stopPropagation(); hideTip(); showEdit(act, bl); });
+          }
           let tt; block.addEventListener('mouseenter', e => { tt = setTimeout(() => showTip(e, act, bl), 800); });
           block.addEventListener('mouseleave', () => { clearTimeout(tt); hideTip(); });
           block.addEventListener('mousemove', e => { if (tipEl) { tipEl.style.left = Math.min(e.clientX + 12, window.innerWidth - 290) + 'px'; tipEl.style.top = (e.clientY + 16) + 'px'; } });
 
           const bE = bl.startMin + bl.dur;
           const foto = act.foto_url || act.foto_proyecto_url;
-          const showPhoto = bl.dur >= 150 && blockH >= 56 && foto;
+          const showPhoto = !act.es_pulmon && bl.dur >= 150 && blockH >= 56 && foto;
 
           if (showPhoto) {
             block.style.flexDirection = 'row';
@@ -1589,7 +1624,25 @@ function render() {
           }
 
           const tx = document.createElement('div');
-          tx.style.cssText = 'display:flex;flex-direction:column;justify-content:center;overflow:hidden' + (showPhoto ? ';flex:1;min-width:0' : '');
+          tx.style.cssText = 'display:flex;flex-direction:column;justify-content:center;overflow:hidden;text-align:center' + (showPhoto ? ';flex:1;min-width:0' : '');
+
+          if (act.es_pulmon) {
+            // Pulmón block: just "Pulmón" centered + hora_inicio - hora_fin below
+            const lbl = document.createElement('div');
+            lbl.className = 'bt';
+            lbl.style.fontWeight = '700';
+            lbl.style.fontSize = '11px';
+            lbl.textContent = 'Pulmón';
+            tx.appendChild(lbl);
+            const hrDiv = document.createElement('div');
+            hrDiv.className = 'bm';
+            hrDiv.textContent = mT(bl.startMin) + '-' + mT(bE);
+            tx.appendChild(hrDiv);
+            block.appendChild(tx);
+            cell.appendChild(block);
+            return;  // skip rest of normal render
+          }
+
           // Title: "Item - Proceso" → item in bold, proceso in normal weight.
           // The descripcion field is already formatted as "<Item> - <Proceso>"
           // by the projects module. Split on the first " - " for display.
@@ -1767,7 +1820,14 @@ function render() {
             'cursor:default;pointer-events:auto;' +
             'display:flex;align-items:center;justify-content:center;gap:4px;' +
             'font-size:10px;color:#5F5E5A;font-weight:600;overflow:hidden;padding:0 6px';
-          ghost.title = 'Setup de ' + act.descripcion + (act.pedido_nro ? ' (Ped. ' + act.pedido_nro + ')' : '') + '. Editar desde el bloque real abajo.';
+          ghost.title = '';  // remove native title to avoid double tooltip
+          // Show same tooltip as the real block on hover (over manual portion)
+          let gtt;
+          ghost.addEventListener('mouseenter', e => {
+            gtt = setTimeout(() => showTip(e, act, bl), 60);
+          });
+          ghost.addEventListener('mouseleave', () => { clearTimeout(gtt); hideTip(); });
+          ghost.addEventListener('mousemove', e => { if (tipEl) { tipEl.style.left = Math.min(e.clientX + 12, window.innerWidth - 290) + 'px'; tipEl.style.top = (e.clientY + 16) + 'px'; } });
           // Lock icon + short label (description, truncated)
           const icon = document.createElement('span');
           icon.textContent = '🔒';
@@ -1801,19 +1861,38 @@ function showTip(e, act, bl) {
   hideTip();
   const bE = bl.startMin + bl.dur;
   const tot = D(act);
+  const fmtDur = m => Math.floor(m / 60) + 'h' + (m % 60 ? (m % 60) + 'm' : '');
   const el = document.createElement('div'); el.className = 'tip';
-  el.innerHTML =
-    '<div style="font-weight:700;font-size:12px;margin-bottom:6px">' + act.descripcion + '</div>' +
-    '<div>' + clN(act.cliente_id) + (act.pedido_nro ? ' - Ped. ' + act.pedido_nro : '') + '</div>' +
-    '<div>Urgencia: ' + (act.urgencia || '-') + '</div>' +
-    '<div>Maquina: ' + mN(act.maquina_id) + '</div>' +
-    '<div>Operario: ' + opN(act.operario_id) + '</div>' +
-    '<div>Bloque: ' + mT(bl.startMin) + '-' + mT(bE) + ' (' + Math.floor(bl.dur / 60) + 'h' + (bl.dur % 60 ? (bl.dur % 60) + 'm' : '') + ')</div>' +
-    (bl.totalParts > 1 ? '<div>Parte ' + bl.part + '/' + bl.totalParts + ' | Total ' + Math.floor(tot / 60) + 'h' + (tot % 60 ? (tot % 60) + 'm' : '') + '</div>' : '') +
-    '<div>Tipo: ' + (act.tipo || 'manual') + '</div>';
-  // Set initial position BEFORE appending (bug fix: tooltip was showing at 0,0
-  // when user hovered without moving the mouse, because mousemove was the only
-  // thing setting position).
+  let h = '';
+  if (act.es_pulmon) {
+    h += '<div style="font-weight:700;font-size:12px;margin-bottom:6px">🫁 Pulmón</div>';
+    h += '<div><b>Inicio:</b> ' + mT(bl.startMin) + ' &nbsp; <b>Fin:</b> ' + mT(bE) + '</div>';
+    h += '<div>Maquina: ' + mN(act.maquina_id) + '</div>';
+    h += '<div>Operario: ' + opN(act.operario_id) + '</div>';
+  } else {
+    h += '<div style="font-weight:700;font-size:12px;margin-bottom:6px">' + act.descripcion + '</div>';
+    h += '<div>' + clN(act.cliente_id) + (act.pedido_nro ? ' - Ped. ' + act.pedido_nro : '') + '</div>';
+    h += '<div>Urgencia: ' + (act.urgencia || '-') + '</div>';
+    h += '<div>Maquina: ' + mN(act.maquina_id) + '</div>';
+    h += '<div>Operario: ' + opN(act.operario_id) + '</div>';
+    if (act.tipo === 'automatica' && act.duracion_operario_min) {
+      // Automatic activity: show manual + automatic ranges separately
+      const setupMin = act.duracion_operario_min;
+      const manStart = bl.startMin;
+      const manEnd = manStart + setupMin;
+      const autoStart = manEnd;
+      const autoEnd = bE;
+      h += '<div><b>Manual:</b> ' + mT(manStart) + ' - ' + mT(manEnd) + ' (' + fmtDur(setupMin) + ')</div>';
+      h += '<div><b>Automatica:</b> ' + mT(autoStart) + ' - ' + mT(autoEnd) + ' (' + fmtDur(autoEnd - autoStart) + ')</div>';
+      h += '<div><b>Total:</b> ' + mT(manStart) + ' - ' + mT(autoEnd) + ' (' + fmtDur(bl.dur) + ')</div>';
+    } else {
+      // Manual activity (or auto without setup)
+      h += '<div><b>Inicio:</b> ' + mT(bl.startMin) + ' &nbsp; <b>Fin:</b> ' + mT(bE) + ' &nbsp; <b>Total:</b> ' + fmtDur(bl.dur) + '</div>';
+    }
+    if (bl.totalParts > 1) h += '<div>Parte ' + bl.part + '/' + bl.totalParts + ' | Total actividad: ' + fmtDur(tot) + '</div>';
+    h += '<div>Tipo: ' + (act.tipo || 'manual') + '</div>';
+  }
+  el.innerHTML = h;
   el.style.left = Math.min(e.clientX + 12, window.innerWidth - 290) + 'px';
   el.style.top = (e.clientY + 16) + 'px';
   document.body.appendChild(el); tipEl = el;
@@ -1897,9 +1976,15 @@ function showEdit(act, bl) {
   if (act.tipo === 'automatica') {
     const currentOpMin = (act.duracion_operario_min !== null && act.duracion_operario_min !== undefined)
       ? act.duracion_operario_min : '';
-    editHtml += '<div class="ef"><div class="ef-l">Tiempo del operario (min) <span style="color:#888780;font-weight:400">— setup/programacion</span></div>';
+    editHtml += '<div class="ef"><div class="ef-l">Setup / tiempo del operario (min)</div>';
     editHtml += '<input type="number" class="ef-i" id="ed-dop" value="' + currentOpMin + '" min="0" step="5" placeholder="ej. 30"></div>';
   }
+  // Duración total (min): editable in both manual and automática.
+  // Stored in duracion_planificador_min. Defaults to estimada+margen if null.
+  const totalMin = act.duracion_planificador_min ||
+    ((act.duracion_estimada_min || 0) + (act.duracion_margen_min || 0));
+  editHtml += '<div class="ef"><div class="ef-l">Duracion total (min) <span style="color:#888780;font-weight:400">— ancho del bloque en el tablero</span></div>';
+  editHtml += '<input type="number" class="ef-i" id="ed-dur" value="' + totalMin + '" min="10" step="10"></div>';
   editHtml += '</div>';
 
   m.innerHTML =
@@ -1940,22 +2025,34 @@ async function saveEdit(actId) {
     }
   }
 
+  // Duración total (planificador) editable in both manual and automatica
+  let newDurTotal = act.duracion_planificador_min;
+  const durInput = document.getElementById('ed-dur');
+  if (durInput) {
+    const v = parseInt(durInput.value);
+    if (!isNaN(v) && v >= 10) newDurTotal = v;
+  }
+
   const opChanged = newOpId !== act.operario_id;
   const mqChanged = newMqId !== act.maquina_id;
   const timeChanged = newHora !== act.hora_inicio;
   const urgChanged = newUrg !== act.urgencia;
   const dopChanged = newDopMin !== act.duracion_operario_min;
+  const durChanged = newDurTotal !== act.duracion_planificador_min;
 
-  // Urgency + duracion_operario_min can be updated independently (don't alone
-  // move the activity, though dop change can affect future cascades).
-  if (urgChanged || dopChanged) {
-    const prev = { maquina_id: act.maquina_id, fecha: act.fecha, hora_inicio: act.hora_inicio, estado: act.estado, operario_id: act.operario_id, urgencia: act.urgencia, duracion_operario_min: act.duracion_operario_min };
+  // Urgency + duracion_operario_min + duracion_planificador can be updated
+  // independently (don't alone move the activity, though dop change can affect
+  // future cascades).
+  if (urgChanged || dopChanged || durChanged) {
+    const prev = { maquina_id: act.maquina_id, fecha: act.fecha, hora_inicio: act.hora_inicio, estado: act.estado, operario_id: act.operario_id, urgencia: act.urgencia, duracion_operario_min: act.duracion_operario_min, duracion_planificador_min: act.duracion_planificador_min };
     const payload = {};
     if (urgChanged) payload.urgencia = newUrg;
     if (dopChanged) payload.duracion_operario_min = newDopMin;
+    if (durChanged) payload.duracion_planificador_min = newDurTotal;
     await sb.from('actividades_tablero').update(payload).eq('id', actId);
     if (urgChanged) act.urgencia = newUrg;
     if (dopChanged) act.duracion_operario_min = newDopMin;
+    if (durChanged) act.duracion_planificador_min = newDurTotal;
     uStack.push([{ id: actId, prev }]);
     updU();
     if (!opChanged && !mqChanged && !timeChanged) {
@@ -1992,6 +2089,178 @@ let opSelectorState = {
   sortBy: 'urgencia',       // 'urgencia' | 'maquina'
   ddOpen: null              // which dropdown is open: 'maq' | null
 };
+
+// ========== PULMONES ==========
+function createPulmonInFreeSlot(opId, fecha) {
+  // Close the opSelector modal first
+  const sel = document.getElementById('op-selector-modal');
+  if (sel) sel.remove();
+  // Find earliest free slot of this op on this date.
+  const dayActs = acts.filter(a => a.operario_id === opId && a.fecha === fecha && a.estado !== 'sin_planificar')
+    .map(a => ({ s: tM(a.hora_inicio), e: tM(a.hora_inicio) + D(a) }))
+    .sort((x, y) => x.s - y.s);
+  // Default start: 06:00 (360 min). If first slot occupied, try after it.
+  let startMin = 360;
+  for (const dy of dayActs) {
+    if (startMin + 60 <= dy.s) break;  // there's a gap before this one
+    startMin = Math.max(startMin, dy.e);
+  }
+  const opName = opN(opId);
+  showPulmonModal(null, opId, opName, fecha, startMin);
+}
+
+function showCreatePulmonModal(opId, opName, fecha) {
+  showPulmonModal(null, opId, opName, fecha);
+}
+
+function showPulmonEditModal(actId) {
+  const a = acts.find(x => x.id === actId);
+  if (!a || !a.es_pulmon) return;
+  showPulmonModal(actId);
+}
+
+function showPulmonModal(actId, opId, opName, fecha, startMin) {
+  // If editing, load values from the existing pulmon.
+  let a = null;
+  if (actId) {
+    a = acts.find(x => x.id === actId);
+    if (!a) return;
+    opId = a.operario_id;
+    opName = opN(opId);
+    fecha = a.fecha;
+  }
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'pulmon-modal';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '480px';
+  let h = '<div class="md-t">' + (actId ? 'Editar pulmon' : 'Nuevo pulmon') + '</div>';
+  h += '<div style="font-size:12px;color:#5F5E5A;margin-bottom:10px">Operario: <b>' + escapeHtml(opName) + '</b> &nbsp; Fecha: <b>' + fecha + '</b></div>';
+  // Machine selector with all available machines
+  h += '<div class="ef"><div class="ef-l">Maquina <span style="color:#A32D2D">*</span></div>';
+  h += '<select class="ef-i" id="pul-maq">';
+  h += '<option value="">— elegir —</option>';
+  maq.forEach(mm => {
+    h += '<option value="' + mm.id + '"' + (a && a.maquina_id === mm.id ? ' selected' : '') + '>' + escapeHtml(mm.nombre) + '</option>';
+  });
+  h += '</select></div>';
+  h += '<div class="row" style="display:flex;gap:10px">';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Hora de inicio <span style="color:#A32D2D">*</span></div>';
+  // Default hora inicio: from existing pulmon, from startMin (when called from "+"), or 08:00.
+  let horaInicio;
+  if (a) horaInicio = a.hora_inicio.substring(0,5);
+  else if (typeof startMin === 'number') horaInicio = mT(startMin);
+  else horaInicio = '08:00';
+  h += '<input type="time" class="ef-i" id="pul-hora" value="' + horaInicio + '" step="600"></div>';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Duracion (minutos) <span style="color:#A32D2D">*</span></div>';
+  const dur = a ? (a.duracion_planificador_min || a.duracion_estimada_min) : 60;
+  h += '<input type="number" class="ef-i" id="pul-dur" value="' + dur + '" min="10" step="10"></div>';
+  h += '</div>';
+  h += '<div class="actions">';
+  h += '<button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button>';
+  if (actId) h += '<button class="b b-d" onclick="deletePulmon(' + actId + ')">Eliminar</button>';
+  h += '<button class="b b-p" onclick="savePulmon(' + (actId || 'null') + ',' + opId + ',\'' + fecha + '\')">' + (actId ? 'Guardar' : 'Crear') + '</button>';
+  h += '</div>';
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd);
+  if (typeof makeModalDraggable === 'function') makeModalDraggable(m);
+}
+
+async function savePulmon(actId, opId, fecha) {
+  const machId = parseInt(document.getElementById('pul-maq').value);
+  const hora = document.getElementById('pul-hora').value;
+  const durMin = parseInt(document.getElementById('pul-dur').value);
+  if (!machId) { toast('Elegi maquina', true); return; }
+  if (!hora) { toast('Ingresa hora de inicio', true); return; }
+  if (!durMin || durMin < 10) { toast('Duracion minima: 10 min', true); return; }
+  const horaFull = hora + ':00';
+  const payload = {
+    es_pulmon: true,
+
+    operario_id: opId,
+    maquina_id: machId,
+    fecha: fecha,
+    hora_inicio: horaFull,
+    duracion_estimada_min: durMin,
+    duracion_planificador_min: durMin,
+    duracion_margen_min: 0,
+    duracion_operario_min: null,
+    tipo: 'manual',
+    estado: 'pendiente',
+    estado_proceso: 'Planificado',
+    descripcion: 'Pulmón',
+    proceso: 'Pulmón',
+    urgencia: 'media',
+    operario_ideal_id: opId,
+    maquina_ideal_id: machId
+  };
+  if (actId) {
+    await sb.from('actividades_tablero').update(payload).eq('id', actId);
+    const idx = acts.findIndex(x => x.id === actId);
+    if (idx >= 0) Object.assign(acts[idx], payload);
+    toast('Pulmon actualizado');
+  } else {
+    const { data: created, error } = await sb.from('actividades_tablero').insert(payload).select().single();
+    if (error) { toast('Error: ' + error.message, true); return; }
+    acts.push(created);
+    toast('Pulmon creado');
+  }
+  document.getElementById('pulmon-modal').remove();
+  render();
+}
+
+async function deletePulmon(actId) {
+  if (!confirm('Eliminar este pulmon?')) return;
+  await sb.from('actividades_tablero').delete().eq('id', actId);
+  const idx = acts.findIndex(x => x.id === actId);
+  if (idx >= 0) acts.splice(idx, 1);
+  document.getElementById('pulmon-modal').remove();
+  toast('Pulmon eliminado');
+  render();
+}
+
+function showPulmonDecisionModal(actId, machId, fecha, startTime, newOpId, pulmones) {
+  const act = acts.find(a => a.id === actId);
+  if (!act) return;
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'pulmon-decision';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '520px';
+  let h = '<div class="md-t">Pulmones afectados</div>';
+  h += '<div style="font-size:12px;color:#5F5E5A;margin-bottom:12px">El movimiento de "<b>' + escapeHtml(act.descripcion) + '</b>" se cruza con ' + pulmones.length + ' pulmon(es) del operario <b>' + escapeHtml(opN(act.operario_id)) + '</b> ese dia.</div>';
+  h += '<div style="background:#FFF4D5;border:1px solid #F5C842;border-radius:5px;padding:10px;margin-bottom:14px;max-height:160px;overflow-y:auto">';
+  pulmones.forEach(p => {
+    const ps = tM(p.hora_inicio);
+    const pe = ps + D(p);
+    h += '<div style="font-size:12px;padding:4px 0;border-bottom:1px dashed #F5C842"><b>🫁 ' + mT(ps) + ' - ' + mT(pe) + '</b> · ' + escapeHtml(mN(p.maquina_id)) + + '</div>';
+  });
+  h += '</div>';
+  h += '<div style="font-size:12px;color:#5F5E5A;margin-bottom:14px">Que hacer?</div>';
+  h += '<div style="display:flex;flex-direction:column;gap:8px">';
+  h += '<button class="b" style="text-align:left;padding:10px" onclick="resolvePulmonDecision(\'pisar\',' + actId + ',' + machId + ',\'' + fecha + '\',' + startTime + ',' + (newOpId === null || newOpId === undefined ? 'null' : newOpId) + ',[' + pulmones.map(p => p.id).join(',') + '])"><b>🗑 Pisar (eliminar) los pulmones</b><br><span style="font-size:11px;color:#5F5E5A">Los pulmones se eliminan permanentemente y la actividad ocupa su lugar.</span></button>';
+  h += '<button class="b" style="text-align:left;padding:10px" onclick="resolvePulmonDecision(\'cascadear\',' + actId + ',' + machId + ',\'' + fecha + '\',' + startTime + ',' + (newOpId === null || newOpId === undefined ? 'null' : newOpId) + ',[' + pulmones.map(p => p.id).join(',') + '])"><b>↪ Cascadear (mover) los pulmones</b><br><span style="font-size:11px;color:#5F5E5A">Los pulmones se mueven hacia adelante junto con todo lo demas. Va a verificar conflictos.</span></button>';
+  h += '<button class="b" onclick="this.closest(\'.mo\').remove()" style="padding:10px">Cancelar</button>';
+  h += '</div>';
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd);
+  if (typeof makeModalDraggable === 'function') makeModalDraggable(m);
+}
+
+async function resolvePulmonDecision(action, actId, machId, fecha, startTime, newOpId, pulmonIds) {
+  const modal = document.getElementById('pulmon-decision');
+  if (modal) modal.remove();
+  const act = acts.find(a => a.id === actId);
+  if (!act) return;
+  if (action === 'pisar') {
+    // Delete pulmones from DB and from acts[]
+    for (const pid of pulmonIds) {
+      await sb.from('actividades_tablero').delete().eq('id', pid);
+      const idx = acts.findIndex(x => x.id === pid);
+      if (idx >= 0) acts.splice(idx, 1);
+    }
+    toast(pulmonIds.length + ' pulmon(es) eliminados');
+  }
+  // Mark the act so the next placeActWithCheck doesn't re-prompt
+  act._pulmonesAPisar = true;
+  try {
+    placeActWithCheck(actId, machId, fecha, startTime, newOpId);
+  } finally {
+    delete act._pulmonesAPisar;
+  }
+}
 
 function showOpSelector(opId, opName, fecha) {
   opSelectorState = { opId, opName, fecha, filterMachines: [], filterUrgency: 'all', sortBy: 'urgencia', ddOpen: null };
@@ -2035,6 +2304,12 @@ function renderOpSelector() {
     h += '<div style="margin-top:14px"><button class="b" onclick="this.closest(\'.mo\').remove()">Cerrar</button></div>';
     m.innerHTML = h; return;
   }
+
+  // CREATE PULMÓN card (top of selector)
+  h += '<div onclick="createPulmonInFreeSlot(' + opId + ',\'' + fecha + '\')" style="cursor:pointer;border:1px solid #C8C6BE;border-radius:6px;padding:10px;margin-bottom:10px;display:flex;align-items:center;gap:10px;background:repeating-linear-gradient(45deg,#F5F3EC,#F5F3EC 6px,#E8E6DF 6px,#E8E6DF 12px)" onmouseenter="this.style.borderColor=\'#854F0B\'" onmouseleave="this.style.borderColor=\'#C8C6BE\'">';
+  h += '<div style="font-size:14px;font-weight:700;color:#5F4811">Crear pulmón</div>';
+  h += '<div style="font-size:11px;color:#5F5E5A;flex:1">En el espacio libre más temprano del día</div>';
+  h += '</div>';
 
   // ROW 1: Machine filter + Urgency filter
   h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">';
@@ -2392,28 +2667,11 @@ function makeModalInteractive(md) {
   const title = md.querySelector('.md-t');
   if (!title) return;
 
-  // Add "minimize" button (toggles .minimized class)
-  const minBtn = document.createElement('button');
-  minBtn.className = 'md-min-btn';
-  minBtn.innerHTML = '&minus;';
-  minBtn.title = 'Minimizar / Restaurar';
-  minBtn.addEventListener('click', e => {
-    e.stopPropagation();
-    if (md.classList.contains('minimized')) {
-      md.classList.remove('minimized');
-      minBtn.innerHTML = '&minus;';
-    } else {
-      md.classList.add('minimized');
-      minBtn.innerHTML = '+';
-    }
-  });
-  md.appendChild(minBtn);
-
   // Drag by title
   let dragging = false, offsetX = 0, offsetY = 0;
   title.addEventListener('mousedown', e => {
-    // Don't drag if click is on the min or close button
-    if (e.target.closest('.md-min-btn') || e.target.closest('.md-x')) return;
+    // Don't drag if click is on close button
+    if (e.target.closest('.md-x')) return;
     const rect = md.getBoundingClientRect();
     // Switch to fixed positioning on first drag (decouples from flex centering)
     if (!md.classList.contains('dragging')) {
