@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v9.3</title>
+<title>Velasco App 2.0 — Proyectos v9.4</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -1558,6 +1558,12 @@ body { font-family: Arial, sans-serif; font-size: 11px; color: #000; }
 .ot-info td { border: 1px solid #000; padding: 5px 8px; font-size: 12px; }
 .ot-info td.label { background: rgba(0, 0, 0, 0.06); font-weight: 700; width: 28%; }
 
+/* Big info table at the top of each OT (Cliente/Pedido/Descripción/etc.) */
+.ot-info-big { width: 100%; border-collapse: collapse; }
+.ot-info-big td { border: 1px solid #000; padding: 5px 8px; }
+.ot-info-big td.lblb { background: rgba(0, 0, 0, 0.06); font-weight: 800; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+.ot-info-big td.valb { font-size: 14px; font-weight: 700; }
+
 .ot-trabajo-l { background: rgba(0, 0, 0, 0.06); padding: 5px 8px; font-weight: 700; font-size: 12px; border-bottom: 1px solid #000; border-top: 1px solid #000; }
 /* Trabajo with ruled lines (every 6mm). Uses repeating-linear-gradient. */
 .ot-trabajo { flex: 1; padding: 4px 10px; min-height: 50px; font-size: 13px; line-height: 6mm; white-space: pre-wrap; border-bottom: 1px solid #000; background-image: repeating-linear-gradient(transparent, transparent calc(6mm - 1px), #C8C6BE calc(6mm - 1px), #C8C6BE 6mm); background-position: 0 4px; }
@@ -1719,29 +1725,43 @@ function renderOT(p, idx, total, item, meta, clienteDisplay) {
 
   return `<div class="ot">
     <div class="ot-tarea-band">
-      <div class="tarea-name">TAREA: ${escapeHtml(tarea)}</div>
+      <div class="tarea-name">${escapeHtml(tarea)}</div>
       <div class="urg-pill">URGENCIA: ${urg}</div>
     </div>
     <div class="ot-head">
       <div class="ot-head-l">
         <div class="ot-num">Orden de Trabajo: ${idx} / ${total}</div>
-        <div><b>Cliente:</b> ${escapeHtml(clienteDisplay)}</div>
-        <div><b>Pieza:</b> ${escapeHtml(meta.descripcion || '')} - ${escapeHtml(item.descripcion)}</div>
       </div>
       <div class="ot-head-r">
-        <div><b>Responsable:</b> ${escapeHtml(responsable)}</div>
-        <div><b>Nº de Pedido:</b> ${escapeHtml(item.pedido_nro)}</div>
-        <div><b>Cantidad:</b> ${item.cantidad}</div>
         <div><b>Ingreso:</b> ${fmt(meta.fecha_ingreso)}</div>
       </div>
     </div>
-    <table class="ot-info">
+    <table class="ot-info-big">
       <tr>
-        <td class="label">Maquina sugerida:</td><td>${escapeHtml(maquina)}</td>
-        <td class="label" style="width:18%">Material:</td><td>${escapeHtml(item.material || '')}</td>
+        <td class="lblb" style="width:14%">CLIENTE</td>
+        <td class="valb" style="width:48%">${escapeHtml((clienteDisplay || '').toUpperCase())}</td>
+        <td class="lblb" style="width:14%">Nº PEDIDO</td>
+        <td class="valb" style="width:24%">${escapeHtml((item.pedido_nro || '').toString().toUpperCase())}</td>
       </tr>
       <tr>
-        <td class="label">Forma inicial:</td><td colspan="3">${escapeHtml(item.presentacion_mat_prima || '')}</td>
+        <td class="lblb">DESCRIPCIÓN</td>
+        <td class="valb">${escapeHtml(((meta.descripcion ? meta.descripcion + ' - ' : '') + item.descripcion).toUpperCase())}</td>
+        <td class="lblb">CANTIDAD</td>
+        <td class="valb">${item.cantidad}</td>
+      </tr>
+      <tr>
+        <td class="lblb">RESPONSABLE</td>
+        <td class="valb">${escapeHtml((responsable || '').toUpperCase())}</td>
+        <td class="lblb">MÁQUINA</td>
+        <td class="valb">${escapeHtml((maquina || '').toUpperCase())}</td>
+      </tr>
+    </table>
+    <table class="ot-info">
+      <tr>
+        <td class="label" style="width:14%">Material:</td>
+        <td style="width:38%">${escapeHtml(item.material || '')}</td>
+        <td class="label" style="width:14%">Forma inicial:</td>
+        <td style="width:34%">${escapeHtml(item.presentacion_mat_prima || '')}</td>
       </tr>
     </table>
     <div class="ot-trabajo-l">DETALLE DE TAREAS A REALIZAR:</div>
