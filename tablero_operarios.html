@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Velasco App 2.0 — Tablero por Operario v30</title>
+<title>Velasco App 2.0 — Tablero por Operario v31</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -1109,16 +1109,83 @@ function describeCorrelatividadConflict(conflict) {
   return 'Conflicto de correlatividad';
 }
 
+// Returns the latest end (date+time) among PLANIFICADO predecessors of `actId`.
+// Cerrado predecessors don't constrain. Returns null if no constraining preds.
+function latestPredecessorEnd(actId) {
+  const predIds = corrs.filter(c => c.sucesor_id === actId).map(c => c.predecesor_id);
+  let latest = null;
+  for (const pid of predIds) {
+    const pa = acts.find(a => a.id === pid);
+    if (!pa) continue;
+    const ps = pa.estado_proceso || 'Planificación Pendiente';
+    if (ps === 'Cerrado') continue;
+    // Skip predecessors that aren't placed yet
+    if (ps === 'Planificación Pendiente' || pa.estado === 'sin_planificar') continue;
+    const pe = realEnd(pa);
+    if (!latest || pe.date > latest.date || (pe.date === latest.date && pe.time > latest.time)) {
+      latest = pe;
+      latest.predName = (items.find(x => x.id === pa.item_id)?.descripcion || '?') + ' / ' + (pa.proceso || '?');
+    }
+  }
+  return latest;
+}
+
+// Returns the earliest start (date+time) among PLANIFICADO successors of `actId`.
+// Cerrado successors don't constrain. Returns null if no constraining sucs.
+function earliestSuccessorStart(actId) {
+  const sucIds = corrs.filter(c => c.predecesor_id === actId).map(c => c.sucesor_id);
+  let earliest = null;
+  for (const sid of sucIds) {
+    const sa = acts.find(a => a.id === sid);
+    if (!sa) continue;
+    const ss = sa.estado_proceso || 'Planificación Pendiente';
+    if (ss === 'Cerrado') continue;
+    if (sa.estado === 'sin_planificar') continue;
+    const sStart = { date: sa.fecha, time: tM(sa.hora_inicio) };
+    if (!earliest || sStart.date < earliest.date || (sStart.date === earliest.date && sStart.time < earliest.time)) {
+      earliest = sStart;
+      earliest.sucName = (items.find(x => x.id === sa.item_id)?.descripcion || '?') + ' / ' + (sa.proceso || '?');
+    }
+  }
+  return earliest;
+}
+
+// Adjusts a (date, time) so that it falls within the operator's working hours.
+// If time is before shift start → moves to shift start.
+// If time is at or past shift end → moves to next working day's start.
+// Returns { date, time }.
+function adjustToWorkingHours(opId, date, time) {
+  const ds = sS(opId);
+  const de = sE(opId, date);
+  if (time < ds) time = ds;
+  if (time >= de) {
+    date = nwd(date);
+    time = sS(opId);
+  }
+  return { date, time };
+}
+
 function placeActWithCheck(actId, machId, fecha, startTime, newOpId, skipOpCheck) {
   const act = acts.find(a => a.id === actId);
   if (!act) return;
   const effectiveOpId = (newOpId !== undefined && newOpId !== null) ? newOpId : act.operario_id;
   if (!effectiveOpId) { placeAct(actId, machId, fecha, startTime, newOpId); return; }
 
-  // STEP 0: correlatividad. Block if a predecessor would end after our start
-  // or a successor would start before our end.
+  // STEP 0: correlatividad. Two cases:
+  // - pred-unplaced or suc-overlap → block with alert (can't auto-resolve).
+  // - pred-overlap → offer to move just-after the latest predecessor end.
   const corrConflict = checkCorrelatividadConflict(actId, fecha, startTime);
   if (corrConflict) {
+    if (corrConflict.type === 'pred-overlap') {
+      // Offer "move just after predecessor" option
+      const latestPred = latestPredecessorEnd(actId);
+      if (latestPred) {
+        // New start = predEnd + GAP, adjusted to working hours
+        const adjStart = adjustToWorkingHours(effectiveOpId, latestPred.date, latestPred.time + GAP);
+        showMoveAfterPredecessorModal(actId, machId, latestPred, adjStart, newOpId);
+        return;
+      }
+    }
     alert(describeCorrelatividadConflict(corrConflict));
     return;
   }
@@ -2213,6 +2280,36 @@ async function deletePulmon(actId) {
   document.getElementById('pulmon-modal').remove();
   toast('Pulmon eliminado');
   render();
+}
+
+// Shows a dialog when a placement would start before a predecessor's end.
+// Offers to move the activity to start right after the latest predecessor.
+function showMoveAfterPredecessorModal(actId, machId, latestPred, adjStart, newOpId) {
+  const act = acts.find(a => a.id === actId);
+  if (!act) return;
+  const fmtDate = d => { const [y, m, da] = d.split('-'); return da + '/' + m + '/' + y; };
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'move-after-pred';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '520px';
+  let h = '<div class="md-t">Conflicto con predecesor</div>';
+  h += '<div style="font-size:12px;color:#5F5E5A;margin-bottom:12px">No se puede colocar a esa hora porque el predecesor <b>' + escapeHtml(latestPred.predName) + '</b> termina mas tarde.</div>';
+  h += '<div style="background:#FFF4D5;border:1px solid #F5C842;border-radius:5px;padding:10px;margin-bottom:14px;font-size:12px">';
+  h += '<div><b>Predecesor termina:</b> ' + fmtDate(latestPred.date) + ' ' + mT(latestPred.time) + '</div>';
+  h += '<div><b>Sugerencia de inicio:</b> ' + fmtDate(adjStart.date) + ' ' + mT(adjStart.time) + '</div>';
+  h += '</div>';
+  h += '<div style="font-size:12px;color:#5F5E5A;margin-bottom:14px">¿Que hacer?</div>';
+  h += '<div style="display:flex;flex-direction:column;gap:8px">';
+  h += '<button class="b b-p" style="text-align:left;padding:10px" onclick="acceptMoveAfterPred(' + actId + ',' + machId + ',\'' + adjStart.date + '\',' + adjStart.time + ',' + (newOpId === null || newOpId === undefined ? 'null' : newOpId) + ')"><b>Mover justo despues del predecesor</b><br><span style="font-size:11px;color:#5F5E5A;font-weight:400">Inicio: ' + fmtDate(adjStart.date) + ' ' + mT(adjStart.time) + '</span></button>';
+  h += '<button class="b" onclick="this.closest(\'.mo\').remove()" style="padding:10px">Cancelar</button>';
+  h += '</div>';
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd);
+  if (typeof makeModalDraggable === 'function') makeModalDraggable(m);
+}
+
+function acceptMoveAfterPred(actId, machId, fecha, startTime, newOpId) {
+  const modal = document.getElementById('move-after-pred');
+  if (modal) modal.remove();
+  // Re-invoke placement with the new start time
+  placeActWithCheck(actId, machId, fecha, startTime, newOpId);
 }
 
 function showPulmonDecisionModal(actId, machId, fecha, startTime, newOpId, pulmones) {
