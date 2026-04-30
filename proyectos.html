@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v9.6</title>
+<title>Velasco App 2.0 — Proyectos v9.8</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -58,6 +58,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .proc-card-s{font-size:11px;color:#5F5E5A;line-height:1.6}
 .tag{display:inline-block;padding:1px 5px;border-radius:3px;font-size:9px;font-weight:700;margin-left:4px}
 .tag-man{background:#E8E6DF;color:#5F5E5A}
+.tag-semi{background:#5C4A8A;color:#fff}
 .tag-auto{background:#1A1A1A;color:#fff}
 .b-icon{padding:4px 8px;font-size:11px}
 .mo{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:200;display:flex;align-items:center;justify-content:center}
@@ -73,6 +74,13 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .photo-wrap{position:relative;width:120px;height:120px;border:2px dashed #C8C6BE;border-radius:8px;display:flex;align-items:center;justify-content:center;cursor:pointer;background:#FAFAF7;overflow:hidden}
 .photo-wrap:hover{border-color:#378ADD;background:#F5FAFF}
 .photo-wrap img{width:100%;height:100%;object-fit:cover}
+/* Slot activo: borde mas grueso y fondo destacado, indica que paste se pegara aqui */
+.photo-wrap.active{border:3px solid #378ADD;background:#E8F2FC;box-shadow:0 0 0 2px rgba(55,138,221,.15)}
+/* Boton "Insertar" centrado dentro del slot - chico, no ocupa todo el slot */
+.photo-insert-btn{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:#fff;border:1px solid #C8C6BE;border-radius:5px;padding:5px 11px;font-size:11px;font-weight:600;color:#333;cursor:pointer;z-index:2;pointer-events:auto;user-select:none}
+.photo-insert-btn:hover{background:#378ADD;color:#fff;border-color:#378ADD}
+/* Indicador chiquito "paste aqui" cuando el slot esta activo */
+.photo-paste-hint{position:absolute;bottom:3px;right:5px;font-size:9px;color:#378ADD;font-weight:700;background:rgba(255,255,255,.85);padding:1px 4px;border-radius:3px;pointer-events:none;z-index:1}
 .photo-empty{font-size:11px;color:#888780;text-align:center;padding:10px}
 .photo-x{position:absolute;top:4px;right:4px;width:20px;height:20px;border-radius:50%;background:rgba(0,0,0,.6);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:11px;font-weight:700}
 .photo-x:hover{background:rgba(0,0,0,.8)}
@@ -816,8 +824,11 @@ function renderItemDetail() {
   } else {
     procesos.forEach((p, idx) => {
       const dur = Math.floor(p.duracion_estimada_min / 60) + 'h' + (p.duracion_estimada_min % 60 ? ' ' + (p.duracion_estimada_min % 60) + 'm' : '');
-      const tag = p.tipo === 'automatica' ? '<span class="tag tag-auto">AUTO</span>' : '<span class="tag tag-man">MAN</span>';
-      const setup = p.tipo === 'automatica' && p.duracion_operario_min ? ' · setup: ' + p.duracion_operario_min + ' min' : '';
+      let tag;
+      if (p.tipo === 'automatica') tag = '<span class="tag tag-auto">AUTO</span>';
+      else if (p.tipo === 'semi_automatica') tag = '<span class="tag tag-semi">SEMI</span>';
+      else tag = '<span class="tag tag-man">MAN</span>';
+      const setup = (p.tipo === 'automatica' || p.tipo === 'semi_automatica') && p.duracion_operario_min ? ' · setup: ' + p.duracion_operario_min + ' min' : '';
       const supMaqs = (p.maquinas_suplentes_ids || []).map(id => mN(parseInt(id))).join(', ');
       const supOps = (p.operarios_suplentes_ids || []).map(id => opN(parseInt(id))).join(', ');
       const isPlanificada = p.estado && p.estado !== 'sin_planificar' && p.fecha !== '1900-01-01';
@@ -1042,16 +1053,36 @@ function showProcesoForm(procesoId) {
   h += '<input type="number" class="ef-i" id="p-dur" value="' + (proceso ? proceso.duracion_estimada_min : '') + '" min="10" step="10" placeholder="Ej. 240"></div>';
   h += '<div class="ef" style="flex:1"><div class="ef-l">Margen (min)</div>';
   h += '<input type="number" class="ef-i" id="p-margen" value="' + (proceso && proceso.duracion_margen_min ? proceso.duracion_margen_min : 0) + '" min="0" step="10"></div>';
-  h += '<div class="ef" style="flex:1"><div class="ef-l">Tipo <span style="color:#A32D2D">*</span></div>';
-  h += '<select class="ef-i" id="p-tipo" onchange="toggleSetupField()">';
-  h += '<option value="manual"' + (tipo === 'manual' ? ' selected' : '') + '>Manual</option>';
-  h += '<option value="automatica"' + (tipo === 'automatica' ? ' selected' : '') + '>Automatica</option>';
-  h += '</select></div></div>';
+  h += '</div>';
 
-  h += '<div class="ef" id="p-setup-wrap" style="' + (tipo === 'automatica' ? '' : 'display:none') + '">';
+  // Tipo de proceso: 3 opciones (manual / semi-automatica / automatica)
+  // El comportamiento de cada uno se explica abajo del radio.
+  h += '<div class="ef"><div class="ef-l">Tipo <span style="color:#A32D2D">*</span></div>';
+  h += '<div id="p-tipo-wrap" data-original="' + tipo + '" style="display:flex;flex-direction:column;gap:6px">';
+  h += '<label style="display:flex;align-items:flex-start;gap:8px;padding:6px 8px;border:1px solid ' + (tipo === 'manual' ? '#1A1A1A' : '#C8C6BE') + ';border-radius:5px;background:' + (tipo === 'manual' ? '#F5F4EE' : '#fff') + ';cursor:pointer">';
+  h += '<input type="radio" name="p-tipo" value="manual"' + (tipo === 'manual' ? ' checked' : '') + ' onchange="onTipoChange()" style="margin-top:2px">';
+  h += '<div style="flex:1"><div style="font-weight:600;font-size:12px">Manual</div><div style="font-size:11px;color:#5F5E5A">El operario esta presente todo el tiempo de la actividad.</div></div></label>';
+  h += '<label style="display:flex;align-items:flex-start;gap:8px;padding:6px 8px;border:1px solid ' + (tipo === 'semi_automatica' ? '#5C4A8A' : '#C8C6BE') + ';border-radius:5px;background:' + (tipo === 'semi_automatica' ? '#F0EDF7' : '#fff') + ';cursor:pointer">';
+  h += '<input type="radio" name="p-tipo" value="semi_automatica"' + (tipo === 'semi_automatica' ? ' checked' : '') + ' onchange="onTipoChange()" style="margin-top:2px">';
+  h += '<div style="flex:1"><div style="font-weight:600;font-size:12px">Semi-automatica</div><div style="font-size:11px;color:#5F5E5A">El operario hace el setup inicial y la maquina sigue sola hasta el fin del horario. Reanuda al dia siguiente respetando jornada (sabado hasta horario_sabado_fin, domingo cerrado).</div></div></label>';
+  h += '<label style="display:flex;align-items:flex-start;gap:8px;padding:6px 8px;border:1px solid ' + (tipo === 'automatica' ? '#1A1A1A' : '#C8C6BE') + ';border-radius:5px;background:' + (tipo === 'automatica' ? '#F5F4EE' : '#fff') + ';cursor:pointer">';
+  h += '<input type="radio" name="p-tipo" value="automatica"' + (tipo === 'automatica' ? ' checked' : '') + ' onchange="onTipoChange()" style="margin-top:2px">';
+  h += '<div style="flex:1"><div style="font-weight:600;font-size:12px">Automatica</div><div style="font-size:11px;color:#5F5E5A">El operario hace el setup inicial y la maquina corre 24/7 hasta terminar (incluye noche y domingos).</div></div></label>';
+  h += '</div></div>';
+
+  // Advertencia visible si la actividad ya esta planificada y se cambia el tipo
+  // (porque cambiar de semi a auto o viceversa modifica el comportamiento en
+  // el tablero y puede desplazar otras actividades).
+  if (isPlanificada) {
+    h += '<div id="p-tipo-warn" style="display:none;background:#FEF0F0;color:#A32D2D;padding:8px 12px;border-radius:5px;margin-bottom:10px;font-size:11px;border:1px solid #FEDADA"><b>⚠ Atencion:</b> esta actividad ya esta planificada en el tablero. Cambiar el tipo modifica como se comporta el bloque y puede desplazar otras actividades.</div>';
+  }
+
+  // Setup wrap visible para semi y automatica
+  const showSetup = (tipo === 'semi_automatica' || tipo === 'automatica');
+  h += '<div class="ef" id="p-setup-wrap" style="' + (showSetup ? '' : 'display:none') + '">';
   h += '<div class="ef-l">Duracion del setup (min) <span style="color:#A32D2D">*</span></div>';
   h += '<input type="number" class="ef-i" id="p-setup" value="' + (proceso && proceso.duracion_operario_min ? proceso.duracion_operario_min : '') + '" min="0" step="5" placeholder="Ej. 30">';
-  h += '<div class="ef-help">Tiempo que el operario esta atado a la maquina.</div></div>';
+  h += '<div class="ef-help">Tiempo que el operario esta atado a la maquina al inicio.</div></div>';
 
   h += '<div class="ef"><div class="ef-l">Maquina ideal <span style="color:#A32D2D">*</span></div>';
   h += '<select class="ef-i" id="p-maq-ideal" onchange="toggleMaqOtra()">';
@@ -1117,7 +1148,8 @@ async function saveProceso(procesoId) {
   }
   const dur = parseInt(document.getElementById('p-dur').value);
   const margen = parseInt(document.getElementById('p-margen').value) || 0;
-  const tipo = document.getElementById('p-tipo').value;
+  const tipoEl = document.querySelector('input[name="p-tipo"]:checked');
+  const tipo = tipoEl ? tipoEl.value : 'manual';
   const maqVal = document.getElementById('p-maq-ideal').value;
   let maqIdealId = null;
   let maqIdealNombre = null;
@@ -1133,9 +1165,9 @@ async function saveProceso(procesoId) {
   }
   const opIdeal = parseInt(document.getElementById('p-op-ideal').value);
   let setup = null;
-  if (tipo === 'automatica') {
+  if (tipo === 'automatica' || tipo === 'semi_automatica') {
     const v = document.getElementById('p-setup').value.trim();
-    if (!v) { toast('Para automaticas, ingresa la duracion del setup', true); return; }
+    if (!v) { toast('Para ' + (tipo === 'automatica' ? 'automaticas' : 'semi-automaticas') + ', ingresa la duracion del setup', true); return; }
     setup = parseInt(v);
   }
   if (!dur || dur < 10) { toast('Duracion estimada minima: 10 min', true); return; }
@@ -1222,12 +1254,42 @@ async function confirmDeleteProceso(procesoId) {
 }
 
 
-// ========== Helpers para modal de proceso ==========
-function toggleSetupField() {
-  const sel = document.getElementById('p-tipo');
+// Helpers para modal de proceso
+// onTipoChange: actualiza el visual de los radios (border/background del label
+// activo), muestra/oculta el campo de setup (solo para semi/auto), y muestra
+// la advertencia si la actividad esta planificada y se esta cambiando el tipo.
+function onTipoChange() {
+  const sel = document.querySelector('input[name="p-tipo"]:checked');
   const wrap = document.getElementById('p-setup-wrap');
-  if (sel && wrap) wrap.style.display = sel.value === 'automatica' ? '' : 'none';
+  if (sel && wrap) {
+    const v = sel.value;
+    wrap.style.display = (v === 'automatica' || v === 'semi_automatica') ? '' : 'none';
+  }
+  // Repintar borde/fondo de cada label segun el radio seleccionado
+  document.querySelectorAll('input[name="p-tipo"]').forEach(r => {
+    const label = r.closest('label');
+    if (!label) return;
+    const checked = r.checked;
+    const v = r.value;
+    let borderColor = '#C8C6BE', bgColor = '#fff';
+    if (checked) {
+      if (v === 'semi_automatica') { borderColor = '#5C4A8A'; bgColor = '#F0EDF7'; }
+      else { borderColor = '#1A1A1A'; bgColor = '#F5F4EE'; }
+    }
+    label.style.border = '1px solid ' + borderColor;
+    label.style.background = bgColor;
+  });
+  // Mostrar advertencia si el proceso ya esta planificado y se cambio el tipo
+  const warn = document.getElementById('p-tipo-warn');
+  if (warn) {
+    // Comparar contra el tipo original (lo guardamos como data-attr en cualquier
+    // de los radios al abrir el modal para no depender de una variable global)
+    const original = document.getElementById('p-tipo-wrap')?.dataset?.original;
+    if (original && sel && sel.value !== original) warn.style.display = 'block';
+    else warn.style.display = 'none';
+  }
 }
+function toggleSetupField() { onTipoChange(); }
 function toggleProcCustom() {
   const sel = document.getElementById('p-proceso');
   const input = document.getElementById('p-proceso-custom');
@@ -1284,13 +1346,20 @@ function removeChip(kind, id) {
   renderChips(kind === 'maq' ? 'chips-maq' : 'chips-op', list, kind);
 }
 
+// Slot de foto:
+// - Click en cualquier parte del slot que no sea el boton "Insertar" -> activa
+//   el slot (paste con Ctrl+V se pegara aqui).
+// - Click en el boton "Insertar" -> abre el explorador de archivos.
+// - Drag & drop sobre el slot -> sube el archivo a ese slot.
+// La activacion es exclusiva: solo un slot puede estar activo a la vez.
+// Si solo hay un slot visible, queda activo automaticamente.
 function buildPhotoWrapHtml(currentUrl, kind) {
-  let h = '<div class="photo-wrap" id="photo-wrap-' + kind + '" onclick="document.getElementById(\'photo-input-' + kind + '\').click()">';
+  let h = '<div class="photo-wrap" id="photo-wrap-' + kind + '" data-kind="' + kind + '" onclick="onSlotClick(event,\'' + kind + '\')" ondragover="onSlotDragOver(event)" ondragleave="onSlotDragLeave(event)" ondrop="onSlotDrop(event,\'' + kind + '\')">';
   if (currentUrl) {
     h += '<img src="' + escapeHtml(currentUrl) + '">';
     h += '<div class="photo-x" onclick="event.stopPropagation();clearPhoto(\'' + kind + '\')">&times;</div>';
   } else {
-    h += '<div class="photo-empty">Click o pega para subir</div>';
+    h += '<button type="button" class="photo-insert-btn" onclick="event.stopPropagation();document.getElementById(\'photo-input-' + kind + '\').click()">Insertar</button>';
   }
   h += '</div>';
   h += '<input type="file" id="photo-input-' + kind + '" accept="image/*" style="display:none" onchange="onPhotoFile(event,\'' + kind + '\')">';
@@ -1298,15 +1367,82 @@ function buildPhotoWrapHtml(currentUrl, kind) {
   return h;
 }
 
+// Marca un slot como activo (para que paste con Ctrl+V se pegue ahi).
+// Desactiva los demas.
+function setActiveSlot(kind) {
+  document.querySelectorAll('.photo-wrap').forEach(w => {
+    w.classList.remove('active');
+    const hint = w.querySelector('.photo-paste-hint');
+    if (hint) hint.remove();
+  });
+  const wrap = document.getElementById('photo-wrap-' + kind);
+  if (wrap) {
+    wrap.classList.add('active');
+    if (!wrap.querySelector('.photo-paste-hint')) {
+      const hint = document.createElement('div');
+      hint.className = 'photo-paste-hint';
+      hint.textContent = 'paste';
+      wrap.appendChild(hint);
+    }
+  }
+}
+
+// Click en el slot (en area que NO es el boton "Insertar"): solo activa el slot.
+function onSlotClick(event, kind) {
+  setActiveSlot(kind);
+}
+
+function onSlotDragOver(event) {
+  event.preventDefault();
+  event.currentTarget.classList.add('active');
+}
+function onSlotDragLeave(event) {
+  // Solo quitar el highlight si no es el slot activo de paste
+  // (no haremos nada elaborado: si es el activo, lo deja, sino lo saca)
+  // Para simplicidad, no quitamos nada aqui — onSlotDrop o setActiveSlot lo manejan
+}
+async function onSlotDrop(event, kind) {
+  event.preventDefault();
+  setActiveSlot(kind);
+  const dt = event.dataTransfer;
+  if (!dt || !dt.files || dt.files.length === 0) return;
+  const file = dt.files[0];
+  if (!file.type || file.type.indexOf('image') !== 0) {
+    toast('Solo se aceptan imagenes', true);
+    return;
+  }
+  await uploadPhotoFile(file, kind);
+}
+
+// Auto-activar el slot apropiado cuando se renderiza el form:
+// - Si hay slot 'proj' visible (Nuevo Proyecto), ese queda activo por defecto
+//   (asi paste cae en proyecto, no en item).
+// - Si solo hay slot 'item' visible, ese queda activo.
+// - Si solo hay slot 'proj' visible (Editar Proyecto), ese queda activo.
+function autoActivateSlot() {
+  const projWrap = document.getElementById('photo-wrap-proj');
+  const itemWrap = document.getElementById('photo-wrap-item');
+  const projVisible = projWrap && projWrap.offsetParent !== null;
+  const itemVisible = itemWrap && itemWrap.offsetParent !== null;
+  if (projVisible) setActiveSlot('proj');
+  else if (itemVisible) setActiveSlot('item');
+}
+
 function setupPhotoPaste() {
+  // Auto-activa el slot apropiado cada vez que se llama (al abrir un form)
+  autoActivateSlot();
   if (window._pastedHooked) return;
   window._pastedHooked = true;
   document.addEventListener('paste', async (e) => {
-    const projWrap = document.getElementById('photo-wrap-proj');
-    const itemWrap = document.getElementById('photo-wrap-item');
-    let kind = null;
-    if (itemWrap && itemWrap.offsetParent !== null) kind = 'item';
-    else if (projWrap && projWrap.offsetParent !== null) kind = 'proj';
+    // Pega siempre en el slot activo (clase .active). Si no hay slot activo
+    // pero hay slots visibles, activa el primero apropiado y pega ahi.
+    let activeWrap = document.querySelector('.photo-wrap.active');
+    if (!activeWrap) {
+      autoActivateSlot();
+      activeWrap = document.querySelector('.photo-wrap.active');
+    }
+    if (!activeWrap) return;
+    const kind = activeWrap.dataset.kind;
     if (!kind) return;
     const items_ = (e.clipboardData || e.originalEvent.clipboardData).items;
     for (const it of items_) {
@@ -1329,7 +1465,8 @@ async function onPhotoFile(event, kind) {
 async function uploadPhotoFile(file, kind) {
   const wrap = document.getElementById('photo-wrap-' + kind);
   if (!wrap) return;
-  wrap.innerHTML = '<div class="photo-loading">Subiendo...</div>';
+  // No destruimos el slot - solo cambiamos el contenido visual
+  wrap.innerHTML = '<div class="photo-loading" style="font-size:11px;color:#888">Subiendo...</div>';
   try {
     const ext = (file.name && file.name.split('.').pop()) || (file.type.split('/')[1]) || 'png';
     const filename = kind + '-' + Date.now() + '-' + Math.random().toString(36).substring(2, 8) + '.' + ext;
@@ -1338,18 +1475,34 @@ async function uploadPhotoFile(file, kind) {
     const { data } = sb.storage.from(PHOTO_BUCKET).getPublicUrl(filename);
     const url = data.publicUrl;
     document.getElementById('photo-url-' + kind).value = url;
+    // Reconstruir el contenido del slot con la imagen + "X" para borrar
     wrap.innerHTML = '<img src="' + url + '"><div class="photo-x" onclick="event.stopPropagation();clearPhoto(\'' + kind + '\')">&times;</div>';
+    // Re-agregar el hint si es el slot activo
+    if (wrap.classList.contains('active')) {
+      const hint = document.createElement('div');
+      hint.className = 'photo-paste-hint';
+      hint.textContent = 'paste';
+      wrap.appendChild(hint);
+    }
     toast('Foto subida');
   } catch (err) {
     console.error(err);
     toast('Error al subir foto: ' + (err.message || err), true);
-    wrap.innerHTML = '<div class="photo-empty">Error. Click o pega para reintentar</div>';
+    wrap.innerHTML = '<button type="button" class="photo-insert-btn" onclick="event.stopPropagation();document.getElementById(\'photo-input-' + kind + '\').click()">Insertar</button>';
   }
 }
 
 function clearPhoto(kind) {
   document.getElementById('photo-url-' + kind).value = '';
-  document.getElementById('photo-wrap-' + kind).innerHTML = '<div class="photo-empty">Click o pega para subir</div>';
+  const wrap = document.getElementById('photo-wrap-' + kind);
+  if (!wrap) return;
+  wrap.innerHTML = '<button type="button" class="photo-insert-btn" onclick="event.stopPropagation();document.getElementById(\'photo-input-' + kind + '\').click()">Insertar</button>';
+  if (wrap.classList.contains('active')) {
+    const hint = document.createElement('div');
+    hint.className = 'photo-paste-hint';
+    hint.textContent = 'paste';
+    wrap.appendChild(hint);
+  }
 }
 
 function renderClientesList() {
@@ -1508,6 +1661,12 @@ body { font-family: Arial, sans-serif; font-size: 11px; color: #000; }
 .cover-info td.cliente-big { font-size: 16px; font-weight: 800; }
 .cover-info td.pieza-big { font-weight: 700; font-size: 13px; }
 .cover-info td.pedido-big { font-weight: 800; font-size: 14px; }
+/* value-fit: celda con altura controlada que NO crece. fit-content adentro
+   recibe auto-shrink por JS. La altura se mantiene constante. */
+.cover-info td.value-fit { height: 22px; max-height: 22px; padding: 4px 9px; overflow: hidden; }
+.cover-info td.value-fit.cliente-big { height: 26px; max-height: 26px; }
+.cover-info td.value-fit.pieza-big { height: 22px; max-height: 22px; }
+.fit-content { display: block; width: 100%; line-height: 1.15; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 
 .proc-table { width: 100%; border-collapse: collapse; margin: 14px 0 10px; }
 .proc-table th, .proc-table td { border: 1px solid #000; padding: 5px 6px; font-size: 11px; text-align: left; }
@@ -1544,44 +1703,56 @@ body { font-family: Arial, sans-serif; font-size: 11px; color: #000; }
 }
 .ot > * { position: relative; z-index: 1; }
 
-/* Tarea: black band, white text, big font, full width */
-.ot-tarea-band { display: flex; justify-content: space-between; align-items: center; background: #000; color: #fff; padding: 8px 12px; font-size: 17px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; }
-.ot-tarea-band .tarea-name { flex: 1; }
-.ot-tarea-band .urg-pill { font-size: 12px; padding: 2px 8px; border: 1.5px solid #fff; border-radius: 3px; }
-
-.ot-head { display: flex; justify-content: space-between; gap: 6px; padding: 3px 10px; border-bottom: 1px solid #000; }
-.ot-head-l { font-size: 11px; line-height: 1.3; }
-.ot-head-l .ot-num { font-size: 13px; font-weight: 700; }
-.ot-head-r { text-align: right; font-size: 11px; line-height: 1.3; }
+/* Tarea: black band, white text, big font. "Orden de Trabajo X/N" centrado en el medio */
+.ot-tarea-band { display: flex; justify-content: space-between; align-items: center; background: #000; color: #fff; padding: 8px 12px; font-size: 17px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; gap: 10px; }
+.ot-tarea-band .tarea-name { flex: 0 0 auto; }
+.ot-tarea-band .ot-num-mid { flex: 1; text-align: center; font-size: 12px; font-weight: 700; letter-spacing: 0.5px; text-transform: none; }
+.ot-tarea-band .urg-pill { font-size: 12px; padding: 2px 8px; border: 1.5px solid #fff; border-radius: 3px; flex: 0 0 auto; }
 
 .ot-info { width: 100%; border-collapse: collapse; }
-.ot-info td { border: 1px solid #000; padding: 3px 8px; font-size: 11px; }
+.ot-info td { border: 1px solid #000; padding: 3px 8px; font-size: 11px; height: 22px; }
 .ot-info td.label { background: rgba(0, 0, 0, 0.06); font-weight: 700; width: 28%; }
+.ot-info td.value-fit { padding: 3px 8px; height: 22px; max-height: 22px; overflow: hidden; }
 
 /* Big info table at the top of each OT (Cliente/Pedido/Descripción/etc.) */
-.ot-info-big { width: 100%; border-collapse: collapse; }
-.ot-info-big td { border: 1px solid #000; padding: 4px 8px; vertical-align: middle; }
+.ot-info-big { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.ot-info-big td { border: 1px solid #000; padding: 4px 8px; vertical-align: middle; height: 22px; max-height: 22px; overflow: hidden; }
 .ot-info-big td.lblb { background: rgba(0, 0, 0, 0.06); font-weight: 800; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
 .ot-info-big td.valb { font-size: 14px; font-weight: 700; }
+.ot-info-big td.value-fit { height: 22px; max-height: 22px; padding: 4px 8px; overflow: hidden; }
 /* Narrow variants used for Resp/Pedido/Cantidad on the right side */
 .ot-info-big td.lblb-narrow { padding: 4px 6px; font-size: 10.5px; text-align: left; letter-spacing: 0; }
 .ot-info-big td.valb-narrow { padding: 4px 8px; text-align: right; font-size: 13px; }
 /* Smaller variants for the PROYECTO row */
 .ot-info-big td.lblb-small { padding: 2px 8px; font-size: 10px; letter-spacing: 0.3px; }
 .ot-info-big td.valb-small { padding: 2px 8px; font-size: 11px; font-weight: 600; }
-/* Line clamp helpers */
+/* Lower variant for "ingreso" (lowercase, smaller) */
+.ot-info-big td.lblb-lower { font-size: 9.5px; font-weight: 700; text-transform: none; letter-spacing: 0; }
+.ot-info-big td.valb-lower { font-size: 11px; font-weight: 600; }
+/* Descripcion ocupa el doble del alto. La celda label y la celda value
+   ocupan rowspan=2 (2 renglones de 22px = 44px). El contenido tiene
+   auto-shrink para que entre en ese espacio. */
+.ot-info-big td.desc-tall { height: 44px; max-height: 44px; vertical-align: middle; }
+.ot-info-big td.desc-cell { height: 44px; max-height: 44px; padding: 4px 8px; overflow: hidden; vertical-align: middle; }
+.ot-info-big td.desc-cell .desc-content { line-height: 1.2; max-height: 36px; overflow: hidden; }
+/* Line clamp helpers (legacy, kept for backward compat) */
 .line-clamp-1 { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.15; max-height: 1.15em; }
 .line-clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.2; max-height: 2.4em; }
 
 .ot-trabajo-l { background: rgba(0, 0, 0, 0.06); padding: 5px 8px; font-weight: 700; font-size: 12px; border-bottom: 1px solid #000; border-top: 1px solid #000; }
-/* Trabajo with ruled lines (every 6mm). Uses repeating-linear-gradient. */
-.ot-trabajo { flex: 1; padding: 4px 10px; min-height: 50px; font-size: 13px; line-height: 6mm; white-space: pre-wrap; border-bottom: 1px solid #000; background-image: repeating-linear-gradient(transparent, transparent calc(6mm - 1px), #C8C6BE calc(6mm - 1px), #C8C6BE 6mm); background-position: 0 4px; }
+/* Trabajo SIN renglones (pedido del usuario - simplificacion).
+   La celda crece solo si el texto del trabajo no entra en el espacio inicial. */
+.ot-trabajo { flex: 1; padding: 6px 10px; min-height: 50px; font-size: 13px; line-height: 1.35; white-space: pre-wrap; border-bottom: 1px solid #000; }
+.ot-trabajo-fit { /* la altura se controla por flex:1 del .ot, el contenido tiene auto-shrink */ }
+.ot-trabajo-text { line-height: 1.35; }
 .ot-trabajo-empty { color: #888; font-style: italic; }
 
-/* Checklist for Despacho/Cierre */
-.ot-checklist { display: flex; flex-direction: column; gap: 4px; padding: 4px 10px; }
-.ot-checklist-item { display: flex; align-items: center; gap: 8px; font-size: 12px; }
-.ot-checklist-box { width: 14px; height: 14px; border: 1.5px solid #000; flex-shrink: 0; }
+/* Checklist for Despacho/Cierre - acciones a la izquierda, checkbox a la derecha */
+.ot-checklist { display: flex; flex-direction: column; gap: 6px; padding: 4px 10px; }
+.ot-checklist-item { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; padding: 2px 0; border-bottom: 1px dashed #C8C6BE; }
+.ot-checklist-item:last-child { border-bottom: none; }
+.ot-checklist-text { flex: 1; text-align: left; }
+.ot-checklist-box { width: 16px; height: 16px; border: 1.5px solid #000; flex-shrink: 0; }
 
 .ot-completar-band { background: #000; color: #fff; padding: 4px 8px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; text-align: center; }
 
@@ -1590,9 +1761,14 @@ body { font-family: Arial, sans-serif; font-size: 11px; color: #000; }
 .ot-fill td { border: 1px solid #000; padding: 4px 8px; }
 .ot-fill td.label { background: rgba(0, 0, 0, 0.06); font-weight: 700; }
 .ot-fill td.lbl-big { font-size: 14px; font-weight: 800; width: 28%; }
-.ot-fill td.val-big { font-size: 15px; font-weight: 700; height: 26px; }
+.ot-fill td.val-big { font-size: 15px; font-weight: 700; height: 26px; max-height: 26px; overflow: hidden; }
+.ot-fill td.value-fit { height: 26px; max-height: 26px; padding: 4px 8px; overflow: hidden; }
 .ot-fill td.lbl-mid { font-size: 12px; font-weight: 700; width: 28%; }
-.ot-fill td.val-mid { font-size: 13px; height: 22px; }
+.ot-fill td.val-mid { font-size: 13px; height: 22px; max-height: 22px; overflow: hidden; }
+
+/* fit-content-multi: contenido multilínea con auto-shrink JS. Se mantiene
+   contenido dentro del padre con altura fija. */
+.fit-content-multi { line-height: 1.2; overflow: hidden; }
 
 /* Observaciones with ruled lines */
 .ot-obs-wrap { border: 1px solid #000; border-top: none; padding: 0; }
@@ -1606,27 +1782,42 @@ body { font-family: Arial, sans-serif; font-size: 11px; color: #000; }
 </style></head><body>`;
 
   // ============= PORTADA =============
+  // Layout compacto:
+  //   - Cliente: 1 fila
+  //   - Proyecto: 1 fila (con auto-shrink, nunca crece)
+  //   - Item: 1 fila (con auto-shrink)
+  //   - Pedido + Contacto: 1 fila
+  //   - Cantidad + Telefono: 1 fila
+  //   - Material + Forma MP: 1 fila (combinadas para ahorrar renglon)
+  //   - Fecha de ingreso + Fecha fin estipulada: 1 fila (combinadas)
+  //   - Fecha real de finalizacion: 1 fila
+  // Las celdas .value-fit nunca crecen verticalmente; si el texto no entra,
+  // la letra se achica hasta 9pt y luego se corta.
   html += `<div class="page">
     <div class="cover-header">
       <div class="cover-header-logo"><img src="${LOGO_DATA_URL}" alt="Velasco"></div>
       <div class="cover-header-title">PLANILLA DE TRABAJO</div>
     </div>
     <table class="cover-info">
-      <tr><td class="label">CLIENTE:</td><td class="cliente-big" colspan="3">${escapeHtml(clienteDisplay)}</td></tr>
-      <tr class="shade"><td class="label">PROYECTO:</td><td class="pieza-big" colspan="3">${escapeHtml(meta.descripcion || '—')}</td></tr>
-      <tr><td class="label">ITEM:</td><td class="pieza-big" colspan="3">${escapeHtml(item.descripcion)}</td></tr>
+      <tr><td class="label">CLIENTE:</td><td class="cliente-big value-fit" colspan="3"><div class="fit-content">${escapeHtml(clienteDisplay)}</div></td></tr>
+      <tr class="shade"><td class="label">PROYECTO:</td><td class="pieza-big value-fit" colspan="3"><div class="fit-content">${escapeHtml(meta.descripcion || '—')}</div></td></tr>
+      <tr><td class="label">ITEM:</td><td class="pieza-big value-fit" colspan="3"><div class="fit-content">${escapeHtml(item.descripcion)}</div></td></tr>
       <tr class="shade">
         <td class="label">NUMERO DE PEDIDO:</td><td class="value pedido-big">${escapeHtml(item.pedido_nro || '—')}</td>
-        <td class="label" style="width:18%">CONTACTO:</td><td class="value">${escapeHtml(cliente && cliente.contacto ? cliente.contacto : '')}</td>
+        <td class="label" style="width:18%">CONTACTO:</td><td class="value value-fit"><div class="fit-content">${escapeHtml(cliente && cliente.contacto ? cliente.contacto : '')}</div></td>
       </tr>
       <tr>
         <td class="label">CANTIDAD A REALIZAR:</td><td class="value bold">${item.cantidad}</td>
-        <td class="label">TELEFONO:</td><td class="value">${escapeHtml(cliente && cliente.telefono ? cliente.telefono : '')}</td>
+        <td class="label">TELEFONO:</td><td class="value value-fit"><div class="fit-content">${escapeHtml(cliente && cliente.telefono ? cliente.telefono : '')}</div></td>
       </tr>
-      <tr class="shade"><td class="label">MATERIAL:</td><td class="value" colspan="3">${escapeHtml(item.material || '')}</td></tr>
-      <tr><td class="label">PRESENTACION MAT. PRIMA:</td><td class="value" colspan="3">${escapeHtml(item.presentacion_mat_prima || '')}</td></tr>
-      <tr class="shade"><td class="label">FECHA DE INGRESO:</td><td class="value" colspan="3">${fmt(meta.fecha_ingreso)}</td></tr>
-      <tr><td class="label">FECHA DE FIN ESTIPULADA:</td><td class="value" colspan="3">${fmt(item.fecha_fin_estipulada)}</td></tr>
+      <tr class="shade">
+        <td class="label">MATERIAL:</td><td class="value value-fit"><div class="fit-content">${escapeHtml(item.material || '')}</div></td>
+        <td class="label" style="width:18%">FORMA MP:</td><td class="value value-fit"><div class="fit-content">${escapeHtml(item.presentacion_mat_prima || '')}</div></td>
+      </tr>
+      <tr>
+        <td class="label">FECHA DE INGRESO:</td><td class="value">${fmt(meta.fecha_ingreso)}</td>
+        <td class="label">FECHA FIN ESTIP.:</td><td class="value">${fmt(item.fecha_fin_estipulada)}</td>
+      </tr>
       <tr class="shade"><td class="label">FECHA REAL DE FINALIZACION:</td><td class="value">FECHA:</td><td class="label">HORA:</td><td class="value"></td></tr>
     </table>
     <div class="wm-wrap"><table class="proc-table">
@@ -1668,7 +1859,56 @@ body { font-family: Arial, sans-serif; font-size: 11px; color: #000; }
     html += `</div>`;
   }
 
-  html += `<script>window.onload = function() { setTimeout(function() { window.print(); }, 300); }<\/script></body></html>`;
+  html += `<script>
+// Auto-shrink: reduce font-size hasta que el contenido entre en el padre o
+// se llegue al minimo (9pt = ~12px). Si no entra al minimo, se mantiene el
+// minimo y el padre lo corta con overflow:hidden.
+function fitOne(el, minPx) {
+  if (!el) return;
+  var parent = el.parentElement;
+  if (!parent) return;
+  var parentStyle = window.getComputedStyle(parent);
+  var maxH = parent.clientHeight - (parseFloat(parentStyle.paddingTop) || 0) - (parseFloat(parentStyle.paddingBottom) || 0);
+  if (maxH <= 0) maxH = parent.clientHeight;
+  // Empezar con la fuente actual
+  var cs = window.getComputedStyle(el);
+  var fs = parseFloat(cs.fontSize);
+  if (!fs || isNaN(fs)) return;
+  var safety = 30;
+  while ((el.scrollHeight > maxH + 1 || el.scrollWidth > el.clientWidth + 1) && fs > minPx && safety-- > 0) {
+    fs -= 0.5;
+    el.style.fontSize = fs + 'px';
+  }
+}
+
+// Especial para .ot-trabajo-text (el detalle): primero intenta entrar en el
+// espacio actual con auto-shrink. Si no entra ni a 9pt, deja que el contenedor
+// crezca verticalmente desactivando overflow:hidden y permitiendo flex grow.
+function fitTrabajo(el) {
+  if (!el) return;
+  var parent = el.parentElement;
+  if (!parent) return;
+  // Hacer auto-shrink primero
+  fitOne(el, 12);  // 12px = ~9pt
+  // Si despues del shrink al minimo no entra todavia, dejar que el bloque
+  // crezca verticalmente (esto solo afecta a este OT particular: el .ot ya
+  // tiene min-height, el ot-trabajo-fit absorbe el crecimiento por flex:1).
+  if (el.scrollHeight > parent.clientHeight + 1) {
+    parent.style.minHeight = (el.scrollHeight + 12) + 'px';
+  }
+}
+
+window.onload = function() {
+  // Auto-shrink en todos los .fit-content (single-line)
+  document.querySelectorAll('.fit-content').forEach(function(el){ fitOne(el, 12); });
+  // Auto-shrink en .fit-content-multi (multilinea, descripcion)
+  document.querySelectorAll('.fit-content-multi').forEach(function(el){
+    if (el.classList.contains('ot-trabajo-text')) fitTrabajo(el);
+    else fitOne(el, 12);
+  });
+  setTimeout(function() { window.print(); }, 400);
+};
+<\/script></body></html>`;
 
   const w = window.open('', '_blank');
   if (!w) { toast('Permitir pop-ups para generar la carpeta', true); return; }
@@ -1707,43 +1947,39 @@ function renderOT(p, idx, total, item, meta, clienteDisplay) {
   const isDespacho = (p.proceso || '') === 'Despacho/Cierre';
 
   // Detail block: either checklist (Despacho/Cierre) or freeform text
+  // Para Despacho: acciones a la izquierda, checkboxes a la derecha.
+  // Para resto: si hay texto, se muestra arriba; sin renglones para no
+  // complicar el layout.
   let detalleBlock;
   if (isDespacho) {
     let items = '';
     DESPACHO_CHECKLIST.forEach(it => {
-      items += `<div class="ot-checklist-item"><div class="ot-checklist-box"></div><span>${escapeHtml(it)}</span></div>`;
+      items += `<div class="ot-checklist-item"><span class="ot-checklist-text">${escapeHtml(it)}</span><div class="ot-checklist-box"></div></div>`;
     });
     const trabajoExtra = trabajo ? `<div style="margin-bottom:6px;font-size:11px">${escapeHtml(trabajo)}</div>` : '';
     detalleBlock = `<div class="ot-trabajo" style="background-image:none">${trabajoExtra}<div class="ot-checklist">${items}</div></div>`;
   } else {
-    // If there's pre-loaded text, render it as a "header" paragraph at the top
-    // (no background lines under the text), then leave the rest of the area
-    // with ruled lines so the operator can add notes by hand.
+    // Sin renglones (pedido del usuario). Texto con auto-shrink si excede.
     if (trabajo) {
-      detalleBlock = `<div class="ot-trabajo" style="display:flex;flex-direction:column">` +
-        `<div style="padding:2px 0;font-size:13px;line-height:1.4;white-space:pre-wrap;flex-shrink:0">${escapeHtml(trabajo)}</div>` +
-        `<div style="flex:1;background-image:repeating-linear-gradient(transparent,transparent calc(6mm - 1px),#C8C6BE calc(6mm - 1px),#C8C6BE 6mm);background-position:0 4px;min-height:24mm"></div>` +
-        `</div>`;
-      // The outer .ot-trabajo doesn't show its own background lines because the
-      // inner blocks override; explicit "background-image:none" on outer.
-      detalleBlock = detalleBlock.replace('class="ot-trabajo"', 'class="ot-trabajo" style="background-image:none;display:flex;flex-direction:column"');
+      detalleBlock = `<div class="ot-trabajo ot-trabajo-fit"><div class="ot-trabajo-text fit-content-multi">${escapeHtml(trabajo)}</div></div>`;
     } else {
-      detalleBlock = `<div class="ot-trabajo"></div>`;
+      detalleBlock = `<div class="ot-trabajo ot-trabajo-fit"></div>`;
     }
   }
 
+  // Layout segun spec del usuario:
+  //   Renglon 1 (header negro): TAREA + "Orden de trabajo X/N" centrado + URG
+  //   Renglon 2: CLIENTE | RESPONSABLE
+  //   Renglon 3: PROYECTO | PEDIDO
+  //   Renglon 4-5 (alto doble): DESCRIPCION | CANTIDAD + ingreso
+  //     -> Descripcion ocupa el alto de los 2 renglones (campo grande).
+  //     -> Lado derecho: CANTIDAD en una mitad, INGRESO en la otra mitad
+  //   Renglon 6: MATERIAL | FORMA INICIAL
   return `<div class="ot">
     <div class="ot-tarea-band">
       <div class="tarea-name">${escapeHtml(tarea)}</div>
+      <div class="ot-num-mid">Orden de Trabajo: ${idx} / ${total}</div>
       <div class="urg-pill">URGENCIA: ${urg}</div>
-    </div>
-    <div class="ot-head">
-      <div class="ot-head-l">
-        <div class="ot-num">Orden de Trabajo: ${idx} / ${total}</div>
-      </div>
-      <div class="ot-head-r">
-        <div><b>Ingreso:</b> ${fmt(meta.fecha_ingreso)}</div>
-      </div>
     </div>
     <table class="ot-info-big">
       <colgroup>
@@ -1754,29 +1990,33 @@ function renderOT(p, idx, total, item, meta, clienteDisplay) {
       </colgroup>
       <tr>
         <td class="lblb">CLIENTE</td>
-        <td class="valb">${escapeHtml((clienteDisplay || '').toUpperCase())}</td>
-        <td class="lblb lblb-narrow">RESP.</td>
-        <td class="valb valb-narrow">${escapeHtml((responsable || '').toUpperCase())}</td>
+        <td class="valb value-fit"><div class="fit-content">${escapeHtml((clienteDisplay || '').toUpperCase())}</div></td>
+        <td class="lblb lblb-narrow">RESPONSABLE</td>
+        <td class="valb valb-narrow value-fit"><div class="fit-content">${escapeHtml((responsable || '').toUpperCase())}</div></td>
       </tr>
       <tr class="row-proj">
         <td class="lblb lblb-small">PROYECTO</td>
-        <td class="valb valb-small"><div class="line-clamp-1">${escapeHtml((meta.descripcion || '').toUpperCase())}</div></td>
+        <td class="valb valb-small value-fit"><div class="fit-content">${escapeHtml((meta.descripcion || '').toUpperCase())}</div></td>
         <td class="lblb lblb-narrow">PEDIDO</td>
-        <td class="valb valb-narrow">${escapeHtml((item.pedido_nro || '').toString().toUpperCase())}</td>
+        <td class="valb valb-narrow value-fit"><div class="fit-content">${escapeHtml((item.pedido_nro || '').toString().toUpperCase())}</div></td>
       </tr>
       <tr>
-        <td class="lblb">DESCRIPCIÓN</td>
-        <td class="valb"><div class="line-clamp-2">${escapeHtml((item.descripcion || '').toUpperCase())}</div></td>
-        <td class="lblb lblb-narrow">CANT.</td>
+        <td class="lblb desc-tall" rowspan="2">DESCRIPCIÓN</td>
+        <td class="valb desc-cell" rowspan="2"><div class="fit-content-multi desc-content">${escapeHtml((item.descripcion || '').toUpperCase())}</div></td>
+        <td class="lblb lblb-narrow">CANTIDAD</td>
         <td class="valb valb-narrow">${item.cantidad}</td>
+      </tr>
+      <tr>
+        <td class="lblb lblb-narrow lblb-lower">ingreso</td>
+        <td class="valb valb-narrow valb-lower">${fmt(meta.fecha_ingreso)}</td>
       </tr>
     </table>
     <table class="ot-info">
       <tr>
         <td class="label" style="width:14%">Material:</td>
-        <td style="width:38%">${escapeHtml(item.material || '')}</td>
+        <td class="value-fit" style="width:38%"><div class="fit-content">${escapeHtml(item.material || '')}</div></td>
         <td class="label" style="width:14%">Forma inicial:</td>
-        <td style="width:34%">${escapeHtml(item.presentacion_mat_prima || '')}</td>
+        <td class="value-fit" style="width:34%"><div class="fit-content">${escapeHtml(item.presentacion_mat_prima || '')}</div></td>
       </tr>
     </table>
     <div style="border-top:1px solid #000"></div>
@@ -1787,7 +2027,7 @@ function renderOT(p, idx, total, item, meta, clienteDisplay) {
         <td class="label lbl-big" style="width:22%">TIEMPO REQUERIDO:</td>
         <td class="val-big" style="width:30%">________ HS ______ MIN</td>
         <td class="label lbl-big" style="width:14%">MÁQUINA:</td>
-        <td class="val-big" style="width:34%">${escapeHtml((maquina || '').toUpperCase())}</td>
+        <td class="val-big value-fit" style="width:34%"><div class="fit-content">${escapeHtml((maquina || '').toUpperCase())}</div></td>
       </tr>
       <tr>
         <td class="label lbl-big">MATERIAL UTILIZADO:</td>

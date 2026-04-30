@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Velasco App 2.0 — Tablero por Operario v32</title>
+<title>Velasco App 2.0 — Tablero por Operario v34</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -243,13 +243,35 @@ function opI(name){const o=ops.find(x=>x.nombre===name);return o?o.id:null}
 function clN(id){const c=cls.find(x=>x.id===id);return c?c.nombre:'?'}
 function mN(id){const m=maq.find(x=>x.id===id);return m?m.nombre:'?'}
 function mI(n){const m=maq.find(x=>x.nombre===n);return m?m.id:null}
-function D(a){return a.duracion_estimada_min+(a.duracion_margen_min||0)}
+// Duracion total de la actividad. Prioriza duracion_planificador_min (lo que
+// el usuario edito en el modal "Duracion total") sobre estimada+margen.
+// Esto permite que cambiar la duracion en el modal afecte el ancho del bloque
+// y se propague a cascadas.
+function D(a){
+  if (a.duracion_planificador_min !== null && a.duracion_planificador_min !== undefined) {
+    return a.duracion_planificador_min;
+  }
+  return a.duracion_estimada_min + (a.duracion_margen_min || 0);
+}
+// Helpers de tipo:
+// - isAuto: comportamiento "operario solo durante setup" (semi y auto comparten esto)
+// - is247: corre 24/7 (incluye noche y domingos). Solo tipo 'automatica'.
+// - isSemi: respeta jornada del operario para la parte de maquina (legacy).
+function isAuto(a) { return a.tipo === 'automatica' || a.tipo === 'semi_automatica'; }
+function is247(a) { return a.tipo === 'automatica'; }
+function isSemi(a) { return a.tipo === 'semi_automatica'; }
+// Etiqueta legible para mostrar el tipo en mensajes de UI.
+function tipoLabel(a) {
+  if (a.tipo === 'automatica') return 'auto 24/7';
+  if (a.tipo === 'semi_automatica') return 'semi';
+  return 'manual';
+}
 // Operator time: how long the operator is attached to the activity.
 // Manual activities: operator stays the whole duration (same as D).
-// Automaticas with duracion_operario_min set: just the setup portion.
+// Automaticas y semi-automaticas with duracion_operario_min set: just the setup portion.
 // Fallback to D if the field is null/undefined (safe default).
 function Dop(a) {
-  if (a.tipo === 'automatica' && a.duracion_operario_min !== null && a.duracion_operario_min !== undefined) {
+  if (isAuto(a) && a.duracion_operario_min !== null && a.duracion_operario_min !== undefined) {
     return a.duracion_operario_min;
   }
   return D(a);
@@ -271,10 +293,89 @@ function sE(opId,ds){const o=ops.find(x=>x.id===opId);if(!o)return 1020;const d=
 
 // ========== VISUAL BLOCKS (multi-day aware) ==========
 // Splits each activity across days according to operator's shift schedule.
+// Para 'automatica' (24/7): el setup respeta jornada; despues, la maquina
+// corre calendario continuo y se renderiza solo en las franjas de jornada
+// que esten dentro de su periodo (las horas fuera de jornada/noches/domingos
+// se "evaporan" porque la maquina no necesita operario).
 function computeVB() {
   const vb = [];
   acts.filter(a => a.estado !== 'sin_planificar' && a.fecha !== '1900-01-01' && !a.es_pulmon).forEach(act => {
     if (!act.operario_id) return;
+
+    if (is247(act) && act.duracion_operario_min !== null && act.duracion_operario_min !== undefined) {
+      // === AUTO 24/7 ===
+      const setupMin = act.duracion_operario_min;
+      const machineRest = D(act) - setupMin;
+      const parts = [];
+      let pn = 1;
+
+      // Fase 1: setup respetando jornada
+      let rem = setupMin, cd = act.fecha, ct = tM(act.hora_inicio), safe = 0;
+      while (rem > 0 && safe < 20) {
+        safe++;
+        const ds = sS(act.operario_id), de = sE(act.operario_id, cd);
+        if (ct < ds) ct = ds;
+        const av = de - ct;
+        if (av <= 0) { cd = nwd(cd); ct = sS(act.operario_id); continue; }
+        const bd = Math.min(rem, av);
+        parts.push({ actId: act.id, act, date: cd, startMin: ct, dur: bd, part: pn });
+        rem -= bd;
+        if (rem > 0) { cd = nwd(cd); ct = sS(act.operario_id); pn++; }
+        else { ct += bd; }
+      }
+      // cd/ct = momento en que termina el setup. La maquina corre desde aqui
+      // calendario continuo durante machineRest minutos.
+
+      // Fase 2: maquina sola 24/7 - intersectar con jornadas dia a dia.
+      // Avanzamos en el calendario hasta consumir machineRest minutos reales.
+      // En cada dia de calendario que cruzamos, si hay jornada (no domingo)
+      // y el periodo de la maquina la intersecta, generamos bloque visible.
+      let calMinRem = machineRest;
+      let curDate = cd, curTime = ct;  // posicion actual de la maquina
+      let dayHop = 0;
+      while (calMinRem > 0 && dayHop < 30) {
+        dayHop++;
+        // Hasta cuanto avanza la maquina en este dia calendario?
+        const minsLeftInDay = 1440 - curTime;
+        const consumeToday = Math.min(calMinRem, minsLeftInDay);
+        const machineEndOfDay = curTime + consumeToday;  // 0..1440
+
+        // Es domingo? (no se renderiza bloque, taller cerrado)
+        const dow = new Date(curDate + 'T12:00:00').getDay();
+        if (dow !== 0) {
+          const ds = sS(act.operario_id), de = sE(act.operario_id, curDate);
+          // Interseccion entre [curTime, machineEndOfDay] y jornada [ds, de]
+          const visStart = Math.max(curTime, ds);
+          const visEnd = Math.min(machineEndOfDay, de);
+          if (visEnd > visStart) {
+            // Si en este dia tambien hay setup (caso mismo dia), evitar duplicar.
+            const existingSetup = parts.find(p => p.date === curDate);
+            if (existingSetup && Math.abs(existingSetup.startMin + existingSetup.dur - visStart) < 1) {
+              // El bloque de setup termina justo donde empieza el visible -> fusionar
+              existingSetup.dur += (visEnd - visStart);
+            } else {
+              parts.push({ actId: act.id, act, date: curDate, startMin: visStart, dur: visEnd - visStart, part: pn });
+              pn++;
+            }
+          }
+        }
+
+        calMinRem -= consumeToday;
+        if (calMinRem > 0) {
+          // Avanzar al dia siguiente calendario (sin saltar domingos: para 24/7
+          // el domingo cuenta calendar, solo no se renderiza)
+          const d = new Date(curDate + 'T12:00:00'); d.setDate(d.getDate() + 1);
+          curDate = dK(d);
+          curTime = 0;
+        }
+      }
+
+      const tot = parts.length;
+      parts.forEach(p => { p.totalParts = tot; vb.push(p); });
+      return;
+    }
+
+    // === MANUAL o SEMI-AUTOMATICA: respeta jornada del operario ===
     let rem = D(act), cd = act.fecha, ct = tM(act.hora_inicio), pn = 1;
     const parts = []; let safe = 0;
     while (rem > 0 && safe < 20) {
@@ -300,6 +401,38 @@ function computeVB() {
 // activities at that time, this cascade pushes them forward.
 
 function realEnd(a) {
+  // Para 'automatica' (24/7): el setup respeta jornada del operario, pero la
+  // parte de maquina sola corre 24/7 sumando minutos calendario sin parar
+  // (incluye noche y domingos).
+  // Para 'semi_automatica' y 'manual': todo respeta la jornada del operario.
+  if (is247(a) && a.duracion_operario_min !== null && a.duracion_operario_min !== undefined) {
+    const setupMin = a.duracion_operario_min;
+    const machineRest = D(a) - setupMin;
+    // Walk del setup respetando jornada
+    let rem = setupMin, cd = a.fecha, ct = tM(a.hora_inicio), safe = 0;
+    while (rem > 0 && safe < 20) {
+      safe++;
+      const ds = sS(a.operario_id), de = sE(a.operario_id, cd);
+      if (ct < ds) ct = ds;
+      const avail = de - ct;
+      if (avail <= 0) { cd = nwd(cd); ct = sS(a.operario_id); continue; }
+      const used = Math.min(rem, avail);
+      rem -= used;
+      if (rem > 0) { cd = nwd(cd); ct = sS(a.operario_id); } else { ct += used; }
+    }
+    // Ahora cd/ct es donde termina el setup. La maquina sigue 24/7.
+    // Sumar machineRest minutos calendario directos.
+    if (machineRest > 0) {
+      let totalMin = ct + machineRest;
+      while (totalMin >= 1440) {
+        cd = (function(ds){ const d = new Date(ds + 'T12:00:00'); d.setDate(d.getDate() + 1); return dK(d); })(cd);
+        totalMin -= 1440;
+      }
+      ct = totalMin;
+    }
+    return { date: cd, time: ct };
+  }
+  // Manual o semi: todo respeta jornada del operario
   let rem = D(a), cd = a.fecha, ct = tM(a.hora_inicio), safe = 0;
   while (rem > 0 && safe < 20) {
     safe++;
@@ -361,6 +494,9 @@ async function globalResolve(undoBatch, justPlacedId) {
         else if (bDate === endA.date && bTime < endA.time + GAP) needsMove = true;
         if (needsMove) {
           let newDate = endA.date, newTime = endA.time + GAP;
+          // Si newDate cae domingo (puede pasar si A es auto 24/7), saltar a lunes.
+          const dow = new Date(newDate + 'T12:00:00').getDay();
+          if (dow === 0) { newDate = nwd(newDate); newTime = sS(B.operario_id); }
           const bShE = sE(B.operario_id, newDate), bShS = sS(B.operario_id);
           if (newTime < bShS) newTime = bShS;
           if (newTime >= bShE) { newDate = nwd(newDate); newTime = sS(B.operario_id); }
@@ -381,19 +517,10 @@ function dayBlocks(machId, dateStr, excludeId) {
   const blocks = [];
   acts.filter(a => a.maquina_id === machId && a.estado !== 'sin_planificar' && a.fecha !== '1900-01-01' && a.id !== excludeId)
     .forEach(a => {
-      let rem = D(a), cd = a.fecha, ct = tM(a.hora_inicio), safe = 0;
-      while (rem > 0 && safe < 20) {
-        safe++;
-        const ds = sS(a.operario_id), de = sE(a.operario_id, cd);
-        if (ct < ds) ct = ds;
-        const avail = de - ct;
-        if (avail <= 0) { cd = nwd(cd); ct = sS(a.operario_id); continue; }
-        const used = Math.min(rem, avail);
-        if (cd === dateStr) blocks.push({ s: ct, e: ct + used, act: a });
-        if (cd > dateStr) break;
-        rem -= used;
-        if (rem > 0) { cd = nwd(cd); ct = sS(a.operario_id); } else { ct += used; }
-      }
+      const slices = machineSlicesOf(a);
+      slices.forEach(sl => {
+        if (sl.date === dateStr) blocks.push({ s: sl.start, e: sl.end, act: a });
+      });
     });
   return blocks.sort((a, b) => a.s - b.s);
 }
@@ -480,39 +607,98 @@ function calcInsertTimeForOp(opId, dateStr, dropMin, excludeId) {
 // in time with a proposed placement. Considers the full multi-day expansion
 // of the incoming activity (it may span several days), and returns ALL
 // conflicting activities across all affected days.
-function findMachineConflictsOtherOps(actId, machId, opId, fecha, startMin, dur) {
-  const conflicts = [];
-  if (!machId) return conflicts;
-
-  // Simulate the placed activity's day-by-day slices (respects operator shift).
-  const slices = simulatePlacement({ duracion_estimada_min: dur, duracion_margen_min: 0 }, opId, fecha, startMin);
-  if (slices.length === 0) return conflicts;
-
-  // For each slice, find activities of OTHER operators on the same machine that overlap
-  acts.forEach(a => {
-    if (a.id === actId) return;
-    if (a.maquina_id !== machId) return;
-    if (a.operario_id === opId) return;  // only OTHER operators
-    if (a.estado === 'sin_planificar') return;
-    let rem = D(a), cd = a.fecha, ct = tM(a.hora_inicio), safe = 0;
-    let pushed = false;
-    while (rem > 0 && safe < 20 && !pushed) {
+// Devuelve los slices de ocupacion de maquina para una actividad. Para
+// manual y semi: respeta jornada del operario. Para auto 24/7: setup
+// respeta jornada, despues calendar continuo.
+function machineSlicesOf(a) {
+  if (is247(a) && a.duracion_operario_min !== null && a.duracion_operario_min !== undefined) {
+    const setupMin = a.duracion_operario_min;
+    const machineRest = D(a) - setupMin;
+    const slices = [];
+    // Fase 1: setup respetando jornada
+    let rem = setupMin, cd = a.fecha, ct = tM(a.hora_inicio), safe = 0;
+    while (rem > 0 && safe < 20) {
       safe++;
       const ds = sS(a.operario_id), de = sE(a.operario_id, cd);
       if (ct < ds) ct = ds;
       const av = de - ct;
       if (av <= 0) { cd = nwd(cd); ct = sS(a.operario_id); continue; }
       const used = Math.min(rem, av);
-      // Check against every slice of the incoming activity
+      slices.push({ date: cd, start: ct, end: ct + used });
+      rem -= used;
+      if (rem > 0) { cd = nwd(cd); ct = sS(a.operario_id); } else { ct += used; }
+    }
+    // Fase 2: maquina sola 24/7 (calendar continuo, dia por dia)
+    if (machineRest > 0) {
+      let calRem = machineRest;
+      let curDate = cd, curTime = ct;
+      let dayHop = 0;
+      while (calRem > 0 && dayHop < 30) {
+        dayHop++;
+        const minsLeftInDay = 1440 - curTime;
+        const consume = Math.min(calRem, minsLeftInDay);
+        // Fusionar con slice previo si es contiguo (mismo dia y empieza donde termino)
+        const last = slices[slices.length - 1];
+        if (last && last.date === curDate && Math.abs(last.end - curTime) < 1) {
+          last.end = curTime + consume;
+        } else {
+          slices.push({ date: curDate, start: curTime, end: curTime + consume });
+        }
+        calRem -= consume;
+        if (calRem > 0) {
+          const d = new Date(curDate + 'T12:00:00'); d.setDate(d.getDate() + 1);
+          curDate = dK(d);
+          curTime = 0;
+        }
+      }
+    }
+    return slices;
+  }
+  // Manual / semi: walk normal por jornada
+  const slices = [];
+  let rem = D(a), cd = a.fecha, ct = tM(a.hora_inicio), safe = 0;
+  while (rem > 0 && safe < 20) {
+    safe++;
+    const ds = sS(a.operario_id), de = sE(a.operario_id, cd);
+    if (ct < ds) ct = ds;
+    const av = de - ct;
+    if (av <= 0) { cd = nwd(cd); ct = sS(a.operario_id); continue; }
+    const used = Math.min(rem, av);
+    slices.push({ date: cd, start: ct, end: ct + used });
+    rem -= used;
+    if (rem > 0) { cd = nwd(cd); ct = sS(a.operario_id); } else { ct += used; }
+  }
+  return slices;
+}
+
+function findMachineConflictsOtherOps(actId, machId, opId, fecha, startMin, dur) {
+  const conflicts = [];
+  if (!machId) return conflicts;
+
+  // Slices de la actividad entrante. Para detectar conflicto contra una
+  // existente, usamos los slices REALES (que tienen en cuenta auto 24/7 si
+  // la entrante lo es). Notar: el caller pasa solo dur+opId+fecha+startMin,
+  // sin tipo. Usamos simulatePlacement (jornada-respetada) como aproximacion;
+  // es suficiente porque cuando se llama esta funcion la entrante no es 24/7
+  // calendar (los conflict checks de 24/7 vs maquina se gestionan al inicio
+  // del placement). En la gran mayoria de casos basta con esto.
+  const slices = simulatePlacement({ duracion_estimada_min: dur, duracion_margen_min: 0 }, opId, fecha, startMin);
+  if (slices.length === 0) return conflicts;
+
+  acts.forEach(a => {
+    if (a.id === actId) return;
+    if (a.maquina_id !== machId) return;
+    if (a.operario_id === opId) return;
+    if (a.estado === 'sin_planificar') return;
+    const aSlices = machineSlicesOf(a);
+    for (const as of aSlices) {
+      let pushed = false;
       for (const s of slices) {
-        if (cd === s.date && ct < s.end && ct + used > s.start) {
+        if (as.date === s.date && as.start < s.end && as.end > s.start) {
           conflicts.push(a); pushed = true; break;
         }
       }
-      if (!pushed) {
-        rem -= used;
-        if (rem > 0) { cd = nwd(cd); ct = sS(a.operario_id); } else { ct += used; }
-      }
+      if (pushed) break;
     }
   });
   return conflicts;
@@ -640,7 +826,7 @@ function pushAlert(type, opName, actName, conflicts, isBlocked) {
   const card = document.createElement('div');
   card.className = 'alert-card alert-' + type;
   card.id = id;
-  const conflictList = conflicts.map(c => '- ' + c.descripcion + ' \u2014 Ped. ' + (c.pedido_nro||'-') + ' \u2014 ' + mN(c.maquina_id) + ' (' + c.tipo + ')').join('<br>');
+  const conflictList = conflicts.map(c => '- ' + c.descripcion + ' \u2014 Ped. ' + (c.pedido_nro||'-') + ' \u2014 ' + mN(c.maquina_id) + ' (' + tipoLabel(c) + ')').join('<br>');
   const title = isBlocked
     ? '\u26A0 BLOQUEADO: ' + opName + ' ya tiene actividades manuales en este horario'
     : '\u26A0 ' + opName + ' tiene otras actividades en este horario:';
@@ -684,7 +870,7 @@ function showOpAlert(type, act, conflicts, onProceed, effectiveOpId) {
     // YELLOW dialog: confirm before placing
     const bd = document.createElement('div'); bd.className = 'mo';
     const m = document.createElement('div'); m.className = 'md';
-    const cList = conflicts.map(c => '<div style="margin:3px 0">• <b>' + c.descripcion + '</b> — Ped. ' + (c.pedido_nro||'-') + ' — ' + mN(c.maquina_id) + ' (' + c.tipo + ')</div>').join('');
+    const cList = conflicts.map(c => '<div style="margin:3px 0">• <b>' + c.descripcion + '</b> — Ped. ' + (c.pedido_nro||'-') + ' — ' + mN(c.maquina_id) + ' (' + tipoLabel(c) + ')</div>').join('');
     m.innerHTML = '<div class="md-t" style="color:#9B7500">⚠ Advertencia de operario</div>' +
       '<div style="font-size:13px;margin-bottom:12px;line-height:1.5"><b>' + opN(targetOpId) + '</b> ya tiene actividades simultaneas:</div>' +
       '<div style="font-size:12px;margin-bottom:12px;padding:10px;background:#FFF8E1;border-radius:6px;border:1px solid #F9A825">' + cList + '</div>' +
@@ -699,7 +885,7 @@ function showOpAlert(type, act, conflicts, onProceed, effectiveOpId) {
   }
   if (type === 'blocked') {
     // RED dialog: blocked, offer alt time (multi-day search)
-    const cList = conflicts.map(c => '<div style="margin:3px 0">• <b>' + c.descripcion + '</b> — Ped. ' + (c.pedido_nro||'-') + ' — ' + mN(c.maquina_id) + ' <span style="color:#888">(' + c.tipo + ')</span></div>').join('');
+    const cList = conflicts.map(c => '<div style="margin:3px 0">• <b>' + c.descripcion + '</b> — Ped. ' + (c.pedido_nro||'-') + ' — ' + mN(c.maquina_id) + ' <span style="color:#888">(' + tipoLabel(c) + ')</span></div>').join('');
     const origFecha = act._pendingFecha || act.fecha;
     const machId = act._pendingMachId || act.maquina_id;
     const freeSlot = findFreeManualSlot(act, targetOpId, origFecha);
@@ -1428,7 +1614,7 @@ function showMachineConflictAlert(act, machId, fecha, startTime, conflicts, newO
     const sourceLabel = source && source.id !== act.id
       ? ' <span style="color:#5F5E5A;font-size:11px">(colisiona con <b>' + source.descripcion + '</b> por cascada)</span>'
       : '';
-    return '<div style="margin:3px 0">• <b>' + c.descripcion + '</b> — Ped. ' + (c.pedido_nro||'-') + ' — <b>' + opN(c.operario_id) + '</b> — ' + rangeLabel + ' (' + c.tipo + ')' + sourceLabel + '</div>';
+    return '<div style="margin:3px 0">• <b>' + c.descripcion + '</b> — Ped. ' + (c.pedido_nro||'-') + ' — <b>' + opN(c.operario_id) + '</b> — ' + rangeLabel + ' (' + tipoLabel(c) + ')' + sourceLabel + '</div>';
   }).join('');
 
   // Find an alternative start time where the full multi-day expansion of the
@@ -1623,21 +1809,22 @@ function assignTracksAcrossDays(vBlocks) {
         }
       });
 
-      // Pass 2a: MANUAL activities always go to track 0 (upper row)
+      // Pass 2a: MANUAL activities always go to track 0 (upper row).
+      // Semi-automaticas y automaticas van a track >= 1.
       dayBlocks.forEach(b => {
         if (b.track !== undefined) return;
-        if (!b.act || b.act.tipo === 'automatica') return;
+        if (!b.act || isAuto(b.act)) return;
         b.track = 0;
         actTrack[b.actId] = 0;
         while (trackEnds.length <= 0) trackEnds.push(0);
         trackEnds[0] = Math.max(trackEnds[0], b.startMin + b.dur);
       });
 
-      // Pass 2b: AUTOMATICAS go to tracks ≥ 1. Sorted by start time ascending,
-      // so earlier-starting automaticas take lower tracks (middle), later ones
-      // go further down. Multi-day consistency is preserved by Pass 1.
+      // Pass 2b: AUTOMATICAS y SEMI-AUTOMATICAS go to tracks ≥ 1. Sorted by start
+      // time ascending, so earlier-starting take lower tracks (middle), later
+      // ones go further down. Multi-day consistency is preserved by Pass 1.
       const autoBlocks = dayBlocks
-        .filter(b => b.track === undefined && b.act && b.act.tipo === 'automatica')
+        .filter(b => b.track === undefined && b.act && isAuto(b.act))
         .sort((a, b) => a.startMin - b.startMin || a.actId - b.actId);
       autoBlocks.forEach(b => {
         let t = 1;
@@ -1875,24 +2062,155 @@ function render() {
             pb.textContent = bl.part + '/' + bl.totalParts;
             block.appendChild(pb);
           }
-          if (act.tipo === 'automatica') {
+          // Badge "A" (auto) o "S" (semi) en la esquina del bloque.
+          if (isAuto(act)) {
             const ai = document.createElement('div'); ai.className = 'ba';
-            ai.textContent = 'A';
+            ai.textContent = is247(act) ? 'A' : 'S';
             if (bl.totalParts > 1) ai.style.right = '30px';
             tx.appendChild(ai);
           }
           block.appendChild(tx);
 
-          // AUTOMATICA: split the block into "setup" (solid) vs "machine-alone"
-          // (diagonal stripes). Computed per-block so multi-day automaticas
-          // handle each slice correctly.
-          if (act.tipo === 'automatica') {
-            // Figure out how much of THIS visible block is setup (manual) vs
-            // machine-alone. We walk the activity's slices up to this block's
-            // `.part` and track how many setup-minutes we've "used" so far.
+          // AUTOMATICA y SEMI-AUTOMATICA: split the block into "setup" (solid) vs
+          // "machine-alone" (diagonal stripes). Computed per-block so multi-day
+          // activities handle each slice correctly.
+          if (isAuto(act)) {
             const setupTotal = Dop(act);
             let setupUsedBefore = 0;
             let setupInThisBlock = 0;
+
+            if (is247(act)) {
+              // Para auto 24/7, el setup esta solo en los primeros bloques (los
+              // que respetaron jornada). Walk del setup respetando jornada del
+              // operario para encontrar cuanto setup hay en este bloque.
+              let rem = setupTotal, cd = act.fecha, ct = tM(act.hora_inicio), partIdx = 0, safe = 0;
+              while (rem > 0 && safe < 30) {
+                safe++;
+                const ds = sS(act.operario_id), de = sE(act.operario_id, cd);
+                if (ct < ds) ct = ds;
+                const av = de - ct;
+                if (av <= 0) { cd = nwd(cd); ct = sS(act.operario_id); continue; }
+                const used = Math.min(rem, av);
+                partIdx++;
+                if (partIdx === bl.part) {
+                  setupInThisBlock = used;
+                  break;
+                }
+                setupUsedBefore += used;
+                rem -= used;
+                if (rem > 0) { cd = nwd(cd); ct = sS(act.operario_id); } else { ct += used; }
+              }
+              // Si el bloque actual es posterior al setup (partIdx no llego)
+              // setupInThisBlock queda 0 -> todo el bloque sera rayado.
+            } else {
+              // SEMI: walk completo respetando jornada (igual que antes)
+              let rem = D(act), cd = act.fecha, ct = tM(act.hora_inicio), partIdx = 0, safe = 0;
+              while (rem > 0 && safe < 30) {
+                safe++;
+                const ds = sS(act.operario_id), de = sE(act.operario_id, cd);
+                if (ct < ds) ct = ds;
+                const av = de - ct;
+                if (av <= 0) { cd = nwd(cd); ct = sS(act.operario_id); continue; }
+                const used = Math.min(rem, av);
+                partIdx++;
+                if (partIdx === bl.part) {
+                  const remainingSetup = Math.max(0, setupTotal - setupUsedBefore);
+                  setupInThisBlock = Math.min(remainingSetup, used);
+                  break;
+                }
+                const remainingSetup = Math.max(0, setupTotal - setupUsedBefore);
+                setupUsedBefore += Math.min(remainingSetup, used);
+                rem -= used;
+                if (rem > 0) { cd = nwd(cd); ct = sS(act.operario_id); } else { ct += used; }
+              }
+            }
+
+            if (setupInThisBlock < bl.dur) {
+              const setupPct = (setupInThisBlock / bl.dur) * 100;
+              // Diagonal-stripe overlay for the machine-alone portion
+              const overlay = document.createElement('div');
+              overlay.style.cssText = 'position:absolute;top:0;bottom:0;left:' + setupPct.toFixed(3) + '%;right:0;' +
+                'background:repeating-linear-gradient(135deg,rgba(0,0,0,.08) 0 6px,rgba(0,0,0,0) 6px 12px);' +
+                'pointer-events:none;border-radius:0 4px 4px 0;z-index:1';
+              block.appendChild(overlay);
+              // Vertical separator line at the setup/machine boundary
+              if (setupInThisBlock > 0) {
+                const sep = document.createElement('div');
+                sep.style.cssText = 'position:absolute;top:0;bottom:0;left:' + setupPct.toFixed(3) + '%;' +
+                  'width:2px;background:rgba(0,0,0,.55);pointer-events:none;z-index:2';
+                block.appendChild(sep);
+                // Vertical "MANUAL" label inside the setup zone — one letter per line.
+                const blockWidthPx = (Math.min(pW(bl.dur), 100 - pL(bl.startMin)) / 100) * 400;
+                const setupWidthPx = blockWidthPx * (setupInThisBlock / bl.dur);
+                const blockHeightPx = blockH - 4;
+                const canFit = setupWidthPx >= 12 && blockHeightPx >= 56;
+                if (canFit) {
+                  const lbl = document.createElement('div');
+                  lbl.style.cssText = 'position:absolute;top:0;left:0;' +
+                    'width:' + setupPct.toFixed(3) + '%;height:100%;' +
+                    'display:flex;flex-direction:column;align-items:center;justify-content:center;' +
+                    'pointer-events:none;z-index:2;user-select:none';
+                  const letterCellPx = Math.min(11, Math.max(7, Math.floor(blockHeightPx * 0.70 / 6)));
+                  'MANUAL'.split('').forEach(ch => {
+                    const s = document.createElement('div');
+                    s.textContent = ch;
+                    s.style.cssText = 'font-size:' + letterCellPx + 'px;line-height:' + letterCellPx + 'px;' +
+                      'height:' + letterCellPx + 'px;font-weight:800;color:rgba(0,0,0,.85);' +
+                      'text-align:center;font-family:Arial,sans-serif';
+                    lbl.appendChild(s);
+                  });
+                  block.appendChild(lbl);
+                }
+                tx.style.paddingLeft = 'calc(' + setupPct.toFixed(3) + '% + 6px)';
+              }
+            }
+          }
+
+          if (showPhoto) {
+            const img = document.createElement('img');
+            img.src = foto;
+            img.style.cssText = 'width:35px;object-fit:cover;border-radius:2px;flex-shrink:0;align-self:stretch';
+            img.onerror = function() { this.style.display = 'none' };
+            block.appendChild(img);
+          }
+          cell.appendChild(block);
+        });
+
+        // GHOST BLOCKS: for each auto/semi in this cell, render a non-interactive
+        // "ghost" in the upper row (track 0) spanning its setup portion. Visually
+        // signals that the operator IS busy during setup even though the real
+        // block sits on the lower row. Not draggable, not clickable.
+        data.blocks.forEach(bl => {
+          const act = bl.act;
+          if (!isAuto(act)) return;
+          if (bl.track === 0) return;  // real block already sits on top row (no ghost needed)
+          // Compute setup minutes that fall within THIS visible block
+          const setupTotal = Dop(act);
+          let setupInThisBlock = 0;
+
+          if (is247(act)) {
+            // Para auto 24/7, walk solo del setup respetando jornada
+            let setupUsedBefore = 0;
+            let rem = setupTotal, cd = act.fecha, ct = tM(act.hora_inicio), partIdx = 0, safe = 0;
+            while (rem > 0 && safe < 30) {
+              safe++;
+              const ds = sS(act.operario_id), de = sE(act.operario_id, cd);
+              if (ct < ds) ct = ds;
+              const av = de - ct;
+              if (av <= 0) { cd = nwd(cd); ct = sS(act.operario_id); continue; }
+              const used = Math.min(rem, av);
+              partIdx++;
+              if (partIdx === bl.part) {
+                setupInThisBlock = used;
+                break;
+              }
+              setupUsedBefore += used;
+              rem -= used;
+              if (rem > 0) { cd = nwd(cd); ct = sS(act.operario_id); } else { ct += used; }
+            }
+          } else {
+            // SEMI: walk completo respetando jornada
+            let setupUsedBefore = 0;
             let rem = D(act), cd = act.fecha, ct = tM(act.hora_inicio), partIdx = 0, safe = 0;
             while (rem > 0 && safe < 30) {
               safe++;
@@ -1912,98 +2230,6 @@ function render() {
               rem -= used;
               if (rem > 0) { cd = nwd(cd); ct = sS(act.operario_id); } else { ct += used; }
             }
-            if (setupInThisBlock < bl.dur) {
-              const setupPct = (setupInThisBlock / bl.dur) * 100;
-              // Diagonal-stripe overlay for the machine-alone portion
-              const overlay = document.createElement('div');
-              overlay.style.cssText = 'position:absolute;top:0;bottom:0;left:' + setupPct.toFixed(3) + '%;right:0;' +
-                'background:repeating-linear-gradient(135deg,rgba(0,0,0,.08) 0 6px,rgba(0,0,0,0) 6px 12px);' +
-                'pointer-events:none;border-radius:0 4px 4px 0;z-index:1';
-              block.appendChild(overlay);
-              // Vertical separator line at the setup/machine boundary
-              if (setupInThisBlock > 0) {
-                const sep = document.createElement('div');
-                sep.style.cssText = 'position:absolute;top:0;bottom:0;left:' + setupPct.toFixed(3) + '%;' +
-                  'width:2px;background:rgba(0,0,0,.55);pointer-events:none;z-index:2';
-                block.appendChild(sep);
-                // Vertical "MANUAL" label inside the setup zone — one letter per line.
-                // Shown ONLY if the setup width in PIXELS can fit 6 stacked letters
-                // (roughly 60px tall); otherwise hidden to avoid overlap with the
-                // machine-alone stripes.
-                const blockWidthPx = (Math.min(pW(bl.dur), 100 - pL(bl.startMin)) / 100) * 400;  // col width=400px
-                const setupWidthPx = blockWidthPx * (setupInThisBlock / bl.dur);
-                const blockHeightPx = blockH - 4;
-                const canFit = setupWidthPx >= 12 && blockHeightPx >= 56;
-                if (canFit) {
-                  // Build the "MANUAL" label as a stack of single-letter spans
-                  // with controlled height. This avoids the gaps that
-                  // writing-mode + text-orientation:upright introduce in some
-                  // fonts (where each glyph reserves its natural cap-height).
-                  const lbl = document.createElement('div');
-                  lbl.style.cssText = 'position:absolute;top:0;left:0;' +
-                    'width:' + setupPct.toFixed(3) + '%;height:100%;' +
-                    'display:flex;flex-direction:column;align-items:center;justify-content:center;' +
-                    'pointer-events:none;z-index:2;user-select:none';
-                  // Pick a letter-cell height such that 6 letters fit comfortably.
-                  // We have blockHeightPx pixels (already >=56). Reserve 70% for letters.
-                  const letterCellPx = Math.min(11, Math.max(7, Math.floor(blockHeightPx * 0.70 / 6)));
-                  'MANUAL'.split('').forEach(ch => {
-                    const s = document.createElement('div');
-                    s.textContent = ch;
-                    s.style.cssText = 'font-size:' + letterCellPx + 'px;line-height:' + letterCellPx + 'px;' +
-                      'height:' + letterCellPx + 'px;font-weight:800;color:rgba(0,0,0,.85);' +
-                      'text-align:center;font-family:Arial,sans-serif';
-                    lbl.appendChild(s);
-                  });
-                  block.appendChild(lbl);
-                }
-                // Shift the tx container so the description/client/order info
-                // starts to the RIGHT of the separator, not overlapping setup zone.
-                tx.style.paddingLeft = 'calc(' + setupPct.toFixed(3) + '% + 6px)';
-              }
-            }
-          }
-
-          if (showPhoto) {
-            const img = document.createElement('img');
-            img.src = foto;
-            img.style.cssText = 'width:35px;object-fit:cover;border-radius:2px;flex-shrink:0;align-self:stretch';
-            img.onerror = function() { this.style.display = 'none' };
-            block.appendChild(img);
-          }
-          cell.appendChild(block);
-        });
-
-        // GHOST BLOCKS: for each automatica in this cell, render a non-interactive
-        // "ghost" in the upper row (track 0) spanning its setup portion. Visually
-        // signals that the operator IS busy during setup even though the real
-        // block sits on the lower row. Not draggable, not clickable.
-        data.blocks.forEach(bl => {
-          const act = bl.act;
-          if (act.tipo !== 'automatica') return;
-          if (bl.track === 0) return;  // real block already sits on top row (no ghost needed)
-          // Compute setup minutes that fall within THIS visible block
-          const setupTotal = Dop(act);
-          let setupUsedBefore = 0;
-          let setupInThisBlock = 0;
-          let rem = D(act), cd = act.fecha, ct = tM(act.hora_inicio), partIdx = 0, safe = 0;
-          while (rem > 0 && safe < 30) {
-            safe++;
-            const ds = sS(act.operario_id), de = sE(act.operario_id, cd);
-            if (ct < ds) ct = ds;
-            const av = de - ct;
-            if (av <= 0) { cd = nwd(cd); ct = sS(act.operario_id); continue; }
-            const used = Math.min(rem, av);
-            partIdx++;
-            if (partIdx === bl.part) {
-              const remainingSetup = Math.max(0, setupTotal - setupUsedBefore);
-              setupInThisBlock = Math.min(remainingSetup, used);
-              break;
-            }
-            const remainingSetup = Math.max(0, setupTotal - setupUsedBefore);
-            setupUsedBefore += Math.min(remainingSetup, used);
-            rem -= used;
-            if (rem > 0) { cd = nwd(cd); ct = sS(act.operario_id); } else { ct += used; }
           }
           if (setupInThisBlock <= 0) return;  // no setup in this slice (already past setup)
 
@@ -2073,22 +2299,30 @@ function showTip(e, act, bl) {
     h += '<div>Urgencia: ' + (act.urgencia || '-') + '</div>';
     h += '<div>Maquina: ' + mN(act.maquina_id) + '</div>';
     h += '<div>Operario: ' + opN(act.operario_id) + '</div>';
-    if (act.tipo === 'automatica' && act.duracion_operario_min) {
-      // Automatic activity: show manual + automatic ranges separately
+    if (isAuto(act) && act.duracion_operario_min) {
+      // Auto/semi: show manual + machine-alone ranges separately
       const setupMin = act.duracion_operario_min;
       const manStart = bl.startMin;
       const manEnd = manStart + setupMin;
       const autoStart = manEnd;
       const autoEnd = bE;
       h += '<div><b>Manual:</b> ' + mT(manStart) + ' - ' + mT(manEnd) + ' (' + fmtDur(setupMin) + ')</div>';
-      h += '<div><b>Automatica:</b> ' + mT(autoStart) + ' - ' + mT(autoEnd) + ' (' + fmtDur(autoEnd - autoStart) + ')</div>';
-      h += '<div><b>Total:</b> ' + mT(manStart) + ' - ' + mT(autoEnd) + ' (' + fmtDur(bl.dur) + ')</div>';
+      h += '<div><b>Maquina sola:</b> ' + mT(autoStart) + ' - ' + mT(autoEnd) + ' (' + fmtDur(autoEnd - autoStart) + ')</div>';
+      h += '<div><b>Bloque:</b> ' + mT(manStart) + ' - ' + mT(autoEnd) + ' (' + fmtDur(bl.dur) + ')</div>';
+      // Para auto 24/7 mostrar fecha+hora completa de inicio y fin reales del proceso
+      if (is247(act)) {
+        const re = realEnd(act);
+        h += '<div style="margin-top:4px;padding-top:4px;border-top:1px dashed rgba(255,255,255,.25)">';
+        h += '<b>Inicio real:</b> ' + fDn(act.fecha) + ' ' + act.hora_inicio.substring(0,5) + '</div>';
+        h += '<div><b>Fin real (maquina):</b> ' + fDn(re.date) + ' ' + mT(re.time) + '</div>';
+      }
     } else {
       // Manual activity (or auto without setup)
       h += '<div><b>Inicio:</b> ' + mT(bl.startMin) + ' &nbsp; <b>Fin:</b> ' + mT(bE) + ' &nbsp; <b>Total:</b> ' + fmtDur(bl.dur) + '</div>';
     }
     if (bl.totalParts > 1) h += '<div>Parte ' + bl.part + '/' + bl.totalParts + ' | Total actividad: ' + fmtDur(tot) + '</div>';
-    h += '<div>Tipo: ' + (act.tipo || 'manual') + '</div>';
+    const tipoTxt = act.tipo === 'automatica' ? 'automatica (24/7)' : (act.tipo === 'semi_automatica' ? 'semi-automatica' : 'manual');
+    h += '<div>Tipo: ' + tipoTxt + '</div>';
   }
   el.innerHTML = h;
   el.style.left = Math.min(e.clientX + 12, window.innerWidth - 290) + 'px';
@@ -2103,7 +2337,21 @@ function hideTip() { if (tipEl) { tipEl.remove(); tipEl = null; } }
 // duración, parte N/M, foto.
 function showEdit(act, bl) {
   const bd = document.createElement('div'); bd.className = 'mo';
-  bd.addEventListener('click', e => { if (e.target === bd) bd.remove(); });
+  // No se cierra al click fuera (decision deliberada: el modal de edicion
+  // tiene cambios que se pierden si se cierra por accidente). Cerrar solo via
+  // boton "Cerrar", la "X" del header, o tecla Escape.
+  const escHandler = (e) => {
+    if (e.key === 'Escape') { bd.remove(); document.removeEventListener('keydown', escHandler); }
+  };
+  document.addEventListener('keydown', escHandler);
+  // Cleanup el handler cuando el modal se elimina
+  const observer = new MutationObserver(() => {
+    if (!document.body.contains(bd)) {
+      document.removeEventListener('keydown', escHandler);
+      observer.disconnect();
+    }
+  });
+  observer.observe(document.body, { childList: true });
   const m = document.createElement('div'); m.className = 'md';
   const bE = bl.startMin + bl.dur;
   const tot = D(act);
@@ -2153,12 +2401,19 @@ function showEdit(act, bl) {
   ).join('');
 
   // Read-only info block
+  const tipoTxt = act.tipo === 'automatica' ? 'automatica (24/7)' : (act.tipo === 'semi_automatica' ? 'semi-automatica' : 'manual');
   let infoHtml = '<div style="font-size:12px;line-height:1.7;margin-bottom:14px">';
   infoHtml += '<div><b>Cliente:</b> ' + clN(act.cliente_id) + '</div>';
   if (act.pedido_nro) infoHtml += '<div><b>Pedido:</b> ' + act.pedido_nro + '</div>';
-  infoHtml += '<div><b>Tipo:</b> ' + (act.tipo || 'manual') + '</div>';
+  infoHtml += '<div><b>Tipo:</b> ' + tipoTxt + '</div>';
   infoHtml += '<div><b>Bloque actual:</b> ' + mT(bl.startMin) + '-' + mT(bE) + ' (' + Math.floor(bl.dur / 60) + 'h' + (bl.dur % 60 ? (bl.dur % 60) + 'm' : '') + ')</div>';
   if (bl.totalParts > 1) infoHtml += '<div><b>Parte:</b> ' + bl.part + '/' + bl.totalParts + ' | <b>Total:</b> ' + Math.floor(tot / 60) + 'h' + (tot % 60 ? (tot % 60) + 'm' : '') + '</div>';
+  // Para auto 24/7 mostrar fecha+hora completa de fin real
+  if (is247(act)) {
+    const re = realEnd(act);
+    infoHtml += '<div><b>Inicio real:</b> ' + fDn(act.fecha) + ' ' + act.hora_inicio.substring(0,5) + '</div>';
+    infoHtml += '<div><b>Fin real (maquina):</b> ' + fDn(re.date) + ' ' + mT(re.time) + '</div>';
+  }
   infoHtml += '</div>';
 
   // Editable fields block
@@ -2169,15 +2424,14 @@ function showEdit(act, bl) {
   editHtml += '<div class="ef" style="flex:1"><div class="ef-l">Hora de inicio</div><input type="time" class="ef-i" id="ed-h" value="' + act.hora_inicio.substring(0, 5) + '" step="600"></div>';
   editHtml += '<div class="ef" style="flex:1"><div class="ef-l">Urgencia</div><select class="ef-i" id="ed-u">' + urgOptionsHtml + '</select></div>';
   editHtml += '</div>';
-  // Operator-time field: ONLY shown for automaticas. For manuals the
-  // operator-time equals the total duration, so no need to expose it.
-  if (act.tipo === 'automatica') {
+  // Operator-time (setup) field: shown for auto y semi-auto.
+  if (isAuto(act)) {
     const currentOpMin = (act.duracion_operario_min !== null && act.duracion_operario_min !== undefined)
       ? act.duracion_operario_min : '';
     editHtml += '<div class="ef"><div class="ef-l">Setup / tiempo del operario (min)</div>';
     editHtml += '<input type="number" class="ef-i" id="ed-dop" value="' + currentOpMin + '" min="0" step="5" placeholder="ej. 30"></div>';
   }
-  // Duración total (min): editable in both manual and automática.
+  // Duracion total (min): editable in todos los tipos.
   // Stored in duracion_planificador_min. Defaults to estimada+margen if null.
   const totalMin = act.duracion_planificador_min ||
     ((act.duracion_estimada_min || 0) + (act.duracion_margen_min || 0));
@@ -2212,9 +2466,9 @@ async function saveEdit(actId) {
   const newMqId = parseInt(document.getElementById('ed-mq').value);
   const newHora = document.getElementById('ed-h').value + ':00';
   const newUrg = document.getElementById('ed-u').value;
-  // Operator-time only editable for automaticas
+  // Operator-time editable for auto y semi-auto
   let newDopMin = act.duracion_operario_min;
-  if (act.tipo === 'automatica') {
+  if (isAuto(act)) {
     const dopInput = document.getElementById('ed-dop');
     if (dopInput) {
       const v = dopInput.value.trim();
@@ -2253,6 +2507,14 @@ async function saveEdit(actId) {
     if (durChanged) act.duracion_planificador_min = newDurTotal;
     uStack.push([{ id: actId, prev }]);
     updU();
+    // Si la duracion cambio (especialmente si crecio), correr placeActWithCheck
+    // para que se chequeen colisiones contra siguientes y se cascadee si hace
+    // falta. placeActWithCheck con misma maquina/fecha/hora reutiliza posicion
+    // pero recalcula el end y propaga.
+    if (durChanged && !opChanged && !mqChanged && !timeChanged) {
+      placeActWithCheck(actId, act.maquina_id, act.fecha, tM(act.hora_inicio), act.operario_id);
+      return;
+    }
     if (!opChanged && !mqChanged && !timeChanged) {
       toast('Actualizado: ' + act.descripcion);
       render(); return;
@@ -2692,9 +2954,14 @@ function opSelectorItem(a, opId, fecha) {
   let h = '<div class="ao" ' + onclickAttr + tooltip + ' style="display:flex;align-items:center;gap:10px;' + containerStyle + '">';
   h += img;
   h += '<div style="flex:1;min-width:0">';
-  const typeBadge = a.tipo === 'automatica'
-    ? '<span style="display:inline-block;background:#1A1A1A;color:#fff;font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;margin-left:6px;vertical-align:middle">AUTO</span>'
-    : '<span style="display:inline-block;background:#E8E6DF;color:#5F5E5A;font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;margin-left:6px;vertical-align:middle">MAN</span>';
+  let typeBadge;
+  if (a.tipo === 'automatica') {
+    typeBadge = '<span style="display:inline-block;background:#1A1A1A;color:#fff;font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;margin-left:6px;vertical-align:middle">AUTO</span>';
+  } else if (a.tipo === 'semi_automatica') {
+    typeBadge = '<span style="display:inline-block;background:#5C4A8A;color:#fff;font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;margin-left:6px;vertical-align:middle">SEMI</span>';
+  } else {
+    typeBadge = '<span style="display:inline-block;background:#E8E6DF;color:#5F5E5A;font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;margin-left:6px;vertical-align:middle">MAN</span>';
+  }
   // Predecessor block badge
   const blockedBadge = predsReady ? '' : '<span style="display:inline-block;background:#FEDADA;color:#A32D2D;font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;margin-left:6px;vertical-align:middle">⚠ BLOQUEADA</span>';
   h += '<div class="ao-t">' + a.descripcion + typeBadge + blockedBadge + ' <span style="font-weight:400;color:#5F5E5A">— ' + a.proceso + '</span></div>';
@@ -2877,9 +3144,9 @@ function tryAssignToMachine(actId, opId, machId, fecha) {
 
   if (startTime >= dayEnd) {
     // Activity doesn't fit at the end of the day.
-    // For automaticas: offer options to insert BEFORE existing activities
-    // (since an automatica's setup might fit in earlier gaps).
-    if (act.tipo === 'automatica') {
+    // For auto y semi: offer options to insert BEFORE existing activities
+    // (since the setup might fit in earlier gaps).
+    if (isAuto(act)) {
       const chooser = document.getElementById('mach-chooser-modal');
       if (chooser) chooser.remove();
       showAutoInsertOptions(actId, opId, machId, fecha);
