@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v9.15</title>
+<title>Velasco App 2.0 — Proyectos v9.16</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -1670,6 +1670,9 @@ body { font-family: Arial, sans-serif; font-size: 11px; color: #000; }
 .cover-info tr.shade td { background: rgba(0, 0, 0, 0.13); }
 .cover-info td { border: 1px solid #000; padding: 6px 9px; vertical-align: middle; font-size: 11px; }
 .cover-info td.label { font-weight: 700; width: 38%; text-transform: uppercase; }
+/* Label de la columna derecha (Contacto, Telefono, Forma MP, Fecha Fin Estip., Hora):
+   ancho fijo de ~40mm para liberar el resto al value de su derecha. */
+.cover-info td.label-r { width: 40mm; padding-left: 8px; padding-right: 4px; }
 .cover-info td.value.bold { font-weight: 700; }
 .cover-info td.cliente-big { font-size: 16px; font-weight: 800; }
 .cover-info td.pieza-big { font-weight: 700; font-size: 13px; }
@@ -1725,6 +1728,8 @@ body { font-family: Arial, sans-serif; font-size: 11px; color: #000; }
 .ot-tarea-band .tarea-name { flex: 0 0 auto; }
 .ot-tarea-band .ot-num-mid { flex: 1; text-align: center; font-size: 12px; font-weight: 700; letter-spacing: 0.5px; text-transform: none; }
 .ot-tarea-band .urg-pill { font-size: 12px; padding: 2px 8px; border: 1.5px solid #fff; border-radius: 3px; flex: 0 0 auto; }
+.ot-tarea-band .urg-pill .urg-lbl { font-weight: 400; text-transform: none; letter-spacing: 0; }
+.ot-tarea-band .urg-pill .urg-val { font-weight: 800; }
 
 .ot-info { width: 100%; border-collapse: collapse; }
 .ot-info td { border: 1px solid #000; padding: 3px 8px; font-size: 11px; height: 22px; }
@@ -1822,21 +1827,21 @@ body { font-family: Arial, sans-serif; font-size: 11px; color: #000; }
       <tr><td class="label">ITEM:</td><td class="pieza-big value-fit" colspan="3"><div class="fit-content">${escapeHtml(item.descripcion)}</div></td></tr>
       <tr class="shade">
         <td class="label">NUMERO DE PEDIDO:</td><td class="value pedido-big">${escapeHtml(item.pedido_nro || '—')}</td>
-        <td class="label" style="width:18%">CONTACTO:</td><td class="value value-fit"><div class="fit-content">${escapeHtml(cliente && cliente.contacto ? cliente.contacto : '')}</div></td>
+        <td class="label label-r">CONTACTO:</td><td class="value value-fit"><div class="fit-content">${escapeHtml(cliente && cliente.contacto ? cliente.contacto : '')}</div></td>
       </tr>
       <tr>
         <td class="label">CANTIDAD A REALIZAR:</td><td class="value bold">${item.cantidad}</td>
-        <td class="label">TELEFONO:</td><td class="value value-fit"><div class="fit-content">${escapeHtml(cliente && cliente.telefono ? cliente.telefono : '')}</div></td>
+        <td class="label label-r">TELEFONO:</td><td class="value value-fit"><div class="fit-content">${escapeHtml(cliente && cliente.telefono ? cliente.telefono : '')}</div></td>
       </tr>
       <tr class="shade">
         <td class="label">MATERIAL:</td><td class="value value-fit"><div class="fit-content">${escapeHtml(item.material || '')}</div></td>
-        <td class="label" style="width:18%">FORMA MP:</td><td class="value value-fit"><div class="fit-content">${escapeHtml(item.presentacion_mat_prima || '')}</div></td>
+        <td class="label label-r">FORMA MP:</td><td class="value value-fit"><div class="fit-content">${escapeHtml(item.presentacion_mat_prima || '')}</div></td>
       </tr>
       <tr>
         <td class="label">FECHA DE INGRESO:</td><td class="value">${fmt(meta.fecha_ingreso)}</td>
-        <td class="label">FECHA FIN ESTIP.:</td><td class="value">${fmt(item.fecha_fin_estipulada)}</td>
+        <td class="label label-r">FECHA FIN ESTIP.:</td><td class="value">${fmt(item.fecha_fin_estipulada)}</td>
       </tr>
-      <tr class="shade"><td class="label">FECHA REAL DE FINALIZACION:</td><td class="value">FECHA:</td><td class="label">HORA:</td><td class="value"></td></tr>
+      <tr class="shade"><td class="label">FECHA REAL DE FINALIZACION:</td><td class="value">FECHA:</td><td class="label label-r">HORA:</td><td class="value"></td></tr>
     </table>
     <div class="wm-wrap"><table class="proc-table">
       <thead><tr><th>Nº</th><th>PROCESO</th><th>RESPONSABLE</th><th>REALIZADO</th></tr></thead>
@@ -2003,7 +2008,7 @@ function renderOT(p, idx, total, item, meta, clienteDisplay) {
     <div class="ot-tarea-band">
       <div class="tarea-name">${escapeHtml(tarea)}</div>
       <div class="ot-num-mid">Orden de Trabajo: ${idx} / ${total}</div>
-      <div class="urg-pill">URGENCIA: ${urg}</div>
+      <div class="urg-pill"><span class="urg-lbl">Urgencia:</span> <span class="urg-val">${urg}</span></div>
     </div>
     <table class="ot-info-big">
       <colgroup>
