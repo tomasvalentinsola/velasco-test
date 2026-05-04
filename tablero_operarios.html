@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Velasco App 2.0 — Tablero por Operario v35</title>
+<title>Velasco App 2.0 — Tablero por Operario v36</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -1261,8 +1261,10 @@ async function placeAct(actId, machId, fecha, startTime, newOpId) {
   if (effectiveOpId !== act.operario_id) act.operario_id = effectiveOpId;
 
   // EXPLICIT PUSH: any activity on same machine+day that would overlap, gets pushed
+  // Si machId=null (actividad sin maquina), no hay carril de maquina compartido
+  // entre operarios, asi que este push de maquina no aplica.
   const placedEnd = realEnd(act);
-  const sameCell = acts.filter(a =>
+  const sameCell = (machId === null) ? [] : acts.filter(a =>
     a.id !== actId && a.maquina_id === machId && a.estado !== 'sin_planificar' && a.fecha === fecha
   ).sort((a, b) => tM(a.hora_inicio) - tM(b.hora_inicio));
   // Track which operators were affected by the machine push (we need to run
@@ -3204,7 +3206,10 @@ function opSelectorItem(a, opId, fecha) {
   return h;
 }
 
-// Second step: after user picks activity, show machine selector
+// Second step: after user picks activity, show machine selector.
+// Caso especial: si la actividad no tiene maquina ideal ni suplentes (ej.
+// trabajos manuales tipo despacho, medicion, control), saltea el modal de
+// eleccion de maquina y planifica directo con maquina_id=null.
 function chooseMachineForAssign(actId, opId, fecha) {
   const act = acts.find(a => a.id === actId);
   if (!act) return;
@@ -3217,6 +3222,13 @@ function chooseMachineForAssign(actId, opId, fecha) {
   (act.maquinas_suplentes_ids || []).map(x => parseInt(x)).forEach(sid => {
     if (!mqOptions.find(o => o.id === sid)) mqOptions.push({ id: sid, isIdeal: false });
   });
+
+  // Si no hay opciones de maquina (ideal=null, sin suplentes), planificar
+  // directamente sin maquina. Salta el modal de eleccion.
+  if (mqOptions.length === 0) {
+    tryAssignToMachine(actId, opId, null, fecha);
+    return;
+  }
 
   const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'mach-chooser-modal';
   bd.addEventListener('click', e => { if (e.target === bd) bd.remove() });
@@ -3343,7 +3355,9 @@ function tryAssignToMachine(actId, opId, machId, fecha) {
   // Determine insertion time: first free moment in the day considering BOTH
   // the operator's existing activities AND the machine's existing activities.
   // Operator uses Dop (only setup blocks operator for automaticas).
-  const machBlocks = dayBlocks(machId, fecha, actId);
+  // Si machId es null (caso "sin maquina"), no hay conflicto de maquina:
+  // solo se considera la disponibilidad del operario.
+  const machBlocks = machId === null ? [] : dayBlocks(machId, fecha, actId);
   const dayStart = sS(opId);
   const dayEnd = sE(opId, fecha);
   const machineLatest = machBlocks.length === 0 ? dayStart : Math.max(...machBlocks.map(b => b.e)) + GAP;
@@ -3385,9 +3399,12 @@ function tryAssignToMachine(actId, opId, machId, fecha) {
     // Manual: show error
     let msg = 'No hay espacio el ' + fDn(fecha) + '.';
     const lastMach = machBlocks[machBlocks.length - 1];
-    if (lastMach && machineLatest >= dayEnd) msg += ' Maquina ' + mN(machId) + ' ocupada hasta ' + mT(lastMach.e) + '.';
+    if (machId !== null && lastMach && machineLatest >= dayEnd) msg += ' Maquina ' + mN(machId) + ' ocupada hasta ' + mT(lastMach.e) + '.';
     if (opEndsOnDay.length && operatorLatest >= dayEnd) msg += ' ' + opN(opId) + ' ocupado hasta ' + mT(Math.max(...opEndsOnDay)) + '.';
     if (errEl) { errEl.innerHTML = msg; errEl.style.display = 'block'; }
+    // Si machId es null (sin maquina) y se llego aca, no hay modal abierto donde
+    // mostrar el error, asi que mostramos toast.
+    else { toast(msg, true); }
     return;
   }
 
