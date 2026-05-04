@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v9.14</title>
+<title>Velasco App 2.0 — Proyectos v9.15</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -526,7 +526,7 @@ function renderProjectDetail() {
     h += '<div class="list-empty" style="padding:20px">Aun no hay items cargados.</div>';
   } else {
     proj.items.forEach((it, idx) => {
-      const procCount = actividades.filter(a => a.item_id === it.id).length;
+      const procCount = actividades.filter(a => a.item_id === it.id && !a.proceso_eliminado).length;
       const itColors = itemStateColor(it.estado);
       const itBadge = '<span style="display:inline-block;padding:1px 7px;border-radius:3px;font-size:10px;font-weight:700;background:' + itColors.bg + ';color:' + itColors.fg + ';margin-left:6px">' + (it.estado || 'Espera MP') + '</span>';
       const isClosed = it.estado === 'Anulado' || it.estado === 'Stockeado' || it.estado === 'Enviado' || it.estado === 'Terminado';
@@ -560,7 +560,7 @@ function renderProjectDetail() {
 async function confirmDeleteItemFromList(itemId) {
   const item = items.find(i => i.id === itemId);
   if (!item) return;
-  const procCount = actividades.filter(a => a.item_id === itemId).length;
+  const procCount = actividades.filter(a => a.item_id === itemId && !a.proceso_eliminado).length;
   if (!confirm('¿Eliminar el item "' + item.descripcion + '"' + (procCount > 0 ? ' y sus ' + procCount + ' proceso(s)' : '') + '?')) return;
   await sb.from('actividades_tablero').delete().eq('item_id', itemId);
   await sb.from('items').delete().eq('id', itemId);
@@ -605,7 +605,7 @@ async function saveProjectMeta() {
 async function confirmDeleteProject() {
   const proj = getProject(nav.projectId);
   if (!proj) return;
-  const procCount = actividades.filter(a => proj.items.map(it => it.id).includes(a.item_id)).length;
+  const procCount = actividades.filter(a => proj.items.map(it => it.id).includes(a.item_id) && !a.proceso_eliminado).length;
   if (!confirm('Eliminar el proyecto "' + (proj.descripcion || '(sin descripcion)') + '" con sus ' + proj.items.length + ' item(s) y ' + procCount + ' proceso(s)?')) return;
   for (const it of proj.items) {
     await sb.from('actividades_tablero').delete().eq('item_id', it.id);
@@ -711,7 +711,7 @@ function showItemForm(itemId) {
   h += '<div class="actions">';
   h += '<button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button>';
   if (!isNew) {
-    const procCount = actividades.filter(a => a.item_id === itemId).length;
+    const procCount = actividades.filter(a => a.item_id === itemId && !a.proceso_eliminado).length;
     h += '<button class="b b-d" onclick="confirmDeleteItem(' + itemId + ')">Eliminar' + (procCount > 0 ? ' (' + procCount + ' procesos)' : '') + '</button>';
   }
   h += '<button class="b b-p" onclick="saveItem(' + (itemId || 'null') + ')">' + (isNew ? 'Crear' : 'Guardar') + '</button></div>';
@@ -752,7 +752,7 @@ async function saveItem(itemId) {
   if (itemId) {
     await sb.from('items').update(payload).eq('id', itemId);
     // Update related activities (only fields that should propagate)
-    const itemActs = actividades.filter(a => a.item_id === itemId);
+    const itemActs = actividades.filter(a => a.item_id === itemId && !a.proceso_eliminado);
     for (const a of itemActs) {
       await sb.from('actividades_tablero').update({
         descripcion: desc + ' - ' + (a.proceso || ''),
@@ -775,7 +775,7 @@ async function saveItem(itemId) {
 async function confirmDeleteItem(itemId) {
   const item = items.find(i => i.id === itemId);
   if (!item) return;
-  const procCount = actividades.filter(a => a.item_id === itemId).length;
+  const procCount = actividades.filter(a => a.item_id === itemId && !a.proceso_eliminado).length;
   if (!confirm('Eliminar el item "' + item.descripcion + '" y sus ' + procCount + ' proceso(s)?')) return;
   await sb.from('actividades_tablero').delete().eq('item_id', itemId);
   await sb.from('items').delete().eq('id', itemId);
@@ -792,7 +792,7 @@ function renderItemDetail() {
   if (!item) { main.innerHTML = '<div class="list-empty">El item no existe.</div>'; return; }
   const proj = getProject(nav.projectId);
   if (!proj) { main.innerHTML = '<div class="list-empty">El proyecto no existe.</div>'; return; }
-  const procesos = actividades.filter(a => a.item_id === nav.itemId)
+  const procesos = actividades.filter(a => a.item_id === nav.itemId && !a.proceso_eliminado)
     .sort((a, b) => (a.orden || 999999) - (b.orden || 999999));
   const fmt = d => { if (!d) return '—'; const [y,m,da] = d.split('-'); return da + '/' + m + '/' + y; };
   const itColors = itemStateColor(item.estado);
@@ -905,7 +905,7 @@ function refreshPredsInModal() {
 async function moveProceso(procesoId, delta) {
   const proceso = actividades.find(a => a.id === procesoId);
   if (!proceso) return;
-  const sameItem = actividades.filter(a => a.item_id === proceso.item_id)
+  const sameItem = actividades.filter(a => a.item_id === proceso.item_id && !a.proceso_eliminado)
     .sort((a, b) => (a.orden || 999999) - (b.orden || 999999));
   const idx = sameItem.findIndex(a => a.id === procesoId);
   const newIdx = idx + delta;
@@ -1218,7 +1218,7 @@ async function saveProceso(procesoId) {
     toast('Proceso actualizado');
   } else {
     // New: assign next orden value
-    const sameItem = actividades.filter(a => a.item_id === nav.itemId)
+    const sameItem = actividades.filter(a => a.item_id === nav.itemId && !a.proceso_eliminado)
       .sort((a, b) => (a.orden || 999999) - (b.orden || 999999));
     const maxOrden = sameItem.reduce((mx, a) => Math.max(mx, a.orden || 0), 0);
     payload.orden = maxOrden + 1;
@@ -1246,6 +1246,19 @@ async function saveProceso(procesoId) {
 async function confirmDeleteProceso(procesoId) {
   const proc = actividades.find(a => a.id === procesoId);
   if (!proc) return;
+  const isPlanificada = proc.estado && proc.estado !== 'sin_planificar' && proc.fecha !== '1900-01-01';
+  // Si esta planificada, no la borramos: la marcamos como eliminada para que
+  // el responsable de planificacion la quite del tablero manualmente con
+  // contexto. Si no esta planificada, la borramos directamente porque no
+  // afecta a nadie.
+  if (isPlanificada) {
+    if (!confirm('Eliminar el proceso "' + (proc.proceso || proc.descripcion) + '"?\n\nEsta actividad ya esta planificada en el tablero. Se va a marcar como eliminada y aparecera con un signo de advertencia para que el responsable de planificacion la quite.')) return;
+    await sb.from('actividades_tablero').update({ proceso_eliminado: true }).eq('id', procesoId);
+    await loadAll();
+    toast('Proceso marcado como eliminado (visible en el tablero como advertencia)');
+    render();
+    return;
+  }
   if (!confirm('Eliminar el proceso "' + (proc.proceso || proc.descripcion) + '"?')) return;
   await sb.from('actividades_tablero').delete().eq('id', procesoId);
   await loadAll();
@@ -1600,7 +1613,7 @@ const LOGO_SOLO_DATA_URL = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAbQAAA
 function generateCarpeta(itemId) {
   const item = items.find(i => i.id === itemId);
   if (!item) { toast('Item no encontrado', true); return; }
-  const procesos = actividades.filter(a => a.item_id === itemId)
+  const procesos = actividades.filter(a => a.item_id === itemId && !a.proceso_eliminado)
     .sort((a, b) => (a.orden || 999999) - (b.orden || 999999));
   if (procesos.length === 0) { toast('El item no tiene procesos', true); return; }
   const proj = getProject(nav.projectId) || proyectos.find(p => p.id === item.proyecto_id);
