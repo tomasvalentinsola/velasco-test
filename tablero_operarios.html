@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Velasco App 2.0 — Tablero por Operario v36</title>
+<title>Velasco App 2.0 — Tablero por Operario v37</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -42,13 +42,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .bm{color:#2C2C2A;font-size:9px;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bma{font-size:8px;color:#5F5E5A;font-style:italic;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ba{position:absolute;top:2px;right:3px;width:11px;height:11px;border-radius:50%;background:rgba(255,255,255,.25);font-size:7px;display:flex;align-items:center;justify-content:center;color:inherit;font-weight:700}
-/* Triangulo amarillo de advertencia (divergencia OT vs ack del planificador).
-   Se posiciona en la esquina superior izquierda del bloque. */
-.bk-warn{position:absolute;top:1px;left:1px;width:0;height:0;border-style:solid;border-width:0 0 13px 13px;border-color:transparent transparent #FFC107 transparent;z-index:6;pointer-events:none}
-.bk-warn::after{content:'!';position:absolute;left:-7px;top:4px;font-size:9px;font-weight:900;color:#000;font-family:Arial,sans-serif;line-height:1}
-/* Cartel rojo "proceso eliminado" - se renderiza por encima del bloque */
-.bk-deleted{position:absolute;top:1px;left:1px;width:0;height:0;border-style:solid;border-width:0 0 13px 13px;border-color:transparent transparent #E24B4A transparent;z-index:6;pointer-events:none}
-.bk-deleted::after{content:'X';position:absolute;left:-8px;top:4px;font-size:9px;font-weight:900;color:#fff;font-family:Arial,sans-serif;line-height:1}
+/* Advertencia: emoji de triangulo con punta arriba (estandar Unicode U+26A0).
+   Posicionado en la esquina superior izquierda del bloque. */
+.bk-warn{position:absolute;top:0;left:1px;font-size:13px;line-height:1;z-index:6;pointer-events:none;text-shadow:0 0 2px rgba(255,255,255,.8)}
+/* Cartel rojo "proceso eliminado": emoji de prohibido (U+26D4) tambien con
+   punta visual mas natural. */
+.bk-deleted{position:absolute;top:0;left:1px;font-size:13px;line-height:1;z-index:6;pointer-events:none;text-shadow:0 0 2px rgba(255,255,255,.8)}
 .tip{position:fixed;background:#2C2C2A;color:#fff;padding:10px 14px;border-radius:8px;font-size:11px;line-height:1.5;z-index:400;max-width:320px;pointer-events:none}
 .mo{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.15);z-index:200;display:flex;align-items:center;justify-content:center}
 /* Allow clicks on background to pass through when modal is dragged/resized,
@@ -250,36 +249,55 @@ function opI(name){const o=ops.find(x=>x.nombre===name);return o?o.id:null}
 function clN(id){const c=cls.find(x=>x.id===id);return c?c.nombre:'?'}
 function mN(id){const m=maq.find(x=>x.id===id);return m?m.nombre:'?'}
 function mI(n){const m=maq.find(x=>x.nombre===n);return m?m.id:null}
+// REGLA GLOBAL: el tablero NUNCA usa los valores actuales del proceso
+// (a.duracion_estimada_min, a.tipo, a.duracion_operario_min, etc.) cuando hay
+// un snapshot reconocido por el planificador (las columnas ot_ack_*). Esto
+// garantiza que cualquier modificacion en Proyectos quede pendiente hasta
+// que el responsable apriete "Aplicar cambios de OT" en el bloque.
+// Helpers para extraer el valor "efectivo" que el tablero debe usar:
+function effDurEstimada(a) {
+  return (a.ot_ack_dur_estimada_min !== null && a.ot_ack_dur_estimada_min !== undefined)
+    ? a.ot_ack_dur_estimada_min : a.duracion_estimada_min;
+}
+function effMargen(a) {
+  return (a.ot_ack_margen_min !== null && a.ot_ack_margen_min !== undefined)
+    ? a.ot_ack_margen_min : (a.duracion_margen_min || 0);
+}
+function effSetup(a) {
+  return (a.ot_ack_setup_min !== null && a.ot_ack_setup_min !== undefined)
+    ? a.ot_ack_setup_min : a.duracion_operario_min;
+}
+function effTipo(a) {
+  return (a.ot_ack_tipo !== null && a.ot_ack_tipo !== undefined && a.ot_ack_tipo !== '')
+    ? a.ot_ack_tipo : a.tipo;
+}
+
 // Duracion total de la actividad. Prioriza duracion_planificador_min (lo que
-// el usuario edito en el modal "Duracion total") sobre estimada+margen.
-// Esto permite que cambiar la duracion en el modal afecte el ancho del bloque
-// y se propague a cascadas.
+// el usuario edito en el modal "Duracion total") sobre el snapshot ack.
 function D(a){
   if (a.duracion_planificador_min !== null && a.duracion_planificador_min !== undefined) {
     return a.duracion_planificador_min;
   }
-  return a.duracion_estimada_min + (a.duracion_margen_min || 0);
+  return effDurEstimada(a) + effMargen(a);
 }
-// Helpers de tipo:
-// - isAuto: comportamiento "operario solo durante setup" (semi y auto comparten esto)
-// - is247: corre 24/7 (incluye noche y domingos). Solo tipo 'automatica'.
-// - isSemi: respeta jornada del operario para la parte de maquina (legacy).
-function isAuto(a) { return a.tipo === 'automatica' || a.tipo === 'semi_automatica'; }
-function is247(a) { return a.tipo === 'automatica'; }
-function isSemi(a) { return a.tipo === 'semi_automatica'; }
-// Etiqueta legible para mostrar el tipo en mensajes de UI.
+// Helpers de tipo (usan el snapshot ack, no el campo actual del proceso):
+function isAuto(a) { const t = effTipo(a); return t === 'automatica' || t === 'semi_automatica'; }
+function is247(a) { return effTipo(a) === 'automatica'; }
+function isSemi(a) { return effTipo(a) === 'semi_automatica'; }
+function isManual(a) { return effTipo(a) === 'manual'; }
 function tipoLabel(a) {
-  if (a.tipo === 'automatica') return 'auto 24/7';
-  if (a.tipo === 'semi_automatica') return 'semi';
+  const t = effTipo(a);
+  if (t === 'automatica') return 'auto 24/7';
+  if (t === 'semi_automatica') return 'semi';
   return 'manual';
 }
 // Operator time: how long the operator is attached to the activity.
-// Manual activities: operator stays the whole duration (same as D).
-// Automaticas y semi-automaticas with duracion_operario_min set: just the setup portion.
-// Fallback to D if the field is null/undefined (safe default).
+// Para auto/semi: solo el setup. Para manual: toda la duracion.
+// Usa effSetup (snapshot del setup que el planificador reconocio).
 function Dop(a) {
-  if (isAuto(a) && a.duracion_operario_min !== null && a.duracion_operario_min !== undefined) {
-    return a.duracion_operario_min;
+  if (isAuto(a)) {
+    const s = effSetup(a);
+    if (s !== null && s !== undefined) return s;
   }
   return D(a);
 }
@@ -399,9 +417,9 @@ function computeVB() {
   acts.filter(a => a.estado !== 'sin_planificar' && a.fecha !== '1900-01-01' && !a.es_pulmon).forEach(act => {
     if (!act.operario_id) return;
 
-    if (is247(act) && act.duracion_operario_min !== null && act.duracion_operario_min !== undefined) {
+    if (is247(act) && effSetup(act) !== null && effSetup(act) !== undefined) {
       // === AUTO 24/7 ===
-      const setupMin = act.duracion_operario_min;
+      const setupMin = effSetup(act);
       const machineRest = D(act) - setupMin;
       const parts = [];
       let pn = 1;
@@ -502,8 +520,8 @@ function realEnd(a) {
   // parte de maquina sola corre 24/7 sumando minutos calendario sin parar
   // (incluye noche y domingos).
   // Para 'semi_automatica' y 'manual': todo respeta la jornada del operario.
-  if (is247(a) && a.duracion_operario_min !== null && a.duracion_operario_min !== undefined) {
-    const setupMin = a.duracion_operario_min;
+  if (is247(a) && effSetup(a) !== null && effSetup(a) !== undefined) {
+    const setupMin = effSetup(a);
     const machineRest = D(a) - setupMin;
     // Walk del setup respetando jornada
     let rem = setupMin, cd = a.fecha, ct = tM(a.hora_inicio), safe = 0;
@@ -708,8 +726,8 @@ function calcInsertTimeForOp(opId, dateStr, dropMin, excludeId) {
 // manual y semi: respeta jornada del operario. Para auto 24/7: setup
 // respeta jornada, despues calendar continuo.
 function machineSlicesOf(a) {
-  if (is247(a) && a.duracion_operario_min !== null && a.duracion_operario_min !== undefined) {
-    const setupMin = a.duracion_operario_min;
+  if (is247(a) && effSetup(a) !== null && effSetup(a) !== undefined) {
+    const setupMin = effSetup(a);
     const machineRest = D(a) - setupMin;
     const slices = [];
     // Fase 1: setup respetando jornada
@@ -836,7 +854,7 @@ function findOpConflicts(actId, opId, machId, fecha, startMin, dur) {
 function classifyOpConflict(act, conflicts) {
   if (conflicts.length === 0) return 'ok';
   const all = [act, ...conflicts];
-  const manC = all.filter(a => a.tipo === 'manual').length;
+  const manC = all.filter(a => isManual(a)).length;
   const total = all.length;
   if (total > MAX_SIMULTANEAS) return 'blocked';
   if (manC >= 2) return 'blocked';
@@ -849,7 +867,7 @@ function getManualRanges(excludeActId, opId, fecha) {
   acts.forEach(a => {
     if (a.id === excludeActId) return;
     if (a.operario_id !== opId) return;
-    if (a.tipo !== 'manual') return;
+    if (!isManual(a)) return;
     if (a.estado === 'sin_planificar') return;
     let rem = D(a), cd = a.fecha, ct = tM(a.hora_inicio), safe = 0;
     while (rem > 0 && safe < 30) {
@@ -1255,10 +1273,22 @@ async function placeAct(actId, machId, fecha, startTime, newOpId) {
 
   const updatePayload = { maquina_id: machId, fecha: fecha, hora_inicio: mT(startTime), estado: ns, estado_proceso: 'Planificado' };
   if (effectiveOpId !== act.operario_id) updatePayload.operario_id = effectiveOpId;
+  // Al planificar por primera vez (sin_planificar -> pendiente), inicializar
+  // los ot_ack_* con los valores actuales del proceso. Esto evita que al
+  // recien planificar aparezca el triangulo amarillo (se considera "sincronizada"
+  // desde el momento de planificacion). Solo se setean si NO estan ya seteados,
+  // por seguridad.
+  if (act.estado === 'sin_planificar') {
+    if (act.ot_ack_dur_estimada_min === null || act.ot_ack_dur_estimada_min === undefined) updatePayload.ot_ack_dur_estimada_min = act.duracion_estimada_min;
+    if (act.ot_ack_margen_min === null || act.ot_ack_margen_min === undefined) updatePayload.ot_ack_margen_min = act.duracion_margen_min || 0;
+    if (act.ot_ack_setup_min === null || act.ot_ack_setup_min === undefined) updatePayload.ot_ack_setup_min = act.duracion_operario_min;
+    if (act.ot_ack_tipo === null || act.ot_ack_tipo === undefined || act.ot_ack_tipo === '') updatePayload.ot_ack_tipo = act.tipo;
+    if (act.ot_ack_operario_ideal_id === null || act.ot_ack_operario_ideal_id === undefined) updatePayload.ot_ack_operario_ideal_id = act.operario_ideal_id;
+    if (act.ot_ack_maquina_ideal_id === null || act.ot_ack_maquina_ideal_id === undefined) updatePayload.ot_ack_maquina_ideal_id = act.maquina_ideal_id;
+    if (act.ot_ack_maquina_ideal_nombre === null || act.ot_ack_maquina_ideal_nombre === undefined) updatePayload.ot_ack_maquina_ideal_nombre = act.maquina_ideal_nombre;
+  }
   await sb.from('actividades_tablero').update(updatePayload).eq('id', actId);
-  act.maquina_id = machId; act.fecha = fecha; act.hora_inicio = mT(startTime); act.estado = ns;
-  act.estado_proceso = 'Planificado';
-  if (effectiveOpId !== act.operario_id) act.operario_id = effectiveOpId;
+  Object.keys(updatePayload).forEach(k => { act[k] = updatePayload[k]; });
 
   // EXPLICIT PUSH: any activity on same machine+day that would overlap, gets pushed
   // Si machId=null (actividad sin maquina), no hay carril de maquina compartido
@@ -2055,20 +2085,24 @@ function render() {
           else block.classList.add(act.urgencia === 'urgente' ? 'bk-u' : act.urgencia === 'alta' ? 'bk-a' : act.urgencia === 'media' ? 'bk-m' : 'bk-b');
           if (act.estado === 'completada') block.classList.add('bk-d');
           block.style.borderColor = machColor(act.maquina_id);
-          // Triangulo de advertencia en esquina superior izquierda:
-          // - Rojo (X) si el proceso fue eliminado desde proyectos.
-          // - Amarillo (!) si hay divergencia entre OT y el ack del planificador.
+          // Indicador en esquina superior izquierda:
+          // - Triangulo amarillo (⚠) si hay divergencia OT vs ack del planificador.
+          // - Octagono rojo (⛔) si el proceso fue eliminado desde Proyectos.
           // Solo aplica a actividades no-pulmon.
           if (!act.es_pulmon) {
             if (act.proceso_eliminado) {
               const warn = document.createElement('div');
               warn.className = 'bk-deleted';
+              warn.textContent = '⛔';
+              warn.title = 'Proceso eliminado desde Proyectos';
               block.appendChild(warn);
             } else {
               const div = hasOTDivergence(act);
               if (div.hasDiv) {
                 const warn = document.createElement('div');
                 warn.className = 'bk-warn';
+                warn.textContent = '⚠️';
+                warn.title = 'Hay cambios desde Oficina Tecnica';
                 block.appendChild(warn);
               }
             }
@@ -2416,9 +2450,9 @@ function showTip(e, act, bl) {
     h += '<div>Urgencia: ' + (act.urgencia || '-') + '</div>';
     h += '<div>Maquina: ' + mN(act.maquina_id) + '</div>';
     h += '<div>Operario: ' + opN(act.operario_id) + '</div>';
-    if (isAuto(act) && act.duracion_operario_min) {
+    if (isAuto(act) && effSetup(act)) {
       // Auto/semi: show manual + machine-alone ranges separately
-      const setupMin = act.duracion_operario_min;
+      const setupMin = effSetup(act);
       const manStart = bl.startMin;
       const manEnd = manStart + setupMin;
       const autoStart = manEnd;
@@ -2438,7 +2472,8 @@ function showTip(e, act, bl) {
       h += '<div><b>Inicio:</b> ' + mT(bl.startMin) + ' &nbsp; <b>Fin:</b> ' + mT(bE) + ' &nbsp; <b>Total:</b> ' + fmtDur(bl.dur) + '</div>';
     }
     if (bl.totalParts > 1) h += '<div>Parte ' + bl.part + '/' + bl.totalParts + ' | Total actividad: ' + fmtDur(tot) + '</div>';
-    const tipoTxt = act.tipo === 'automatica' ? 'automatica (24/7)' : (act.tipo === 'semi_automatica' ? 'semi-automatica' : 'manual');
+    const tipoEff = effTipo(act);
+    const tipoTxt = tipoEff === 'automatica' ? 'automatica (24/7)' : (tipoEff === 'semi_automatica' ? 'semi-automatica' : 'manual');
     h += '<div>Tipo: ' + tipoTxt + '</div>';
   }
   el.innerHTML = h;
@@ -2518,7 +2553,8 @@ function showEdit(act, bl) {
   ).join('');
 
   // Read-only info block
-  const tipoTxt = act.tipo === 'automatica' ? 'automatica (24/7)' : (act.tipo === 'semi_automatica' ? 'semi-automatica' : 'manual');
+  const tipoEffShow = effTipo(act);
+  const tipoTxt = tipoEffShow === 'automatica' ? 'automatica (24/7)' : (tipoEffShow === 'semi_automatica' ? 'semi-automatica' : 'manual');
   let infoHtml = '<div style="font-size:12px;line-height:1.7;margin-bottom:14px">';
   infoHtml += '<div><b>Cliente:</b> ' + clN(act.cliente_id) + '</div>';
   if (act.pedido_nro) infoHtml += '<div><b>Pedido:</b> ' + act.pedido_nro + '</div>';
@@ -2617,17 +2653,22 @@ function showEdit(act, bl) {
   editHtml += '</div>';
 
   // Botones extra para divergencia OT.
-  // - "Aplicar duracion OT": solo si hay diferencia en duracion total (estimada+margen)
-  //   o setup. Setea duracion_planificador_min al nuevo total y dispara cascade.
-  // - "Ignorar": copia los valores actuales del proceso a las columnas ot_ack_*
-  //   para que dejen de aparecer como divergencia (hasta que OT modifique de nuevo).
+  // - "Aplicar cambios de OT": si hay cualquier divergencia que afecte el
+  //   comportamiento del tablero (duracion total, setup, tipo), el boton
+  //   aparece y aplica TODO de una vez. Despues dispara placeActWithCheck
+  //   para mostrar el cartel "Actividades afectadas" y que el responsable
+  //   pueda decidir como cascadear.
+  //   Cambios solo de operario_ideal_id o maquina_ideal_id NO se aplican
+  //   automaticamente (el responsable los modifica manualmente desde el
+  //   tablero); para esos casos el boton sigue apareciendo solo si TAMBIEN
+  //   hay alguna divergencia que SI se puede aplicar.
+  // - "Ignorar": copia los valores actuales del proceso a ot_ack_* para que
+  //   la divergencia desaparezca hasta que OT modifique algo nuevamente.
   let extraBtns = '';
   if (!act.proceso_eliminado && div.hasDiv) {
-    const otTotal = (act.duracion_estimada_min || 0) + (act.duracion_margen_min || 0);
-    const planTotal = act.duracion_planificador_min || otTotal;
-    const durDifiere = (div.fields.dur_estimada || div.fields.margen) && otTotal !== planTotal;
-    const setupDifiere = !!div.fields.setup;
-    if (durDifiere || setupDifiere) {
+    // Hay algo aplicable si difiere algun campo que afecta comportamiento
+    const aplicable = !!(div.fields.dur_estimada || div.fields.margen || div.fields.setup || div.fields.tipo);
+    if (aplicable) {
       extraBtns += '<button class="b" id="ed-apply-ot" style="background:#FFC107;color:#000;border-color:#E0A800;font-weight:600">Aplicar cambios de OT</button>';
     }
     extraBtns += '<button class="b" id="ed-ignore-ot" style="background:#fff;color:#5F5E5A;border-color:#C8C6BE">Ignorar</button>';
@@ -2653,25 +2694,39 @@ function showEdit(act, bl) {
   const applyBtn = document.getElementById('ed-apply-ot');
   if (applyBtn) {
     applyBtn.onclick = async () => {
-      // Aplicar duracion total de OT (estimada + margen) y/o setup.
-      const newTotal = (act.duracion_estimada_min || 0) + (act.duracion_margen_min || 0);
+      // Aplicar TODOS los campos divergentes que afectan comportamiento del
+      // tablero. Despues, placeActWithCheck dispara el cartel de actividades
+      // afectadas si hace falta cascadear.
+      const newDurEst = act.duracion_estimada_min;
+      const newMar = act.duracion_margen_min || 0;
       const newSetup = act.duracion_operario_min;
-      const payload = { duracion_planificador_min: newTotal };
-      // Tambien aplicar setup si difiere
-      if (div.fields.setup) payload.duracion_operario_min = newSetup;
-      // Ack los campos aplicados
-      if (div.fields.dur_estimada) payload.ot_ack_dur_estimada_min = act.duracion_estimada_min;
-      if (div.fields.margen) payload.ot_ack_margen_min = act.duracion_margen_min || 0;
-      if (div.fields.setup) payload.ot_ack_setup_min = act.duracion_operario_min;
+      const newTipo = act.tipo;
+      const newTotal = newDurEst + newMar;
+      const payload = {};
+      // Si difiere duracion total: actualizar duracion_planificador_min y los acks
+      if (div.fields.dur_estimada || div.fields.margen) {
+        payload.duracion_planificador_min = newTotal;
+        payload.ot_ack_dur_estimada_min = newDurEst;
+        payload.ot_ack_margen_min = newMar;
+      }
+      // Si difiere setup: actualizar el ack del setup (y el efectivo ya es el del proceso)
+      if (div.fields.setup) {
+        payload.ot_ack_setup_min = newSetup;
+      }
+      // Si difiere tipo: actualizar el ack
+      if (div.fields.tipo) {
+        payload.ot_ack_tipo = newTipo;
+      }
+      // operario_ideal y maquina_ideal NO se aplican automaticamente: el
+      // responsable los cambia manualmente desde el tablero. Solo el ack se
+      // copia cuando el responsable apriete "Ignorar" o cambie operario/maquina
+      // efectivos. No los tocamos aca.
       await sb.from('actividades_tablero').update(payload).eq('id', act.id);
       // Reflejar localmente
-      act.duracion_planificador_min = newTotal;
-      if (div.fields.setup) act.duracion_operario_min = newSetup;
-      if (div.fields.dur_estimada) act.ot_ack_dur_estimada_min = act.duracion_estimada_min;
-      if (div.fields.margen) act.ot_ack_margen_min = act.duracion_margen_min || 0;
-      if (div.fields.setup) act.ot_ack_setup_min = act.duracion_operario_min;
+      Object.keys(payload).forEach(k => { act[k] = payload[k]; });
       bd.remove();
-      // Disparar cascade: re-place con misma maquina/fecha/hora pero nuevo size.
+      // Disparar cascade: re-place con misma maquina/fecha/hora pero nuevo
+      // tamano y posiblemente tipo distinto.
       placeActWithCheck(act.id, act.maquina_id, act.fecha, tM(act.hora_inicio), act.operario_id);
     };
   }
