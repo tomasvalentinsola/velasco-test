@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v9.16</title>
+<title>Velasco App 2.0 — Proyectos v27</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -120,6 +120,152 @@ let clientes = [], maquinas = [], operarios = [], proyectos = [], items = [], ac
 let nav = { view: 'projects' };
 // Default filter for projects list: all states except closed/anulado/perdido
 let projectFilters = new Set(['Proyectando', 'Presupuestar', 'Confirmado']);
+
+// ============= FILTROS AVANZADOS =============
+// Estado persistente en localStorage. Filtros aplicados (no en edicion).
+// La estructura es:
+//   advFilters = {
+//     clientes: [id, id, ...],         // OR entre IDs
+//     proyectoNro: '4137',             // string, busqueda exacta
+//     pedidoNro: '4135',               // string, busqueda exacta
+//     producto: '',                    // por ahora siempre vacio (no funcional)
+//     fechaPreset: 'todos' | 'hoy' | 'ayer' | 'esta_semana' | 'ultima_semana' |
+//                  'este_mes' | 'ultimo_mes' | 'este_anio' | 'ultimo_anio' | 'rango',
+//     fechaDesde: 'YYYY-MM-DD' | null, // solo si preset==='rango'
+//     fechaHasta: 'YYYY-MM-DD' | null
+//   }
+// advFiltersDraft = lo que el usuario esta editando en los inputs (se aplica al
+//                   hacer Enter/Apply). Algunos campos (Fecha) se aplican
+//                   inmediato porque no hay nada que confirmar.
+const ADV_FILTERS_STORAGE_KEY = 'velasco_advFilters_v1';
+const ADV_FILTERS_PANEL_OPEN_KEY = 'velasco_advFiltersPanelOpen_v1';
+const DEFAULT_ADV_FILTERS = {
+  clientes: [],
+  proyectoNro: '',
+  pedidoNro: '',
+  producto: '',
+  fechaPreset: 'todos',
+  fechaDesde: null,
+  fechaHasta: null
+};
+function loadAdvFilters() {
+  try {
+    const raw = localStorage.getItem(ADV_FILTERS_STORAGE_KEY);
+    if (!raw) return { ...DEFAULT_ADV_FILTERS };
+    const parsed = JSON.parse(raw);
+    return { ...DEFAULT_ADV_FILTERS, ...parsed };
+  } catch (e) { return { ...DEFAULT_ADV_FILTERS }; }
+}
+function saveAdvFilters(f) {
+  try { localStorage.setItem(ADV_FILTERS_STORAGE_KEY, JSON.stringify(f)); } catch (e) {}
+}
+let advFilters = loadAdvFilters();
+let advFiltersDraft = JSON.parse(JSON.stringify(advFilters));
+let advFiltersPanelOpen = (function(){
+  try { return localStorage.getItem(ADV_FILTERS_PANEL_OPEN_KEY) === '1'; } catch (e) { return false; }
+})();
+function setAdvFiltersPanelOpen(open) {
+  advFiltersPanelOpen = !!open;
+  try { localStorage.setItem(ADV_FILTERS_PANEL_OPEN_KEY, open ? '1' : '0'); } catch (e) {}
+}
+// Cuenta filtros activos para badge "Filtros (N)"
+function countActiveAdvFilters(f) {
+  let n = 0;
+  if (f.clientes && f.clientes.length) n++;
+  if (f.proyectoNro && f.proyectoNro.trim() !== '') n++;
+  if (f.pedidoNro && f.pedidoNro.trim() !== '') n++;
+  if (f.fechaPreset && f.fechaPreset !== 'todos') n++;
+  return n;
+}
+
+// Resuelve el preset de fecha a un rango {desde, hasta} en milisegundos UTC.
+// Convencion de "semana": lunes a domingo (semana ISO).
+// Devuelve null si preset === 'todos' (sin filtro de fecha).
+function resolveDateRange(preset, customDesde, customHasta) {
+  if (preset === 'todos') return null;
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  let desde, hasta;
+  function dayOfWeekMon(d) {
+    // Devuelve 0=lunes ... 6=domingo
+    const dow = d.getDay();
+    return dow === 0 ? 6 : dow - 1;
+  }
+  if (preset === 'hoy') {
+    desde = today;
+    hasta = new Date(today.getTime() + 86400000 - 1);
+  } else if (preset === 'ayer') {
+    desde = new Date(today.getTime() - 86400000);
+    hasta = new Date(today.getTime() - 1);
+  } else if (preset === 'esta_semana') {
+    const dom = dayOfWeekMon(today);
+    desde = new Date(today.getTime() - dom * 86400000);
+    hasta = new Date(desde.getTime() + 7 * 86400000 - 1);
+  } else if (preset === 'ultima_semana') {
+    const dom = dayOfWeekMon(today);
+    const lunesEsta = new Date(today.getTime() - dom * 86400000);
+    desde = new Date(lunesEsta.getTime() - 7 * 86400000);
+    hasta = new Date(lunesEsta.getTime() - 1);
+  } else if (preset === 'este_mes') {
+    desde = new Date(today.getFullYear(), today.getMonth(), 1);
+    hasta = new Date(today.getFullYear(), today.getMonth() + 1, 1, 0, 0, 0, -1);
+  } else if (preset === 'ultimo_mes') {
+    desde = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+    hasta = new Date(today.getFullYear(), today.getMonth(), 1, 0, 0, 0, -1);
+  } else if (preset === 'este_anio') {
+    desde = new Date(today.getFullYear(), 0, 1);
+    hasta = new Date(today.getFullYear() + 1, 0, 1, 0, 0, 0, -1);
+  } else if (preset === 'ultimo_anio') {
+    desde = new Date(today.getFullYear() - 1, 0, 1);
+    hasta = new Date(today.getFullYear(), 0, 1, 0, 0, 0, -1);
+  } else if (preset === 'rango') {
+    if (!customDesde && !customHasta) return null;
+    if (customDesde) {
+      const [y, m, d] = customDesde.split('-').map(Number);
+      desde = new Date(y, m - 1, d);
+    } else { desde = new Date(0); }
+    if (customHasta) {
+      const [y, m, d] = customHasta.split('-').map(Number);
+      hasta = new Date(y, m - 1, d, 23, 59, 59, 999);
+    } else { hasta = new Date(8640000000000000); }
+  } else {
+    return null;
+  }
+  return { desde: desde.getTime(), hasta: hasta.getTime() };
+}
+
+// Aplica los filtros avanzados (advFilters) a una lista de proyectos.
+function applyAdvFilters(projs) {
+  const f = advFilters;
+  let out = projs;
+  // Cliente: OR entre IDs seleccionados
+  if (f.clientes && f.clientes.length > 0) {
+    const setIds = new Set(f.clientes.map(id => parseInt(id)));
+    out = out.filter(p => setIds.has(p.cliente_id));
+  }
+  // Nro de proyecto (id interno) - busqueda exacta
+  if (f.proyectoNro && f.proyectoNro.trim() !== '') {
+    const target = parseInt(f.proyectoNro.trim());
+    if (!isNaN(target)) out = out.filter(p => p.id === target);
+    else out = []; // texto no numerico => ningun match
+  }
+  // Nro de pedido (a nivel proyecto) - busqueda exacta
+  if (f.pedidoNro && f.pedidoNro.trim() !== '') {
+    const target = f.pedidoNro.trim();
+    out = out.filter(p => (p.pedido_nro || '').toString() === target);
+  }
+  // Producto: no funcional por ahora (no hay matriz)
+  // Fecha de creacion
+  const range = resolveDateRange(f.fechaPreset, f.fechaDesde, f.fechaHasta);
+  if (range) {
+    out = out.filter(p => {
+      if (!p.created_at) return false;
+      const t = new Date(p.created_at).getTime();
+      return t >= range.desde && t <= range.hasta;
+    });
+  }
+  return out;
+}
 
 function toast(msg, isErr) {
   const t = document.getElementById('to');
@@ -253,26 +399,50 @@ function render() {
 // ========== PROJECTS LIST ==========
 function renderProjectsList() {
   const main = document.getElementById('main');
-  // Filter bar
-  let h = '<div style="background:#fff;border:1px solid #C8C6BE;border-radius:8px;padding:12px 14px;margin-bottom:14px">';
-  h += '<div style="font-size:11px;font-weight:600;color:#5F5E5A;margin-bottom:6px">Filtrar por estado:</div>';
-  h += '<div style="display:flex;flex-wrap:wrap;gap:6px">';
+  const activeCount = countActiveAdvFilters(advFilters);
+
+  // Toggle de filtros (sticky arriba). Boton "Filtros (N)" muestra badge si hay
+  // filtros activos. Click expande/colapsa el panel.
+  let h = '<div id="adv-filters-bar" style="position:sticky;top:0;z-index:10;background:#FAFAF7;padding-bottom:6px">';
+  h += '<div style="background:#fff;border:1px solid #C8C6BE;border-radius:8px;padding:10px 14px;margin-bottom:10px">';
+  h += '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">';
+  h += '<div style="display:flex;flex-wrap:wrap;gap:6px;flex:1">';
+  h += '<div style="font-size:11px;font-weight:600;color:#5F5E5A;align-self:center;margin-right:6px">Estado:</div>';
   PROJ_STATES.forEach(st => {
     const isOn = projectFilters.has(st);
     const colors = projStateColor(st);
     const style = isOn
       ? 'background:' + colors.bg + ';color:' + colors.fg + ';border:1px solid ' + colors.fg
       : 'background:#fff;color:#888780;border:1px solid #C8C6BE';
-    h += '<button class="b" style="' + style + ';padding:4px 10px;font-size:11px;font-weight:600" onclick="toggleProjectFilter(\'' + st + '\')">' + st + '</button>';
+    h += '<button class="b" style="' + style + ';padding:3px 9px;font-size:11px;font-weight:600" onclick="toggleProjectFilter(\'' + st + '\')">' + st + '</button>';
   });
-  h += '<button class="b" style="padding:4px 10px;font-size:11px;margin-left:8px" onclick="setProjectFilters(true)">Todos</button>';
-  h += '<button class="b" style="padding:4px 10px;font-size:11px" onclick="setProjectFilters(false)">Activos</button>';
-  h += '</div></div>';
+  h += '<button class="b" style="padding:3px 9px;font-size:11px;margin-left:6px" onclick="setProjectFilters(true)">Todos</button>';
+  h += '<button class="b" style="padding:3px 9px;font-size:11px" onclick="setProjectFilters(false)">Activos</button>';
+  h += '</div>';
+  // Boton de filtros avanzados
+  const badge = activeCount > 0 ? ' (' + activeCount + ')' : '';
+  const btnStyle = activeCount > 0
+    ? 'background:#378ADD;color:#fff;border-color:#2E72B8;font-weight:600'
+    : 'background:#fff;color:#333;border:1px solid #C8C6BE;font-weight:600';
+  h += '<button class="b" style="' + btnStyle + ';padding:5px 12px;font-size:11px;flex:0 0 auto" onclick="toggleAdvFiltersPanel()">⚙ Filtros' + badge + ' ' + (advFiltersPanelOpen ? '▴' : '▾') + '</button>';
+  h += '</div>';
 
-  const projs = getProjects().filter(p => projectFilters.has(p.estado || 'Confirmado'));
+  // Panel de filtros avanzados (colapsable)
+  if (advFiltersPanelOpen) {
+    h += '<div id="adv-filters-panel" style="margin-top:10px;padding-top:10px;border-top:1px solid #E8E6DF">';
+    h += renderAdvFiltersPanelHtml();
+    h += '</div>';
+  }
+
+  h += '</div>';   // fin contenedor blanco
+  h += '</div>';   // fin sticky bar
+
+  // Listado de proyectos: aplica primero filtro de estado, luego avFilters.
+  const projs = applyAdvFilters(getProjects().filter(p => projectFilters.has(p.estado || 'Confirmado')));
   if (projs.length === 0) {
     h += '<div class="list-empty">No hay proyectos para los filtros seleccionados.</div>';
     main.innerHTML = h;
+    if (advFiltersPanelOpen) wireAdvFiltersPanelEvents();
     return;
   }
   projs.forEach(p => {
@@ -289,13 +459,281 @@ function renderProjectsList() {
     h += '<div class="card card-clickable" style="background:' + cardBg + '" onclick="navigate({view:\'project\',projectId:' + p.id + '})">';
     h += img;
     h += '<div class="card-body">';
-    h += '<div class="card-t">' + escapeHtml(p.descripcion || '(sin descripcion)') + urg + stBadge + warnHtml + '</div>';
+    h += '<div class="card-t">P.' + p.id + ' · ' + escapeHtml(p.descripcion || '(sin descripcion)') + urg + stBadge + warnHtml + '</div>';
     h += '<div class="card-s"><b>' + escapeHtml(clN(p.cliente_id)) + '</b>';
     h += p.pedido_nro ? ' · Ped. ' + escapeHtml(p.pedido_nro) : '';
     h += ' · ' + p.items.length + ' item(s)</div>';
     h += '</div></div>';
   });
   main.innerHTML = h;
+  if (advFiltersPanelOpen) wireAdvFiltersPanelEvents();
+}
+
+// Panel HTML
+function renderAdvFiltersPanelHtml() {
+  const f = advFiltersDraft;
+  let h = '<div style="display:grid;grid-template-columns:120px 1fr;gap:8px 14px;align-items:center;font-size:12px">';
+
+  // Cliente: input con autocomplete + chips de seleccionados
+  h += '<div style="font-weight:600;color:#5F5E5A">Cliente:</div>';
+  h += '<div style="position:relative">';
+  h += '<div id="adv-cliente-chips" style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;border:1px solid #C8C6BE;border-radius:5px;padding:4px 6px;background:#fff;min-height:32px">';
+  // Chips de los clientes ya seleccionados en el draft
+  (f.clientes || []).forEach(id => {
+    const cli = clientes.find(c => c.id === parseInt(id));
+    const nombre = cli ? cli.nombre : 'Cliente #' + id;
+    h += '<span style="display:inline-flex;align-items:center;background:#E8F2FC;color:#2E72B8;font-size:11px;padding:2px 4px 2px 8px;border-radius:3px;font-weight:600">' + escapeHtml(nombre) + '<button onclick="advRemoveCliente(' + id + ')" style="background:none;border:none;color:#2E72B8;cursor:pointer;margin-left:4px;padding:0 3px;font-size:14px;line-height:1">×</button></span>';
+  });
+  h += '<input type="text" id="adv-cliente-input" placeholder="' + ((f.clientes && f.clientes.length) ? 'Agregar otro...' : 'Buscar cliente...') + '" style="border:none;outline:none;flex:1;min-width:120px;font-size:12px;padding:2px" autocomplete="off">';
+  h += '<button onclick="advOpenClienteModal()" title="Ver lista completa" style="background:none;border:none;cursor:pointer;font-size:14px;color:#5F5E5A;padding:0 4px">▾</button>';
+  h += '</div>';
+  h += '<div id="adv-cliente-suggest" style="display:none;position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid #C8C6BE;border-top:none;border-radius:0 0 5px 5px;max-height:200px;overflow-y:auto;z-index:20;margin-top:0;box-shadow:0 4px 8px rgba(0,0,0,0.08)"></div>';
+  h += '</div>';
+
+  // Nro de Proyecto
+  h += '<div style="font-weight:600;color:#5F5E5A">Nº Proyecto:</div>';
+  h += '<div style="position:relative">';
+  h += '<input type="text" id="adv-proyecto-nro" value="' + escapeHtml(f.proyectoNro || '') + '" placeholder="Ej. 103" style="width:140px;padding:5px 22px 5px 8px;border:1px solid #C8C6BE;border-radius:5px;font-size:12px">';
+  if (f.proyectoNro) h += '<button onclick="advClearField(\'proyectoNro\')" style="position:absolute;left:120px;top:6px;background:none;border:none;cursor:pointer;font-size:12px;color:#888;padding:0 3px">×</button>';
+  h += '</div>';
+
+  // Nro de Pedido
+  h += '<div style="font-weight:600;color:#5F5E5A">Nº Pedido:</div>';
+  h += '<div style="position:relative">';
+  h += '<input type="text" id="adv-pedido-nro" value="' + escapeHtml(f.pedidoNro || '') + '" placeholder="Ej. 4137" style="width:140px;padding:5px 22px 5px 8px;border:1px solid #C8C6BE;border-radius:5px;font-size:12px">';
+  if (f.pedidoNro) h += '<button onclick="advClearField(\'pedidoNro\')" style="position:absolute;left:120px;top:6px;background:none;border:none;cursor:pointer;font-size:12px;color:#888;padding:0 3px">×</button>';
+  h += '</div>';
+
+  // Producto (deshabilitado por ahora)
+  h += '<div style="font-weight:600;color:#5F5E5A">Producto:</div>';
+  h += '<div><select disabled title="Matriz de productos no disponible aun" style="padding:5px 8px;border:1px solid #C8C6BE;border-radius:5px;background:#F5F4EE;color:#888;font-size:12px;width:240px;cursor:not-allowed"><option>(no disponible aun)</option></select></div>';
+
+  // Fecha de creacion
+  h += '<div style="font-weight:600;color:#5F5E5A">Fecha de creacion:</div>';
+  h += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">';
+  h += '<select id="adv-fecha-preset" onchange="advFechaPresetChange()" style="padding:5px 8px;border:1px solid #C8C6BE;border-radius:5px;font-size:12px">';
+  const presets = [
+    ['todos', 'Todos los dias'],
+    ['hoy', 'Hoy'],
+    ['ayer', 'Ayer'],
+    ['esta_semana', 'Esta semana'],
+    ['ultima_semana', 'Ultima semana'],
+    ['este_mes', 'Este mes'],
+    ['ultimo_mes', 'Ultimo mes'],
+    ['este_anio', 'Este ano'],
+    ['ultimo_anio', 'Ultimo ano'],
+    ['rango', 'Rango personalizado']
+  ];
+  presets.forEach(([v, lbl]) => {
+    h += '<option value="' + v + '"' + (f.fechaPreset === v ? ' selected' : '') + '>' + lbl + '</option>';
+  });
+  h += '</select>';
+  if (f.fechaPreset === 'rango') {
+    h += '<span style="font-size:11px;color:#5F5E5A">Desde:</span>';
+    h += '<input type="date" id="adv-fecha-desde" value="' + (f.fechaDesde || '') + '" onchange="advFechaRangeChange()" style="padding:5px 8px;border:1px solid #C8C6BE;border-radius:5px;font-size:12px">';
+    h += '<span style="font-size:11px;color:#5F5E5A">Hasta:</span>';
+    h += '<input type="date" id="adv-fecha-hasta" value="' + (f.fechaHasta || '') + '" onchange="advFechaRangeChange()" style="padding:5px 8px;border:1px solid #C8C6BE;border-radius:5px;font-size:12px">';
+  }
+  h += '</div>';
+
+  h += '</div>';   // fin grid
+
+  // Botones Aplicar / Limpiar
+  h += '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;padding-top:10px;border-top:1px solid #E8E6DF">';
+  h += '<button class="b" onclick="advClearAll()" style="background:#fff;color:#5F5E5A;border:1px solid #C8C6BE;padding:6px 14px;font-size:11px">Limpiar todo</button>';
+  h += '<button class="b" onclick="advApply()" style="background:#378ADD;color:#fff;border-color:#2E72B8;padding:6px 14px;font-size:11px;font-weight:600">Aplicar (Enter)</button>';
+  h += '</div>';
+
+  return h;
+}
+
+// Wire eventos del panel: Enter en inputs aplica, autocomplete de cliente, etc.
+function wireAdvFiltersPanelEvents() {
+  // Input de cliente: autocomplete inline al tipear
+  const cli = document.getElementById('adv-cliente-input');
+  if (cli) {
+    cli.addEventListener('input', advClienteSuggest);
+    cli.addEventListener('focus', advClienteSuggest);
+    cli.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); advApply(); }
+      else if (e.key === 'Escape') { closeAdvClienteSuggest(); }
+    });
+    // Cerrar dropdown al click fuera
+    setTimeout(() => {
+      document.addEventListener('click', advClienteOutsideClick, true);
+    }, 0);
+  }
+  // Inputs de proyecto/pedido: Enter aplica
+  ['adv-proyecto-nro', 'adv-pedido-nro'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); advApply(); }
+      });
+      el.addEventListener('input', e => {
+        const key = id === 'adv-proyecto-nro' ? 'proyectoNro' : 'pedidoNro';
+        advFiltersDraft[key] = el.value;
+      });
+    }
+  });
+}
+
+function advClienteOutsideClick(e) {
+  const sug = document.getElementById('adv-cliente-suggest');
+  const inp = document.getElementById('adv-cliente-input');
+  if (!sug || !inp) {
+    document.removeEventListener('click', advClienteOutsideClick, true);
+    return;
+  }
+  if (!sug.contains(e.target) && e.target !== inp) {
+    closeAdvClienteSuggest();
+  }
+}
+
+function advClienteSuggest() {
+  const inp = document.getElementById('adv-cliente-input');
+  const sug = document.getElementById('adv-cliente-suggest');
+  if (!inp || !sug) return;
+  const q = inp.value.trim().toLowerCase();
+  // Si vacio y no esta enfocado, no mostrar nada (al focus siempre mostrar top 10)
+  const sel = new Set((advFiltersDraft.clientes || []).map(id => parseInt(id)));
+  let matches = clientes.filter(c => !sel.has(c.id));
+  if (q !== '') {
+    matches = matches.filter(c => (c.nombre || '').toLowerCase().includes(q));
+  }
+  matches = matches.slice(0, 12);
+  if (matches.length === 0) {
+    sug.style.display = 'none';
+    return;
+  }
+  let h = '';
+  matches.forEach(c => {
+    h += '<div onclick="advAddCliente(' + c.id + ')" style="padding:6px 10px;cursor:pointer;font-size:12px;border-bottom:1px solid #F0EEE6" onmouseover="this.style.background=\'#F5FAFF\'" onmouseout="this.style.background=\'\'">' + escapeHtml(c.nombre) + '</div>';
+  });
+  sug.innerHTML = h;
+  sug.style.display = 'block';
+}
+function closeAdvClienteSuggest() {
+  const sug = document.getElementById('adv-cliente-suggest');
+  if (sug) sug.style.display = 'none';
+}
+function advAddCliente(id) {
+  if (!advFiltersDraft.clientes) advFiltersDraft.clientes = [];
+  if (!advFiltersDraft.clientes.includes(id)) advFiltersDraft.clientes.push(id);
+  // Limpiar input y re-render solo del panel
+  closeAdvClienteSuggest();
+  refreshAdvFiltersPanel();
+  // Foco en el input para que pueda seguir agregando
+  setTimeout(() => {
+    const inp = document.getElementById('adv-cliente-input');
+    if (inp) { inp.value = ''; inp.focus(); }
+  }, 10);
+}
+function advRemoveCliente(id) {
+  advFiltersDraft.clientes = (advFiltersDraft.clientes || []).filter(x => parseInt(x) !== parseInt(id));
+  refreshAdvFiltersPanel();
+}
+function advClearField(field) {
+  advFiltersDraft[field] = '';
+  refreshAdvFiltersPanel();
+}
+function advFechaPresetChange() {
+  const sel = document.getElementById('adv-fecha-preset');
+  if (!sel) return;
+  advFiltersDraft.fechaPreset = sel.value;
+  if (sel.value !== 'rango') {
+    advFiltersDraft.fechaDesde = null;
+    advFiltersDraft.fechaHasta = null;
+  }
+  // Si cambia a algo distinto de "rango", aplicar inmediato (no hay inputs por confirmar)
+  // Si cambia a "rango", solo re-renderizar para mostrar inputs
+  if (sel.value === 'rango') refreshAdvFiltersPanel();
+  else { refreshAdvFiltersPanel(); advApply(); }
+}
+function advFechaRangeChange() {
+  const desde = document.getElementById('adv-fecha-desde');
+  const hasta = document.getElementById('adv-fecha-hasta');
+  advFiltersDraft.fechaDesde = desde && desde.value ? desde.value : null;
+  advFiltersDraft.fechaHasta = hasta && hasta.value ? hasta.value : null;
+  // Aplica inmediato (date inputs ya son confirmacion)
+  advApply();
+}
+function advClearAll() {
+  advFiltersDraft = JSON.parse(JSON.stringify(DEFAULT_ADV_FILTERS));
+  advApply();
+}
+function advApply() {
+  // Antes de aplicar, leer valores de los inputs por si el usuario tipeo y no confirmo cada uno
+  const pn = document.getElementById('adv-proyecto-nro');
+  const ped = document.getElementById('adv-pedido-nro');
+  if (pn) advFiltersDraft.proyectoNro = pn.value;
+  if (ped) advFiltersDraft.pedidoNro = ped.value;
+  advFilters = JSON.parse(JSON.stringify(advFiltersDraft));
+  saveAdvFilters(advFilters);
+  render();
+}
+function refreshAdvFiltersPanel() {
+  // Re-render solo del panel sin tocar el resto del listado
+  const panel = document.getElementById('adv-filters-panel');
+  if (panel) {
+    panel.innerHTML = renderAdvFiltersPanelHtml();
+    wireAdvFiltersPanelEvents();
+  } else {
+    render();
+  }
+}
+function toggleAdvFiltersPanel() {
+  setAdvFiltersPanelOpen(!advFiltersPanelOpen);
+  // Sincronizar draft con filtros actuales al abrir
+  if (advFiltersPanelOpen) advFiltersDraft = JSON.parse(JSON.stringify(advFilters));
+  render();
+}
+
+// Modal con lista completa de clientes (acceso por la flechita ▾)
+function advOpenClienteModal() {
+  const bd = document.createElement('div'); bd.className = 'mo';
+  bd.addEventListener('click', e => { if (e.target === bd) bd.remove(); });
+  const m = document.createElement('div'); m.className = 'md';
+  m.style.maxHeight = '80vh';
+  m.style.display = 'flex';
+  m.style.flexDirection = 'column';
+  let h = '<button class="md-x" onclick="this.closest(\'.mo\').remove()">&times;</button>';
+  h += '<div class="md-t">Seleccionar clientes</div>';
+  h += '<input type="text" id="adv-cli-modal-search" placeholder="Buscar..." style="width:100%;padding:8px 10px;border:1px solid #C8C6BE;border-radius:5px;font-size:13px;margin-bottom:10px" autocomplete="off">';
+  h += '<div id="adv-cli-modal-list" style="flex:1;overflow-y:auto;border:1px solid #E8E6DF;border-radius:5px"></div>';
+  h += '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px"><button class="b b-p" onclick="this.closest(\'.mo\').remove()">Listo</button></div>';
+  m.innerHTML = h;
+  bd.appendChild(m); document.body.appendChild(bd);
+  document.getElementById('adv-cli-modal-search').addEventListener('input', advCliModalRender);
+  advCliModalRender();
+}
+function advCliModalRender() {
+  const list = document.getElementById('adv-cli-modal-list');
+  const search = document.getElementById('adv-cli-modal-search');
+  if (!list) return;
+  const q = (search ? search.value : '').trim().toLowerCase();
+  const sel = new Set((advFiltersDraft.clientes || []).map(id => parseInt(id)));
+  let matches = clientes.slice();
+  if (q !== '') matches = matches.filter(c => (c.nombre || '').toLowerCase().includes(q));
+  matches.sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+  let h = '';
+  matches.forEach(c => {
+    const isSel = sel.has(c.id);
+    h += '<div onclick="advCliModalToggle(' + c.id + ')" style="padding:8px 10px;cursor:pointer;font-size:13px;border-bottom:1px solid #F0EEE6;background:' + (isSel ? '#E8F2FC' : '#fff') + ';display:flex;justify-content:space-between;align-items:center" onmouseover="if(!this.dataset.sel)this.style.background=\'#F5FAFF\'" onmouseout="this.style.background=\'' + (isSel ? '#E8F2FC' : '#fff') + '\'">';
+    h += '<span>' + escapeHtml(c.nombre) + '</span>';
+    h += '<span style="color:' + (isSel ? '#2E72B8' : '#C8C6BE') + ';font-weight:700">' + (isSel ? '✓' : '+') + '</span>';
+    h += '</div>';
+  });
+  if (matches.length === 0) h = '<div style="padding:16px;text-align:center;color:#888;font-size:12px">Sin resultados</div>';
+  list.innerHTML = h;
+}
+function advCliModalToggle(id) {
+  if (!advFiltersDraft.clientes) advFiltersDraft.clientes = [];
+  const idx = advFiltersDraft.clientes.findIndex(x => parseInt(x) === parseInt(id));
+  if (idx >= 0) advFiltersDraft.clientes.splice(idx, 1);
+  else advFiltersDraft.clientes.push(id);
+  advCliModalRender();
+  refreshAdvFiltersPanel();
 }
 
 function toggleProjectFilter(state) {
@@ -1210,6 +1648,27 @@ async function saveProceso(procesoId) {
     if (!isPlanificada) {
       // Not planned: also reset planificador-driven duration to default
       payload.duracion_planificador_min = dur + margen;
+    } else {
+      // Planificada: el largo del bloque en el tablero debe quedar congelado
+      // al valor previo. El planificador vera el cartel de divergencia y
+      // decide si aplica o ignora los cambios.
+      // Si duracion_planificador_min es null en la DB (caso legacy), lo
+      // congelamos explicitamente al valor anterior de estimada+margen para
+      // que el tablero no use el fallback (que tomaria los nuevos estimada+margen).
+      const prevPlanLen = existing.duracion_planificador_min;
+      if (prevPlanLen === null || prevPlanLen === undefined) {
+        const prevEstMargen = (existing.duracion_estimada_min || 0) + (existing.duracion_margen_min || 0);
+        payload.duracion_planificador_min = prevEstMargen;
+      }
+      // El setup (duracion_operario_min) tambien lo aplica D() pero solo
+      // indirectamente via Dop(). Para que el setup tampoco cambie el
+      // comportamiento del bloque hasta que el planificador aplique:
+      // necesitamos guardar el nuevo valor pero el render debe seguir usando
+      // el viejo. Esto NO se puede congelar en duracion_operario_min porque
+      // ese campo ES el setup nuevo. La unica forma seria una columna paralela
+      // (planificador_setup_min). Por simplicidad, dejamos que el setup nuevo
+      // se refleje aunque modifique levemente el comportamiento. Si Tomi
+      // observa esto como bug futuro, agregamos la columna.
     }
     // Process state, only set if user changed it (only present when editing)
     const peEl = document.getElementById('p-estado');
@@ -1672,7 +2131,7 @@ body { font-family: Arial, sans-serif; font-size: 11px; color: #000; }
 .cover-info td.label { font-weight: 700; width: 38%; text-transform: uppercase; }
 /* Label de la columna derecha (Contacto, Telefono, Forma MP, Fecha Fin Estip., Hora):
    ancho fijo de ~40mm para liberar el resto al value de su derecha. */
-.cover-info td.label-r { width: 40mm; padding-left: 8px; padding-right: 4px; }
+.cover-info td.label-r { width: 27mm; padding-left: 8px; padding-right: 4px; }
 .cover-info td.value.bold { font-weight: 700; }
 .cover-info td.cliente-big { font-size: 16px; font-weight: 800; }
 .cover-info td.pieza-big { font-weight: 700; font-size: 13px; }
