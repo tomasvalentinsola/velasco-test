@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v29</title>
+<title>Velasco App 2.0 — Proyectos v30</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -143,6 +143,9 @@ const DEFAULT_ADV_FILTERS = {
   clientes: [],
   proyectoNro: '',
   pedidoNro: '',
+  descProyecto: '',
+  descItem: '',
+  estadoItem: '',         // solo aplica en vista 'items'
   producto: '',
   fechaPreset: 'todos',
   fechaDesde: null,
@@ -164,6 +167,72 @@ let advFiltersDraft = JSON.parse(JSON.stringify(advFilters));
 let advFiltersPanelOpen = (function(){
   try { return localStorage.getItem(ADV_FILTERS_PANEL_OPEN_KEY) === '1'; } catch (e) { return false; }
 })();
+
+// ===== VIEW MODE Y SORT =====
+// viewMode: 'projects' | 'items'. Sort por separado para cada vista.
+// expandedProjects: set de ids de proyectos con items desplegados (vista projects).
+const VIEW_MODE_KEY = 'velasco_viewMode_v1';
+const SORT_PROJECTS_KEY = 'velasco_sortProjects_v1';
+const SORT_ITEMS_KEY = 'velasco_sortItems_v1';
+const EXPANDED_PROJECTS_KEY = 'velasco_expandedProjects_v1';
+
+let viewMode = (function(){
+  try { return localStorage.getItem(VIEW_MODE_KEY) || 'projects'; } catch (e) { return 'projects'; }
+})();
+function setViewMode(m) {
+  viewMode = m;
+  try { localStorage.setItem(VIEW_MODE_KEY, m); } catch (e) {}
+}
+
+// Sort state: { by: 'created' | 'urgencia' | 'cliente' | 'fecha_entrega', dir: 'asc' | 'desc' }
+// Defaults: por fecha de creacion descendente (mas recientes primero)
+const DEFAULT_SORT_PROJECTS = { by: 'created', dir: 'desc' };
+const DEFAULT_SORT_ITEMS = { by: 'created', dir: 'desc' };
+function loadSort(key, def) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return { ...def };
+    const p = JSON.parse(raw);
+    return { ...def, ...p };
+  } catch (e) { return { ...def }; }
+}
+function saveSort(key, s) {
+  try { localStorage.setItem(key, JSON.stringify(s)); } catch (e) {}
+}
+let sortProjects = loadSort(SORT_PROJECTS_KEY, DEFAULT_SORT_PROJECTS);
+let sortItems = loadSort(SORT_ITEMS_KEY, DEFAULT_SORT_ITEMS);
+function setSort(viewKind, by, dir) {
+  if (viewKind === 'projects') {
+    sortProjects = { by, dir };
+    saveSort(SORT_PROJECTS_KEY, sortProjects);
+  } else {
+    sortItems = { by, dir };
+    saveSort(SORT_ITEMS_KEY, sortItems);
+  }
+}
+function getCurrentSort() { return viewMode === 'items' ? sortItems : sortProjects; }
+
+let expandedProjects = (function(){
+  try {
+    const raw = localStorage.getItem(EXPANDED_PROJECTS_KEY);
+    if (!raw) return new Set();
+    return new Set(JSON.parse(raw));
+  } catch (e) { return new Set(); }
+})();
+function saveExpandedProjects() {
+  try { localStorage.setItem(EXPANDED_PROJECTS_KEY, JSON.stringify([...expandedProjects])); } catch (e) {}
+}
+function toggleProjectExpand(projId) {
+  if (expandedProjects.has(projId)) expandedProjects.delete(projId);
+  else expandedProjects.add(projId);
+  saveExpandedProjects();
+  render();
+}
+function collapseAllProjects() {
+  expandedProjects = new Set();
+  saveExpandedProjects();
+  render();
+}
 function setAdvFiltersPanelOpen(open) {
   advFiltersPanelOpen = !!open;
   try { localStorage.setItem(ADV_FILTERS_PANEL_OPEN_KEY, open ? '1' : '0'); } catch (e) {}
@@ -174,6 +243,9 @@ function countActiveAdvFilters(f) {
   if (f.clientes && f.clientes.length) n++;
   if (f.proyectoNro && f.proyectoNro.trim() !== '') n++;
   if (f.pedidoNro && f.pedidoNro.trim() !== '') n++;
+  if (f.descProyecto && f.descProyecto.trim() !== '') n++;
+  if (f.descItem && f.descItem.trim() !== '') n++;
+  if (f.estadoItem && f.estadoItem !== '') n++;
   if (f.fechaPreset && f.fechaPreset !== 'todos') n++;
   return n;
 }
@@ -254,6 +326,16 @@ function applyAdvFilters(projs) {
     const target = f.pedidoNro.trim();
     out = out.filter(p => (p.pedido_nro || '').toString() === target);
   }
+  // Descripcion del proyecto: contains case-insensitive
+  if (f.descProyecto && f.descProyecto.trim() !== '') {
+    const q = f.descProyecto.trim().toLowerCase();
+    out = out.filter(p => (p.descripcion || '').toLowerCase().includes(q));
+  }
+  // Descripcion del item: filtra proyectos que tengan AL MENOS UN item con esa descripcion
+  if (f.descItem && f.descItem.trim() !== '') {
+    const q = f.descItem.trim().toLowerCase();
+    out = out.filter(p => (p.items || []).some(it => (it.descripcion || '').toLowerCase().includes(q)));
+  }
   // Producto: no funcional por ahora (no hay matriz)
   // Fecha de creacion
   const range = resolveDateRange(f.fechaPreset, f.fechaDesde, f.fechaHasta);
@@ -264,6 +346,100 @@ function applyAdvFilters(projs) {
       return t >= range.desde && t <= range.hasta;
     });
   }
+  return out;
+}
+
+// ===== ORDEN =====
+// Ordena proyectos segun sortProjects. NO muta la lista entrante.
+const URGENCY_RANK = { urgente: 0, alta: 1, media: 2, baja: 3 };
+const ITEM_ESTADO_RANK = {
+  'Espera MP': 0,
+  'Listo para mecanizar': 1,
+  'En proceso': 2,
+  'Terminado': 3,
+  'Despachado': 4
+};
+function sortProjectsList(arr) {
+  const s = sortProjects;
+  const out = arr.slice();
+  out.sort((a, b) => {
+    let cmp = 0;
+    if (s.by === 'created') {
+      cmp = new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime();
+    } else if (s.by === 'fecha_entrega') {
+      const ta = a.fecha_entrega ? new Date(a.fecha_entrega).getTime() : null;
+      const tb = b.fecha_entrega ? new Date(b.fecha_entrega).getTime() : null;
+      // null al final
+      if (ta === null && tb === null) cmp = 0;
+      else if (ta === null) return 1;
+      else if (tb === null) return -1;
+      else cmp = ta - tb;
+    } else if (s.by === 'urgencia') {
+      cmp = (URGENCY_RANK[a.urgencia] ?? 99) - (URGENCY_RANK[b.urgencia] ?? 99);
+    } else if (s.by === 'cliente') {
+      cmp = (clN(a.cliente_id) || '').localeCompare(clN(b.cliente_id) || '');
+    }
+    if (cmp === 0) cmp = a.id - b.id; // tiebreaker por id
+    return s.dir === 'asc' ? cmp : -cmp;
+  });
+  return out;
+}
+
+// Construye lista plana de items con metadata del proyecto (cliente, pedido, etc.)
+// para la vista de items.
+function buildFlatItemsList(filteredProjects) {
+  const out = [];
+  filteredProjects.forEach(p => {
+    (p.items || []).forEach(it => {
+      out.push({
+        item: it,
+        proyecto: p
+      });
+    });
+  });
+  return out;
+}
+
+// Filtro adicional para vista items: estadoItem (sobre items individuales).
+function filterItemsList(itemsList) {
+  const f = advFilters;
+  let out = itemsList;
+  if (f.estadoItem && f.estadoItem !== '') {
+    out = out.filter(x => (x.item.estado || 'Espera MP') === f.estadoItem);
+  }
+  // descItem se aplica como filtro a nivel item (no proyecto)
+  if (f.descItem && f.descItem.trim() !== '') {
+    const q = f.descItem.trim().toLowerCase();
+    out = out.filter(x => (x.item.descripcion || '').toLowerCase().includes(q));
+  }
+  return out;
+}
+
+function sortItemsList(arr) {
+  const s = sortItems;
+  const out = arr.slice();
+  out.sort((a, b) => {
+    let cmp = 0;
+    if (s.by === 'created') {
+      cmp = new Date(a.proyecto.created_at || 0).getTime() - new Date(b.proyecto.created_at || 0).getTime();
+    } else if (s.by === 'fecha_entrega') {
+      // En vista de items, esto es la fecha_fin_estipulada del item
+      const ta = a.item.fecha_fin_estipulada ? new Date(a.item.fecha_fin_estipulada).getTime() : null;
+      const tb = b.item.fecha_fin_estipulada ? new Date(b.item.fecha_fin_estipulada).getTime() : null;
+      if (ta === null && tb === null) cmp = 0;
+      else if (ta === null) return 1;
+      else if (tb === null) return -1;
+      else cmp = ta - tb;
+    } else if (s.by === 'urgencia') {
+      cmp = (URGENCY_RANK[a.proyecto.urgencia] ?? 99) - (URGENCY_RANK[b.proyecto.urgencia] ?? 99);
+    } else if (s.by === 'cliente') {
+      cmp = (clN(a.proyecto.cliente_id) || '').localeCompare(clN(b.proyecto.cliente_id) || '');
+    } else if (s.by === 'estado_item') {
+      cmp = (ITEM_ESTADO_RANK[a.item.estado] ?? 99) - (ITEM_ESTADO_RANK[b.item.estado] ?? 99);
+    }
+    if (cmp === 0) cmp = a.item.id - b.item.id;
+    return s.dir === 'asc' ? cmp : -cmp;
+  });
   return out;
 }
 
@@ -405,6 +581,41 @@ function renderProjectsList() {
   // filtros activos. Click expande/colapsa el panel.
   let h = '<div id="adv-filters-bar" style="position:sticky;top:0;z-index:10;background:#FAFAF7;padding-bottom:6px">';
   h += '<div style="background:#fff;border:1px solid #C8C6BE;border-radius:8px;padding:10px 14px;margin-bottom:10px">';
+
+  // Fila 0: Toggle de vista [Proyectos] [Items]
+  h += '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">';
+  h += '<div style="font-size:11px;font-weight:600;color:#5F5E5A;align-self:center;margin-right:6px">Vista:</div>';
+  ['projects', 'items'].forEach(m => {
+    const lbl = m === 'projects' ? 'Proyectos' : 'Items';
+    const active = viewMode === m;
+    const style = active
+      ? 'background:#0C447C;color:#fff;border:1px solid #0C447C;font-weight:700'
+      : 'background:#fff;color:#333;border:1px solid #C8C6BE;font-weight:600';
+    h += '<button class="b" style="' + style + ';padding:4px 14px;font-size:11px" onclick="changeViewMode(\'' + m + '\')">' + lbl + '</button>';
+  });
+  // Sort selector + flecha
+  const curSort = getCurrentSort();
+  h += '<div style="margin-left:18px;font-size:11px;font-weight:600;color:#5F5E5A">Ordenar por:</div>';
+  h += '<select id="sort-by-select" onchange="changeSortBy()" style="padding:3px 8px;border:1px solid #C8C6BE;border-radius:5px;font-size:11px">';
+  const sortOpts = viewMode === 'items'
+    ? [['created', 'Fecha de creacion'], ['fecha_entrega', 'Fecha fin estipulada'], ['urgencia', 'Urgencia'], ['cliente', 'Cliente'], ['estado_item', 'Estado del item']]
+    : [['created', 'Fecha de creacion'], ['fecha_entrega', 'Fecha de entrega'], ['urgencia', 'Urgencia'], ['cliente', 'Cliente']];
+  sortOpts.forEach(([v, lbl]) => {
+    h += '<option value="' + v + '"' + (curSort.by === v ? ' selected' : '') + '>' + lbl + '</option>';
+  });
+  h += '</select>';
+  // Boton flecha asc/desc
+  const arrow = curSort.dir === 'asc' ? '↑' : '↓';
+  const arrowTitle = curSort.dir === 'asc' ? 'Ascendente (click para invertir)' : 'Descendente (click para invertir)';
+  h += '<button class="b" title="' + arrowTitle + '" onclick="toggleSortDir()" style="padding:3px 8px;font-size:13px;font-weight:700;line-height:1">' + arrow + '</button>';
+
+  // Boton "Contraer todos" - solo en vista projects y si hay alguno expandido
+  if (viewMode === 'projects' && expandedProjects.size > 0) {
+    h += '<button class="b" onclick="collapseAllProjects()" style="margin-left:8px;padding:3px 10px;font-size:11px">⇡ Contraer todos (' + expandedProjects.size + ')</button>';
+  }
+  h += '</div>';
+
+  // Fila 1: filtros de estado + boton avanzados
   h += '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">';
   h += '<div style="display:flex;flex-wrap:wrap;gap:6px;flex:1">';
   h += '<div style="font-size:11px;font-weight:600;color:#5F5E5A;align-self:center;margin-right:6px">Estado:</div>';
@@ -437,14 +648,25 @@ function renderProjectsList() {
   h += '</div>';   // fin contenedor blanco
   h += '</div>';   // fin sticky bar
 
-  // Listado de proyectos: aplica primero filtro de estado, luego avFilters.
-  const projs = applyAdvFilters(getProjects().filter(p => projectFilters.has(p.estado || 'Confirmado')));
-  if (projs.length === 0) {
-    h += '<div class="list-empty">No hay proyectos para los filtros seleccionados.</div>';
-    main.innerHTML = h;
-    if (advFiltersPanelOpen) wireAdvFiltersPanelEvents();
-    return;
+  // Listado: aplica primero filtro de estado, luego advFilters
+  const filteredProjects = applyAdvFilters(getProjects().filter(p => projectFilters.has(p.estado || 'Confirmado')));
+
+  if (viewMode === 'items') {
+    h += renderItemsListBody(filteredProjects);
+  } else {
+    h += renderProjectsListBody(filteredProjects);
   }
+  main.innerHTML = h;
+  if (advFiltersPanelOpen) wireAdvFiltersPanelEvents();
+}
+
+// Body de la vista PROYECTOS
+function renderProjectsListBody(filteredProjects) {
+  const projs = sortProjectsList(filteredProjects);
+  if (projs.length === 0) {
+    return '<div class="list-empty">No hay proyectos para los filtros seleccionados.</div>';
+  }
+  let h = '';
   projs.forEach(p => {
     const stColors = projStateColor(p.estado);
     const isClosed = (p.estado === 'Cerrado' || p.estado === 'Anulado' || p.estado === 'Perdido');
@@ -456,17 +678,96 @@ function renderProjectsList() {
     const stBadge = '<span style="display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-weight:700;background:' + stColors.bg + ';color:' + stColors.fg + ';margin-left:6px">' + p.estado + (p.estado === 'Cerrado' && p.sub_estado_cerrado ? ' / ' + p.sub_estado_cerrado : '') + '</span>';
     const needsPedidoWarn = PROJ_STATES_REQUIRE_PEDIDO.has(p.estado) && !p.pedido_nro;
     const warnHtml = needsPedidoWarn ? '<span title="Falta numero de pedido" style="color:#A32D2D;margin-left:4px;font-weight:700">⚠ FALTA Nº PEDIDO</span>' : '';
-    h += '<div class="card card-clickable" style="background:' + cardBg + '" onclick="navigate({view:\'project\',projectId:' + p.id + '})">';
+    const isExpanded = expandedProjects.has(p.id);
+    const arrow = isExpanded ? '▾' : '▸';
+    h += '<div class="card-wrap" style="margin-bottom:8px">';
+    h += '<div class="card card-clickable" style="background:' + cardBg + ';margin-bottom:0" onclick="navigate({view:\'project\',projectId:' + p.id + '})">';
     h += img;
     h += '<div class="card-body">';
-    h += '<div class="card-t">P.' + p.id + ' · ' + escapeHtml(p.descripcion || '(sin descripcion)') + urg + stBadge + warnHtml + '</div>';
+    // Toggle desplegar items - se posiciona absolutamente para no interferir
+    h += '<div class="card-t" style="display:flex;align-items:center;gap:6px">';
+    h += '<button onclick="event.stopPropagation();toggleProjectExpand(' + p.id + ')" title="Mostrar items" style="background:none;border:1px solid #C8C6BE;border-radius:4px;cursor:pointer;font-size:11px;padding:1px 6px;color:#5F5E5A;font-weight:700;line-height:1">' + arrow + '</button>';
+    h += '<span>' + escapeHtml(p.descripcion || '(sin descripcion)') + '</span>' + urg + stBadge + warnHtml;
+    h += '</div>';
     h += '<div class="card-s"><b>' + escapeHtml(clN(p.cliente_id)) + '</b>';
+    h += ' · Pr. ' + p.id;
     h += p.pedido_nro ? ' · Ped. ' + escapeHtml(p.pedido_nro) : '';
     h += ' · ' + p.items.length + ' item(s)</div>';
     h += '</div></div>';
+    // Panel desplegado de items
+    if (isExpanded) {
+      h += '<div style="background:#FAFAF7;border:1px solid #C8C6BE;border-top:none;border-radius:0 0 6px 6px;padding:8px 14px 8px 56px;font-size:12px">';
+      if (p.items && p.items.length > 0) {
+        p.items.forEach((it, idx) => {
+          const sep = idx < p.items.length - 1 ? ';border-bottom:1px solid #EAE8DF' : '';
+          h += '<div style="padding:4px 0;display:flex;justify-content:space-between;align-items:center;gap:10px' + sep + '" onclick="event.stopPropagation();navigate({view:\'item\',projectId:' + p.id + ',itemId:' + it.id + '})" title="Ver item">';
+          h += '<span><b>' + escapeHtml(it.descripcion || '(sin descripcion)') + '</b>';
+          if (it.cantidad) h += ' · cant. ' + it.cantidad;
+          h += '</span>';
+          h += '<span style="color:#5F5E5A;font-size:11px">' + escapeHtml(it.estado || 'Espera MP') + '</span>';
+          h += '</div>';
+        });
+      } else {
+        h += '<div style="color:#888;font-style:italic">Sin items</div>';
+      }
+      h += '</div>';
+    }
+    h += '</div>';
   });
-  main.innerHTML = h;
-  if (advFiltersPanelOpen) wireAdvFiltersPanelEvents();
+  return h;
+}
+
+// Body de la vista ITEMS (lista plana de items con info del proyecto)
+function renderItemsListBody(filteredProjects) {
+  const flat = sortItemsList(filterItemsList(buildFlatItemsList(filteredProjects)));
+  if (flat.length === 0) {
+    return '<div class="list-empty">No hay items para los filtros seleccionados.</div>';
+  }
+  let h = '';
+  flat.forEach(({ item, proyecto }) => {
+    const stColors = projStateColor(proyecto.estado);
+    const isClosed = (proyecto.estado === 'Cerrado' || proyecto.estado === 'Anulado' || proyecto.estado === 'Perdido');
+    const cardBg = isClosed ? '#F5F3EC' : '#fff';
+    const fotoUrl = item.foto_url || proyecto.foto_url;
+    const img = fotoUrl
+      ? '<img src="' + escapeHtml(fotoUrl) + '" class="card-img" onerror="this.style.display=\'none\'">'
+      : '<div class="card-img-empty">sin foto</div>';
+    const urg = proyecto.urgencia ? '<span class="urg urg-' + proyecto.urgencia + '">' + proyecto.urgencia + '</span>' : '';
+    const stBadge = '<span style="display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-weight:700;background:' + stColors.bg + ';color:' + stColors.fg + ';margin-left:6px">' + proyecto.estado + '</span>';
+    const itemEstado = item.estado || 'Espera MP';
+    const itemEstadoBadge = '<span style="display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-weight:700;background:#E8F2FC;color:#0C447C;margin-left:6px">' + escapeHtml(itemEstado) + '</span>';
+    h += '<div class="card card-clickable" style="background:' + cardBg + '" onclick="navigate({view:\'item\',projectId:' + proyecto.id + ',itemId:' + item.id + '})">';
+    h += img;
+    h += '<div class="card-body">';
+    h += '<div class="card-t">' + escapeHtml(item.descripcion || '(sin descripcion)') + urg + itemEstadoBadge + stBadge + '</div>';
+    h += '<div class="card-s"><b>' + escapeHtml(clN(proyecto.cliente_id)) + '</b>';
+    h += ' · Pr. ' + proyecto.id + ' · ' + escapeHtml(proyecto.descripcion || '');
+    if (proyecto.pedido_nro) h += ' · Ped. ' + escapeHtml(proyecto.pedido_nro);
+    if (item.cantidad) h += ' · cant. ' + item.cantidad;
+    h += '</div></div></div>';
+  });
+  return h;
+}
+
+// Cambiar de vista (Proyectos / Items)
+function changeViewMode(m) {
+  setViewMode(m);
+  render();
+}
+// Cambiar criterio de orden
+function changeSortBy() {
+  const sel = document.getElementById('sort-by-select');
+  if (!sel) return;
+  const cur = getCurrentSort();
+  setSort(viewMode === 'items' ? 'items' : 'projects', sel.value, cur.dir);
+  render();
+}
+// Toggle ascendente/descendente
+function toggleSortDir() {
+  const cur = getCurrentSort();
+  const newDir = cur.dir === 'asc' ? 'desc' : 'asc';
+  setSort(viewMode === 'items' ? 'items' : 'projects', cur.by, newDir);
+  render();
 }
 
 // Panel HTML
@@ -503,6 +804,38 @@ function renderAdvFiltersPanelHtml() {
   h += '<input type="text" id="adv-pedido-nro" value="' + escapeHtml(f.pedidoNro || '') + '" placeholder="Ej. 4137" style="width:140px;padding:5px 22px 5px 8px;border:1px solid #C8C6BE;border-radius:5px;font-size:12px">';
   if (f.pedidoNro) h += '<button onclick="advClearField(\'pedidoNro\')" style="position:absolute;left:120px;top:6px;background:none;border:none;cursor:pointer;font-size:12px;color:#888;padding:0 3px">×</button>';
   h += '</div>';
+
+  // Descripcion del proyecto (substring case-insensitive)
+  h += '<div style="font-weight:600;color:#5F5E5A">Desc. Proyecto:</div>';
+  h += '<div style="position:relative">';
+  h += '<input type="text" id="adv-desc-proyecto" value="' + escapeHtml(f.descProyecto || '') + '" placeholder="Ej. eje" style="width:240px;padding:5px 22px 5px 8px;border:1px solid #C8C6BE;border-radius:5px;font-size:12px">';
+  if (f.descProyecto) h += '<button onclick="advClearField(\'descProyecto\')" style="position:absolute;left:220px;top:6px;background:none;border:none;cursor:pointer;font-size:12px;color:#888;padding:0 3px">×</button>';
+  h += '</div>';
+
+  // Descripcion del item (substring case-insensitive)
+  h += '<div style="font-weight:600;color:#5F5E5A">Desc. Item:</div>';
+  h += '<div style="position:relative">';
+  h += '<input type="text" id="adv-desc-item" value="' + escapeHtml(f.descItem || '') + '" placeholder="Ej. eje" style="width:240px;padding:5px 22px 5px 8px;border:1px solid #C8C6BE;border-radius:5px;font-size:12px">';
+  if (f.descItem) h += '<button onclick="advClearField(\'descItem\')" style="position:absolute;left:220px;top:6px;background:none;border:none;cursor:pointer;font-size:12px;color:#888;padding:0 3px">×</button>';
+  h += '</div>';
+
+  // Estado del item: solo aplica en vista de items
+  if (viewMode === 'items') {
+    h += '<div style="font-weight:600;color:#5F5E5A">Estado del item:</div>';
+    h += '<div><select id="adv-estado-item" onchange="advEstadoItemChange()" style="padding:5px 8px;border:1px solid #C8C6BE;border-radius:5px;font-size:12px;width:200px">';
+    const estadosItem = [
+      ['', 'Todos'],
+      ['Espera MP', 'Espera MP'],
+      ['Listo para mecanizar', 'Listo para mecanizar'],
+      ['En proceso', 'En proceso'],
+      ['Terminado', 'Terminado'],
+      ['Despachado', 'Despachado']
+    ];
+    estadosItem.forEach(([v, lbl]) => {
+      h += '<option value="' + v + '"' + (f.estadoItem === v ? ' selected' : '') + '>' + lbl + '</option>';
+    });
+    h += '</select></div>';
+  }
 
   // Producto (deshabilitado por ahora)
   h += '<div style="font-weight:600;color:#5F5E5A">Producto:</div>';
@@ -563,19 +896,31 @@ function wireAdvFiltersPanelEvents() {
       document.addEventListener('click', advClienteOutsideClick, true);
     }, 0);
   }
-  // Inputs de proyecto/pedido: Enter aplica
-  ['adv-proyecto-nro', 'adv-pedido-nro'].forEach(id => {
+  // Inputs de texto: Enter aplica
+  const inputMap = {
+    'adv-proyecto-nro': 'proyectoNro',
+    'adv-pedido-nro': 'pedidoNro',
+    'adv-desc-proyecto': 'descProyecto',
+    'adv-desc-item': 'descItem'
+  };
+  Object.entries(inputMap).forEach(([id, key]) => {
     const el = document.getElementById(id);
     if (el) {
       el.addEventListener('keydown', e => {
         if (e.key === 'Enter') { e.preventDefault(); advApply(); }
       });
       el.addEventListener('input', e => {
-        const key = id === 'adv-proyecto-nro' ? 'proyectoNro' : 'pedidoNro';
         advFiltersDraft[key] = el.value;
       });
     }
   });
+}
+
+function advEstadoItemChange() {
+  const sel = document.getElementById('adv-estado-item');
+  if (!sel) return;
+  advFiltersDraft.estadoItem = sel.value;
+  advApply();
 }
 
 function advClienteOutsideClick(e) {
@@ -666,8 +1011,12 @@ function advApply() {
   // Antes de aplicar, leer valores de los inputs por si el usuario tipeo y no confirmo cada uno
   const pn = document.getElementById('adv-proyecto-nro');
   const ped = document.getElementById('adv-pedido-nro');
+  const dp = document.getElementById('adv-desc-proyecto');
+  const di = document.getElementById('adv-desc-item');
   if (pn) advFiltersDraft.proyectoNro = pn.value;
   if (ped) advFiltersDraft.pedidoNro = ped.value;
+  if (dp) advFiltersDraft.descProyecto = dp.value;
+  if (di) advFiltersDraft.descItem = di.value;
   advFilters = JSON.parse(JSON.stringify(advFiltersDraft));
   saveAdvFilters(advFilters);
   render();
@@ -784,7 +1133,9 @@ function renderNewProjectForm() {
   });
   h += '</select></div>';
   h += '<div class="ef" style="flex:1"><div class="ef-l">Fecha de ingreso</div>';
-  h += '<input type="date" class="ef-i" id="f-fechaing" value="' + new Date().toISOString().substring(0, 10) + '"></div></div>';
+  h += '<input type="date" class="ef-i" id="f-fechaing" value="' + new Date().toISOString().substring(0, 10) + '"></div>';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Fecha de entrega <span style="color:#A32D2D">*</span></div>';
+  h += '<input type="date" class="ef-i" id="f-fechaentrega" value=""><div class="ef-help">Fecha comprometida al cliente.</div></div></div>';
   h += '<div class="ef"><div class="ef-l">Cliente final (opcional)</div>';
   h += '<input type="text" class="ef-i" id="f-clifinal" placeholder="Ej. GDLP">';
   h += '<div class="ef-help">Para casos como stock interno donde el destinatario real es otro.</div></div>';
@@ -871,11 +1222,13 @@ async function saveNewProject() {
   const itemEstado = itemEstadoEl ? itemEstadoEl.value : 'Espera MP';
   const fotoUrl = document.getElementById('photo-url-proj').value.trim() || null;
   const fechaIngreso = document.getElementById('f-fechaing').value || null;
+  const fechaEntrega = document.getElementById('f-fechaentrega').value || null;
   const clienteFinal = document.getElementById('f-clifinal').value.trim() || null;
   const errPedido = document.getElementById('err-pedido');
   errPedido.style.display = 'none';
   if (!cliente_id) { toast('Elegi un cliente', true); return; }
   if (!descripcion) { toast('Ingresa descripcion del proyecto', true); return; }
+  if (!fechaEntrega) { toast('Ingresa fecha de entrega del proyecto', true); return; }
   if (!itemDesc) { toast('Ingresa descripcion del primer item', true); return; }
   if (pedido_nro) {
     const dup = proyectos.find(p => p.pedido_nro === pedido_nro);
@@ -883,7 +1236,8 @@ async function saveNewProject() {
   }
   const { data: newProj, error: projErr } = await sb.from('proyectos').insert({
     cliente_id, pedido_nro, descripcion, urgencia, foto_url: fotoUrl,
-    fecha_ingreso: fechaIngreso, cliente_final: clienteFinal, estado
+    fecha_ingreso: fechaIngreso, fecha_entrega: fechaEntrega,
+    cliente_final: clienteFinal, estado
   }).select().single();
   if (projErr) { toast('Error creando proyecto: ' + projErr.message, true); return; }
   const { error: itemErr } = await sb.from('items').insert({
@@ -937,7 +1291,9 @@ function renderProjectDetail() {
   });
   h += '</select></div>';
   h += '<div class="ef" style="flex:1"><div class="ef-l">Fecha de ingreso</div>';
-  h += '<input type="date" class="ef-i" id="f-fechaing" value="' + (proj.fecha_ingreso || '') + '"></div></div>';
+  h += '<input type="date" class="ef-i" id="f-fechaing" value="' + (proj.fecha_ingreso || '') + '"></div>';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Fecha de entrega</div>';
+  h += '<input type="date" class="ef-i" id="f-fechaentrega" value="' + (proj.fecha_entrega || '') + '"></div></div>';
   h += '<div class="ef"><div class="ef-l">Cliente final (opcional)</div>';
   h += '<input type="text" class="ef-i" id="f-clifinal" value="' + escapeHtml(proj.cliente_final || '') + '" placeholder="Solo si el destinatario real es otro"></div>';
   if (proj.estado === 'Anulado' && proj.observaciones_anulacion) {
@@ -1014,6 +1370,7 @@ async function saveProjectMeta() {
   const urgencia = document.getElementById('f-urg').value;
   const foto = document.getElementById('photo-url-proj').value.trim() || null;
   const fechaIngreso = document.getElementById('f-fechaing').value || null;
+  const fechaEntrega = document.getElementById('f-fechaentrega').value || null;
   const clienteFinal = document.getElementById('f-clifinal').value.trim() || null;
   const pedidoNro = document.getElementById('f-pedido').value.trim() || null;
   if (!descripcion) { toast('Descripcion requerida', true); return; }
@@ -1024,6 +1381,7 @@ async function saveProjectMeta() {
   }
   await sb.from('proyectos').update({
     descripcion, urgencia, foto_url: foto, fecha_ingreso: fechaIngreso,
+    fecha_entrega: fechaEntrega,
     cliente_final: clienteFinal, pedido_nro: pedidoNro
   }).eq('id', proj.id);
   // Propagate to items + activities (cliente_id, pedido_nro)
