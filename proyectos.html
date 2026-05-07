@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v30</title>
+<title>Velasco App 2.0 — Proyectos v31</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -231,6 +231,30 @@ function toggleProjectExpand(projId) {
 function collapseAllProjects() {
   expandedProjects = new Set();
   saveExpandedProjects();
+  render();
+}
+
+// Set de items expandidos en la vista Items (muestra procesos)
+const EXPANDED_ITEMS_KEY = 'velasco_expandedItems_v1';
+let expandedItems = (function(){
+  try {
+    const raw = localStorage.getItem(EXPANDED_ITEMS_KEY);
+    if (!raw) return new Set();
+    return new Set(JSON.parse(raw));
+  } catch (e) { return new Set(); }
+})();
+function saveExpandedItems() {
+  try { localStorage.setItem(EXPANDED_ITEMS_KEY, JSON.stringify([...expandedItems])); } catch (e) {}
+}
+function toggleItemExpand(itemId) {
+  if (expandedItems.has(itemId)) expandedItems.delete(itemId);
+  else expandedItems.add(itemId);
+  saveExpandedItems();
+  render();
+}
+function collapseAllItems() {
+  expandedItems = new Set();
+  saveExpandedItems();
   render();
 }
 function setAdvFiltersPanelOpen(open) {
@@ -609,9 +633,12 @@ function renderProjectsList() {
   const arrowTitle = curSort.dir === 'asc' ? 'Ascendente (click para invertir)' : 'Descendente (click para invertir)';
   h += '<button class="b" title="' + arrowTitle + '" onclick="toggleSortDir()" style="padding:3px 8px;font-size:13px;font-weight:700;line-height:1">' + arrow + '</button>';
 
-  // Boton "Contraer todos" - solo en vista projects y si hay alguno expandido
+  // Boton "Contraer todos" - segun la vista activa
   if (viewMode === 'projects' && expandedProjects.size > 0) {
     h += '<button class="b" onclick="collapseAllProjects()" style="margin-left:8px;padding:3px 10px;font-size:11px">⇡ Contraer todos (' + expandedProjects.size + ')</button>';
+  }
+  if (viewMode === 'items' && expandedItems.size > 0) {
+    h += '<button class="b" onclick="collapseAllItems()" style="margin-left:8px;padding:3px 10px;font-size:11px">⇡ Contraer todos (' + expandedItems.size + ')</button>';
   }
   h += '</div>';
 
@@ -681,26 +708,29 @@ function renderProjectsListBody(filteredProjects) {
     const isExpanded = expandedProjects.has(p.id);
     const arrow = isExpanded ? '▾' : '▸';
     h += '<div class="card-wrap" style="margin-bottom:8px">';
-    h += '<div class="card card-clickable" style="background:' + cardBg + ';margin-bottom:0" onclick="navigate({view:\'project\',projectId:' + p.id + '})">';
+    h += '<div class="card card-clickable" style="background:' + cardBg + ';margin-bottom:0;display:flex;align-items:stretch" onclick="navigate({view:\'project\',projectId:' + p.id + '})">';
     h += img;
-    h += '<div class="card-body">';
-    // Toggle desplegar items - se posiciona absolutamente para no interferir
-    h += '<div class="card-t" style="display:flex;align-items:center;gap:6px">';
-    h += '<button onclick="event.stopPropagation();toggleProjectExpand(' + p.id + ')" title="Mostrar items" style="background:none;border:1px solid #C8C6BE;border-radius:4px;cursor:pointer;font-size:11px;padding:1px 6px;color:#5F5E5A;font-weight:700;line-height:1">' + arrow + '</button>';
-    h += '<span>' + escapeHtml(p.descripcion || '(sin descripcion)') + '</span>' + urg + stBadge + warnHtml;
-    h += '</div>';
+    h += '<div class="card-body" style="flex:1">';
+    h += '<div class="card-t">' + escapeHtml(p.descripcion || '(sin descripcion)') + urg + stBadge + warnHtml + '</div>';
     h += '<div class="card-s"><b>' + escapeHtml(clN(p.cliente_id)) + '</b>';
     h += ' · Pr. ' + p.id;
     h += p.pedido_nro ? ' · Ped. ' + escapeHtml(p.pedido_nro) : '';
     h += ' · ' + p.items.length + ' item(s)</div>';
-    h += '</div></div>';
+    h += '</div>';
+    // Flecha de desplegar items: a la derecha, centrada verticalmente.
+    // Tiene padding generoso para click facil; el stopPropagation evita
+    // que la tarjeta navegue al detalle.
+    h += '<div style="display:flex;align-items:center;padding:0 14px" onclick="event.stopPropagation()">';
+    h += '<button onclick="toggleProjectExpand(' + p.id + ')" title="Mostrar items" style="background:none;border:1px solid #C8C6BE;border-radius:4px;cursor:pointer;font-size:13px;padding:4px 10px;color:#5F5E5A;font-weight:700;line-height:1">' + arrow + '</button>';
+    h += '</div>';
+    h += '</div>';
     // Panel desplegado de items
     if (isExpanded) {
       h += '<div style="background:#FAFAF7;border:1px solid #C8C6BE;border-top:none;border-radius:0 0 6px 6px;padding:8px 14px 8px 56px;font-size:12px">';
       if (p.items && p.items.length > 0) {
         p.items.forEach((it, idx) => {
           const sep = idx < p.items.length - 1 ? ';border-bottom:1px solid #EAE8DF' : '';
-          h += '<div style="padding:4px 0;display:flex;justify-content:space-between;align-items:center;gap:10px' + sep + '" onclick="event.stopPropagation();navigate({view:\'item\',projectId:' + p.id + ',itemId:' + it.id + '})" title="Ver item">';
+          h += '<div style="padding:4px 0;display:flex;justify-content:space-between;align-items:center;gap:10px;cursor:pointer' + sep + '" onclick="event.stopPropagation();navigate({view:\'item\',projectId:' + p.id + ',itemId:' + it.id + '})" title="Ver item">';
           h += '<span><b>' + escapeHtml(it.descripcion || '(sin descripcion)') + '</b>';
           if (it.cantidad) h += ' · cant. ' + it.cantidad;
           h += '</span>';
@@ -736,15 +766,51 @@ function renderItemsListBody(filteredProjects) {
     const stBadge = '<span style="display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-weight:700;background:' + stColors.bg + ';color:' + stColors.fg + ';margin-left:6px">' + proyecto.estado + '</span>';
     const itemEstado = item.estado || 'Espera MP';
     const itemEstadoBadge = '<span style="display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-weight:700;background:#E8F2FC;color:#0C447C;margin-left:6px">' + escapeHtml(itemEstado) + '</span>';
-    h += '<div class="card card-clickable" style="background:' + cardBg + '" onclick="navigate({view:\'item\',projectId:' + proyecto.id + ',itemId:' + item.id + '})">';
+    const isExpanded = expandedItems.has(item.id);
+    const arrow = isExpanded ? '▾' : '▸';
+    h += '<div class="card-wrap" style="margin-bottom:8px">';
+    h += '<div class="card card-clickable" style="background:' + cardBg + ';margin-bottom:0;display:flex;align-items:stretch" onclick="navigate({view:\'item\',projectId:' + proyecto.id + ',itemId:' + item.id + '})">';
     h += img;
-    h += '<div class="card-body">';
+    h += '<div class="card-body" style="flex:1">';
     h += '<div class="card-t">' + escapeHtml(item.descripcion || '(sin descripcion)') + urg + itemEstadoBadge + stBadge + '</div>';
     h += '<div class="card-s"><b>' + escapeHtml(clN(proyecto.cliente_id)) + '</b>';
     h += ' · Pr. ' + proyecto.id + ' · ' + escapeHtml(proyecto.descripcion || '');
     if (proyecto.pedido_nro) h += ' · Ped. ' + escapeHtml(proyecto.pedido_nro);
     if (item.cantidad) h += ' · cant. ' + item.cantidad;
-    h += '</div></div></div>';
+    h += '</div></div>';
+    // Flecha desplegar procesos: a la derecha, centrada vertical
+    h += '<div style="display:flex;align-items:center;padding:0 14px" onclick="event.stopPropagation()">';
+    h += '<button onclick="toggleItemExpand(' + item.id + ')" title="Mostrar procesos" style="background:none;border:1px solid #C8C6BE;border-radius:4px;cursor:pointer;font-size:13px;padding:4px 10px;color:#5F5E5A;font-weight:700;line-height:1">' + arrow + '</button>';
+    h += '</div>';
+    h += '</div>';
+    // Panel desplegado de procesos
+    if (isExpanded) {
+      // Buscar procesos cargados en el item (todos los activos, ordenados por orden)
+      const procesos = actividades.filter(a => a.item_id === item.id && !a.proceso_eliminado)
+        .sort((a, b) => (a.orden || 999999) - (b.orden || 999999));
+      h += '<div style="background:#FAFAF7;border:1px solid #C8C6BE;border-top:none;border-radius:0 0 6px 6px;padding:8px 14px 8px 56px;font-size:12px">';
+      if (procesos.length > 0) {
+        procesos.forEach((p, idx) => {
+          const sep = idx < procesos.length - 1 ? ';border-bottom:1px solid #EAE8DF' : '';
+          // Duracion en formato corto: 90 -> "1h 30m", 60 -> "1h", 45 -> "45m"
+          const totMin = p.duracion_estimada_min || 0;
+          const horas = Math.floor(totMin / 60);
+          const mins = totMin % 60;
+          const durStr = totMin === 0 ? '—' : (horas > 0 ? horas + 'h' + (mins ? ' ' + mins + 'm' : '') : mins + 'm');
+          h += '<div style="padding:4px 0;display:flex;justify-content:space-between;align-items:center;gap:10px;overflow:hidden' + sep + '">';
+          h += '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0">';
+          h += '<b>' + escapeHtml(p.proceso || '—') + '</b>';
+          if (p.descripcion) h += ' · ' + escapeHtml(p.descripcion);
+          h += '</span>';
+          h += '<span style="color:#5F5E5A;font-size:11px;flex-shrink:0">' + durStr + '</span>';
+          h += '</div>';
+        });
+      } else {
+        h += '<div style="color:#888;font-style:italic">Sin procesos cargados aun</div>';
+      }
+      h += '</div>';
+    }
+    h += '</div>';
   });
   return h;
 }
