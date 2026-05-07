@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v28</title>
+<title>Velasco App 2.0 — Proyectos v29</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -2178,14 +2178,20 @@ body { font-family: Arial, sans-serif; font-size: 11px; color: #000; }
 .cover-info { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
 .cover-info tr.shade td { background: rgba(0, 0, 0, 0.13); }
 .cover-info td { border: 1px solid #000; padding: 6px 9px; vertical-align: middle; font-size: 11px; }
-.cover-info td.label { font-weight: 700; width: 38%; text-transform: uppercase; }
-/* Label de la columna derecha (Contacto, Telefono, Forma MP, Fecha Fin Estip., Hora):
-   ancho fijo de ~40mm para liberar el resto al value de su derecha. */
-.cover-info td.label-r { width: 27mm; padding-left: 8px; padding-right: 4px; }
+/* Ancho de la columna de titulos izquierda: ajustado a "CANTIDAD A REALIZAR:"
+   (el titulo mas largo de los que quedan tras sacar FECHA REAL DE FINALIZACION)
+   + 1mm de margen. A 11px uppercase, ~38mm cubre la frase. */
+.cover-info td.label { font-weight: 700; width: 38mm; text-transform: uppercase; white-space: nowrap; }
+/* Columna de titulos derecha (label-r): ensanchada de 27mm a 28mm para que
+   "FECHA FIN ESTIP.:" entre en una sola linea sin partirse. */
+.cover-info td.label-r { width: 28mm; padding-left: 8px; padding-right: 4px; white-space: nowrap; }
 .cover-info td.value.bold { font-weight: 700; }
 .cover-info td.cliente-big { font-size: 16px; font-weight: 800; }
 .cover-info td.pieza-big { font-weight: 700; font-size: 13px; }
-.cover-info td.pedido-big { font-weight: 800; font-size: 14px; }
+/* pedido-big y cantidad-big comparten estilo (negrita grande). pedido-big
+   ademas lleva italica para diferenciarlo visualmente. */
+.cover-info td.pedido-big { font-weight: 800; font-size: 14px; font-style: italic; }
+.cover-info td.cantidad-big { font-weight: 800; font-size: 14px; }
 /* value-fit: celda con altura controlada que NO crece. fit-content adentro
    recibe auto-shrink por JS. La altura se mantiene constante. */
 .cover-info td.value-fit { height: 22px; max-height: 22px; padding: 4px 9px; overflow: hidden; }
@@ -2254,6 +2260,9 @@ body { font-family: Arial, sans-serif; font-size: 11px; color: #000; }
 /* Narrow variants used for Resp/Pedido/Cantidad on the right side */
 .ot-info-big td.lblb-narrow { padding: 4px 6px; font-size: 10.5px; text-align: left; letter-spacing: 0; }
 .ot-info-big td.valb-narrow { padding: 4px 8px; text-align: right; font-size: 13px; }
+/* Pedido en la OT: italica para diferenciar visualmente (consistente con
+   el pedido-big de la portada, que tambien es italica). */
+.ot-info-big td.ot-pedido { font-style: italic; }
 /* Smaller variants for the PROYECTO row */
 .ot-info-big td.lblb-small { padding: 2px 8px; font-size: 10px; letter-spacing: 0.3px; }
 .ot-info-big td.valb-small { padding: 2px 8px; font-size: 11px; font-weight: 600; }
@@ -2339,7 +2348,7 @@ body { font-family: Arial, sans-serif; font-size: 11px; color: #000; }
         <td class="label label-r">CONTACTO:</td><td class="value value-fit"><div class="fit-content">${escapeHtml(cliente && cliente.contacto ? cliente.contacto : '')}</div></td>
       </tr>
       <tr>
-        <td class="label">CANTIDAD A REALIZAR:</td><td class="value bold">${item.cantidad}</td>
+        <td class="label">CANTIDAD A REALIZAR:</td><td class="value cantidad-big">${item.cantidad}</td>
         <td class="label label-r">TELEFONO:</td><td class="value value-fit"><div class="fit-content">${escapeHtml(cliente && cliente.telefono ? cliente.telefono : '')}</div></td>
       </tr>
       <tr class="shade">
@@ -2350,7 +2359,6 @@ body { font-family: Arial, sans-serif; font-size: 11px; color: #000; }
         <td class="label">FECHA DE INGRESO:</td><td class="value">${fmt(meta.fecha_ingreso)}</td>
         <td class="label label-r">FECHA FIN ESTIP.:</td><td class="value">${fmt(item.fecha_fin_estipulada)}</td>
       </tr>
-      <tr class="shade"><td class="label">FECHA REAL DE FINALIZACION:</td><td class="value">FECHA:</td><td class="label label-r">HORA:</td><td class="value"></td></tr>
     </table>
     <div class="wm-wrap"><table class="proc-table">
       <thead><tr><th>Nº</th><th>PROCESO</th><th>RESPONSABLE</th><th>REALIZADO</th></tr></thead>
@@ -2536,7 +2544,7 @@ function renderOT(p, idx, total, item, meta, clienteDisplay) {
         <td class="lblb lblb-small">PROYECTO</td>
         <td class="valb valb-small value-fit"><div class="fit-content">${escapeHtml((meta.descripcion || '').toUpperCase())}</div></td>
         <td class="lblb lblb-narrow">PEDIDO</td>
-        <td class="valb valb-narrow value-fit"><div class="fit-content">${escapeHtml((item.pedido_nro || '').toString().toUpperCase())}</div></td>
+        <td class="valb valb-narrow value-fit ot-pedido"><div class="fit-content">${escapeHtml((item.pedido_nro || '').toString().toUpperCase())}</div></td>
       </tr>
       <tr>
         <td class="lblb desc-tall" rowspan="2">DESCRIPCIÓN</td>

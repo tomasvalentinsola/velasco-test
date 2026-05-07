@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Velasco App 2.0 — Tablero por Operario vA2 (motor A · DEV)</title>
+<title>Velasco App 2.0 — Tablero por Operario vA4 (motor A · DEV)</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -102,7 +102,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 </style>
 </head>
 <body>
-<div style="background:#E24B4A;color:#fff;text-align:center;padding:6px 12px;font-size:12px;font-weight:700;letter-spacing:0.5px;position:sticky;top:0;z-index:1000">⚠ MODO DESARROLLO — MOTOR A (vA2) — Las acciones SI afectan la DB de produccion</div>
+<div style="background:#E24B4A;color:#fff;text-align:center;padding:6px 12px;font-size:12px;font-weight:700;letter-spacing:0.5px;position:sticky;top:0;z-index:1000">⚠ MODO DESARROLLO — MOTOR A (vA4) — Las acciones SI afectan la DB de produccion</div>
 
 <div class="hd">
   <div class="hd-l">
@@ -1731,6 +1731,18 @@ function _runMotorAndApply(changes, options) {
       alert('No se pudo resolver el cambio sin pisar otras actividades:\n\n' + det + '\n\nProba mover alguna a otra fecha/hora primero.');
       return;
     }
+    if (simResult.error === 'bug_motor_residual') {
+      // Bug del motor: la simulacion termino con conflictos no resueltos donde
+      // al menos una de las activ NO es ancla. El motor deberia haberla
+      // cascadeado. Mostramos el detalle al usuario pero le pedimos reportar.
+      const det = simResult.detail.residual.map(r => {
+        if (r.type === 'op') return '• Operario ' + opN(r.opId) + ': activ #' + r.a + ' choca con activ #' + r.b + (r.bothAnchors ? '' : ' (deberia haberse cascadeado)');
+        return '• Maquina ' + mN(r.machId) + ': activ #' + r.a + ' choca con activ #' + r.b + (r.bothAnchors ? '' : ' (deberia haberse cascadeado)');
+      }).join('\n');
+      console.error('[motor] bug_motor_residual:', simResult.detail.residual);
+      alert('Se detecto un caso que el motor no logro resolver automaticamente. Esto es un bug.\n\nDetalle:\n' + det + '\n\nReportalo a Tomi con la accion que estabas haciendo.');
+      return;
+    }
     alert('Error en simulacion: ' + simResult.error);
     return;
   }
@@ -1925,16 +1937,36 @@ function showAffectedActivitiesModalMotor(placedActId, applyPlan, affectedItems,
   h += '</label></div>';
   h += '<div style="max-height:340px;overflow-y:auto;border:1px solid #C8C6BE;border-radius:5px">';
   h += '<table style="width:100%;border-collapse:collapse;font-size:12px">';
-  h += '<thead><tr style="background:#F5F3EC"><th style="padding:6px 8px;text-align:left;border-bottom:1px solid #C8C6BE">Actividad</th><th style="padding:6px 8px;text-align:left;border-bottom:1px solid #C8C6BE">Cliente</th><th style="padding:6px 8px;text-align:left;border-bottom:1px solid #C8C6BE">Actual</th><th style="padding:6px 8px;text-align:left;border-bottom:1px solid #C8C6BE">Nuevo</th></tr></thead><tbody>';
+  h += '<thead><tr style="background:#F5F3EC">';
+  h += '<th style="padding:6px 8px;text-align:left;border-bottom:1px solid #C8C6BE">Actividad</th>';
+  h += '<th style="padding:6px 8px;text-align:left;border-bottom:1px solid #C8C6BE">Cliente</th>';
+  h += '<th style="padding:6px 8px;text-align:left;border-bottom:1px solid #C8C6BE">Máquina</th>';
+  h += '<th style="padding:6px 8px;text-align:left;border-bottom:1px solid #C8C6BE">Operario</th>';
+  h += '<th style="padding:6px 8px;text-align:left;border-bottom:1px solid #C8C6BE">Actual</th>';
+  h += '<th style="padding:6px 8px;text-align:left;border-bottom:1px solid #C8C6BE">Nuevo</th>';
+  h += '</tr></thead><tbody>';
   if (affectedItems.length === 0 && pulmonIdsToDelete.length === 0) {
-    h += '<tr><td colspan="4" style="padding:14px;text-align:center;color:#5F5E5A;font-style:italic">Sin afectadas con la configuracion actual.</td></tr>';
+    h += '<tr><td colspan="6" style="padding:14px;text-align:center;color:#5F5E5A;font-style:italic">Sin afectadas con la configuracion actual.</td></tr>';
+  }
+  // Helper: strip del proceso al final de la descripcion. Si la activ tiene
+  // proceso "Fresado" y la descripcion termina con " - Fresado", lo saca.
+  // Si no, devuelve la descripcion tal cual.
+  function _stripProc(desc, proc) {
+    if (!desc) return '';
+    if (!proc) return desc;
+    const sufijo = ' - ' + proc;
+    if (desc.endsWith(sufijo)) return desc.substring(0, desc.length - sufijo.length);
+    return desc;
   }
   affectedItems.forEach(it => {
     const oldStr = fmtDate(it.oldFecha) + ' ' + (it.oldHora ? it.oldHora.substring(0,5) : '');
     const newStr = it._deleted ? '<span style="color:#A32D2D;font-weight:600">SE ELIMINA</span>' : (fmtDate(it.newFecha) + ' ' + (it.newHora ? it.newHora.substring(0,5) : ''));
     const icon = it.es_pulmon ? '🫁 ' : '';
-    h += '<tr><td style="padding:5px 8px;border-bottom:1px solid #F5F3EC">' + icon + escapeHtml(it.descripcion || '') + '</td>' +
+    const desc = _stripProc(it.descripcion, it.proceso);
+    h += '<tr><td style="padding:5px 8px;border-bottom:1px solid #F5F3EC">' + icon + escapeHtml(desc) + '</td>' +
          '<td style="padding:5px 8px;border-bottom:1px solid #F5F3EC">' + escapeHtml(it.cliente || '') + '</td>' +
+         '<td style="padding:5px 8px;border-bottom:1px solid #F5F3EC">' + escapeHtml(mN(it.maquina_id) || '—') + '</td>' +
+         '<td style="padding:5px 8px;border-bottom:1px solid #F5F3EC">' + escapeHtml(opN(it.operario_id) || '—') + '</td>' +
          '<td style="padding:5px 8px;border-bottom:1px solid #F5F3EC;color:#888780">' + oldStr + '</td>' +
          '<td style="padding:5px 8px;border-bottom:1px solid #F5F3EC;color:#0C447C;font-weight:600">' + newStr + '</td></tr>';
   });
@@ -1944,6 +1976,8 @@ function showAffectedActivitiesModalMotor(placedActId, applyPlan, affectedItems,
     const oldStr = fmtDate(p.fecha) + ' ' + p.hora_inicio.substring(0,5);
     h += '<tr><td style="padding:5px 8px;border-bottom:1px solid #F5F3EC">🫁 Pulmón</td>' +
          '<td style="padding:5px 8px;border-bottom:1px solid #F5F3EC">—</td>' +
+         '<td style="padding:5px 8px;border-bottom:1px solid #F5F3EC">' + escapeHtml(mN(p.maquina_id) || '—') + '</td>' +
+         '<td style="padding:5px 8px;border-bottom:1px solid #F5F3EC">' + escapeHtml(opN(p.operario_id) || '—') + '</td>' +
          '<td style="padding:5px 8px;border-bottom:1px solid #F5F3EC;color:#888780">' + oldStr + '</td>' +
          '<td style="padding:5px 8px;border-bottom:1px solid #F5F3EC;color:#A32D2D;font-weight:600">SE ELIMINA</td></tr>';
   });
@@ -4139,6 +4173,11 @@ function _simCascadeOp(state, anchors) {
       if (anchors.has(b.id)) return 1;
       return a.id - b.id;
     });
+    // Casos cuando A pisa a B (A esta antes en el orden):
+    // 1. A no ancla, B no ancla -> mover B despues del fin OPERARIO de A.
+    // 2. A no ancla, B ancla    -> mover A DESPUES del fin OPERARIO de B (la ancla manda).
+    // 3. A ancla, B no ancla    -> mover B despues del fin OPERARIO de A.
+    // 4. ambas anclas           -> conflicto residual.
     for (let i = 0; i < arr.length - 1; i++) {
       const A = arr[i], B = arr[i + 1];
       const endA = _simEndOp(A);
@@ -4146,20 +4185,29 @@ function _simCascadeOp(state, anchors) {
       let needs = false;
       if (bDate < endA.date) needs = true;
       else if (bDate === endA.date && bTime < endA.time + SIM_GAP) needs = true;
-      if (needs) {
-        if (anchors.has(B.id)) {
-          // Conflicto residual con ancla; se reportara en deteccion final.
-          continue;
-        }
+      if (!needs) continue;
+      const aIsAnchor = anchors.has(A.id);
+      const bIsAnchor = anchors.has(B.id);
+      if (!bIsAnchor) {
         const adj = _simAdjustToWorkingHours(B, endA.date, endA.time + SIM_GAP);
         if (B.fecha !== adj.date || B.hora_inicio !== mT(adj.time)) {
           B.fecha = adj.date;
           B.hora_inicio = mT(adj.time);
           movedAny = true;
-          // El item B salto - reordenamos antes de continuar el for.
-          break;
+          break; // re-ordenar
+        }
+      } else if (!aIsAnchor) {
+        // B es ancla y A no. Mover A despues de B (operario).
+        const endB = _simEndOp(B);
+        const adj = _simAdjustToWorkingHours(A, endB.date, endB.time + SIM_GAP);
+        if (A.fecha !== adj.date || A.hora_inicio !== mT(adj.time)) {
+          A.fecha = adj.date;
+          A.hora_inicio = mT(adj.time);
+          movedAny = true;
+          break; // re-ordenar
         }
       }
+      // Caso 4: ambas anclas - se reporta en el detector de residuales.
     }
   }
   return movedAny;
@@ -4184,6 +4232,11 @@ function _simPushMach(state, anchors) {
       if (anchors.has(b.id)) return 1;
       return a.id - b.id;
     });
+    // Recorrer pares consecutivos. Hay 4 casos cuando A pisa a B:
+    // 1. A no ancla, B no ancla -> mover B despues de A (caso clasico).
+    // 2. A no ancla, B ancla -> mover A DESPUES de B (la ancla manda; A se desplaza hacia adelante mas alla del fin de B).
+    // 3. A ancla, B no ancla -> mover B despues de A.
+    // 4. A ancla, B ancla -> conflicto irresoluble (se reporta luego).
     for (let i = 0; i < arr.length - 1; i++) {
       const A = arr[i], B = arr[i + 1];
       const aEnd = _simEndMach(A);
@@ -4191,15 +4244,28 @@ function _simPushMach(state, anchors) {
       let needs = false;
       if (bDate < aEnd.date) needs = true;
       else if (bDate === aEnd.date && bTime < aEnd.time + SIM_GAP) needs = true;
-      if (needs) {
-        if (anchors.has(B.id)) continue;
+      if (!needs) continue;
+      const aIsAnchor = anchors.has(A.id);
+      const bIsAnchor = anchors.has(B.id);
+      if (!bIsAnchor) {
+        // Caso 1 o 3: mover B despues de A.
         const adj = _simAdjustToWorkingHours(B, aEnd.date, aEnd.time + SIM_GAP);
         if (B.fecha !== adj.date || B.hora_inicio !== mT(adj.time)) {
           B.fecha = adj.date;
           B.hora_inicio = mT(adj.time);
           movedAny = true;
         }
+      } else if (!aIsAnchor) {
+        // Caso 2: B es ancla, A no. Mover A DESPUES del fin de B.
+        const bEndMach = _simEndMach(B);
+        const adj = _simAdjustToWorkingHours(A, bEndMach.date, bEndMach.time + SIM_GAP);
+        if (A.fecha !== adj.date || A.hora_inicio !== mT(adj.time)) {
+          A.fecha = adj.date;
+          A.hora_inicio = mT(adj.time);
+          movedAny = true;
+        }
       }
+      // Caso 4 (ambos anclas): no se hace nada, el detector de residuales lo reporta.
     }
   });
   return movedAny;
@@ -4320,15 +4386,11 @@ function _simPisarPulmonesEnConflicto(state, anchors) {
   return pisados;
 }
 
-// Detecta conflictos residuales en el state (despues de iterar hasta punto fijo).
-// Estos son casos donde dos activ ancladas se pisan y no pudieron resolverse.
-// Devuelve un array de conflictos.
+// Detecta TODOS los conflictos residuales en el state. No filtra por anchors:
+// si encuentra dos activ que se pisan, las reporta. El caller decide que hacer.
 function _simDetectResidualConflicts(state, anchors) {
   const residual = [];
-  // Conflictos de operario - SOLO reportar cuando AMBAS son anchors (caso
-  // raro pero imposible de resolver). Conflictos donde una no es ancla
-  // deberian haberse cascadeado; si quedaron, es un bug del cascadeador y NO
-  // queremos bloquear al usuario por eso.
+  // Conflictos de operario
   const byOp = new Map();
   state.forEach(it => {
     if (!it.operario_id) return;
@@ -4348,12 +4410,12 @@ function _simDetectResidualConflicts(state, anchors) {
       let conflicts = false;
       if (bDate < endA.date) conflicts = true;
       else if (bDate === endA.date && bTime < endA.time + SIM_GAP) conflicts = true;
-      if (conflicts && anchors.has(A.id) && anchors.has(B.id)) {
-        residual.push({ type: 'op', a: A.id, b: B.id, opId: A.operario_id });
+      if (conflicts) {
+        residual.push({ type: 'op', a: A.id, b: B.id, opId: A.operario_id, bothAnchors: anchors.has(A.id) && anchors.has(B.id) });
       }
     }
   });
-  // Conflictos de maquina - misma regla: solo si ambas son anchors.
+  // Conflictos de maquina
   const byMach = new Map();
   state.forEach(it => {
     if (!it.maquina_id) return;
@@ -4370,8 +4432,8 @@ function _simDetectResidualConflicts(state, anchors) {
       let conflicts = false;
       if (bDate < aEnd.date) conflicts = true;
       else if (bDate === aEnd.date && bTime < aEnd.time + SIM_GAP) conflicts = true;
-      if (conflicts && anchors.has(A.id) && anchors.has(B.id)) {
-        residual.push({ type: 'mach', a: A.id, b: B.id, machId: A.maquina_id });
+      if (conflicts) {
+        residual.push({ type: 'mach', a: A.id, b: B.id, machId: A.maquina_id, bothAnchors: anchors.has(A.id) && anchors.has(B.id) });
       }
     }
   });
@@ -4380,10 +4442,22 @@ function _simDetectResidualConflicts(state, anchors) {
 
 // Construye el resultado final comparando state vs acts.
 function _simBuildResult(state, anchors) {
-  // Detectar conflictos residuales (anchors que no se pudieron resolver)
+  // Rutina de control: detectar TODOS los conflictos residuales (cualquiera).
   const residual = _simDetectResidualConflicts(state, anchors);
   if (residual.length > 0) {
-    return { ok: false, error: 'conflicto_no_resoluble', detail: { residual } };
+    // Caso 1: SOLO residuales entre anchors -> error 'conflicto_no_resoluble'.
+    //   El usuario tiene que mover algo manualmente.
+    // Caso 2: hay residuales con AL MENOS UNA no-ancla -> es un bug del motor
+    //   (deberia haberlo cascadeado). Lo reportamos para diagnostico, pero
+    //   con el error 'bug_motor_residual' para distinguir del caso valido.
+    const allBothAnchors = residual.every(r => r.bothAnchors);
+    if (allBothAnchors) {
+      return { ok: false, error: 'conflicto_no_resoluble', detail: { residual } };
+    } else {
+      // Bug del motor. Logueamos para diagnostico pero devolvemos error claro.
+      console.error('[motor] Conflictos residuales no resueltos por la simulacion:', residual);
+      return { ok: false, error: 'bug_motor_residual', detail: { residual } };
+    }
   }
   const affected = [];
   const applyPlan = [];
@@ -4424,7 +4498,10 @@ function _simBuildResult(state, anchors) {
       affected.push({
         id,
         descripcion: orig.descripcion,
+        proceso: orig.proceso,
         cliente: clN(orig.cliente_id),
+        maquina_id: sim.maquina_id,
+        operario_id: sim.operario_id,
         es_pulmon: !!orig.es_pulmon,
         oldFecha: orig.fecha, oldHora: orig.hora_inicio,
         newFecha: sim.fecha, newHora: sim.hora_inicio
@@ -4439,7 +4516,10 @@ function _simBuildResult(state, anchors) {
       affected.push({
         id: a.id,
         descripcion: a.descripcion,
+        proceso: a.proceso,
         cliente: clN(a.cliente_id),
+        maquina_id: a.maquina_id,
+        operario_id: a.operario_id,
         es_pulmon: !!a.es_pulmon,
         oldFecha: a.fecha, oldHora: a.hora_inicio,
         newFecha: null, newHora: null,
@@ -4897,6 +4977,57 @@ window.testMotor = function(verbose) {
     const planB = r.applyPlan.find(p => p.id === 2);
     expectTrue('T30: anchor en applyPlan tiene duracion_planificador_min', planAnchor && planAnchor.duracion_planificador_min === 120);
     expectTrue('T30: B en applyPlan tiene fecha y hora_inicio', planB && planB.fecha && planB.hora_inicio);
+  }
+
+  // ===== TEST 31: ancla cae sobre actividad existente (mismo op, misma maq) =====
+  // A existente 08:00-09:00, B existente 10:00-11:00.
+  // Movemos C nueva al medio: 08:30 (pisa con A).
+  // Esperado: A se desplaza despues de C, B tambien se reacomoda si hace falta.
+  setActs([
+    ma(1, '2026-06-01', '08:00', opId1, machId1, 60),
+    ma(2, '2026-06-01', '10:00', opId1, machId1, 60),
+    ma(3, '2026-06-15', '08:00', opId1, machId1, 60)  // existente lejos, sera el "ancla"
+  ]);
+  setCorrs([]);
+  // Movemos act 3 al 06-01 a las 08:30 (en medio de 1 y 2)
+  r = simulateChange([{ id: 3, fecha: '2026-06-01', hora_inicio: '08:30:00', operario_id: opId1, maquina_id: machId1 }]);
+  expectEq('T31: ancla en medio empuja existentes',
+    { ok: r.ok, ids: r.affected ? r.affected.map(a => a.id).sort() : [] },
+    { ok: true, ids: [1, 2] });
+
+  // ===== TEST 32: ancla en maquina compartida con otro operario =====
+  // A op1 mach1 08:00-09:00. B op2 mach1 10:00-11:00.
+  // Movemos C op1 mach1 a las 08:30 (pisa A en op+mach, y "salta" B en mach por cascada).
+  setActs([
+    ma(1, '2026-06-01', '08:00', opId1, machId1, 60),
+    ma(2, '2026-06-01', '10:00', opId2, machId1, 60),  // distinto op pero misma maq
+    ma(3, '2026-06-15', '08:00', opId1, machId1, 60)
+  ]);
+  r = simulateChange([{ id: 3, fecha: '2026-06-01', hora_inicio: '08:30:00', operario_id: opId1, maquina_id: machId1 }]);
+  // 3 ancla 08:30-09:30. A pisa por op (op1) -> A se mueve a >=09:30. A nueva en mach1 09:30-10:30. Pisa B (op2 mach1 10:00). B se cascadea a >=10:30.
+  expectEq('T32: ancla en medio + cascada cruzada (op+mach)',
+    { ok: r.ok, ids: r.affected ? r.affected.map(a => a.id).sort() : [] },
+    { ok: true, ids: [1, 2] });
+
+  // ===== TEST 33: ancla cae despues del predecesor pero pisa actividad de OTRO operario =====
+  // Replica del bug reportado por el usuario:
+  //   Eje T (op2, mach1) tiene predecesor torneado.
+  //   Movemos Eje T a las 12:30 del 5/5. A las 12:30 esta corriendo Buje (op_otro, mach1).
+  //   Esperado: Buje se cascadea (op distinto pero misma maq).
+  setActs([
+    ma(1, '2026-05-05', '12:00', opId1, machId1, 105),  // "Buje po..." op1 mach1 12:00-13:45
+    ma(2, '2026-06-15', '08:00', opId2, machId1, 90)   // "Eje T" op2 mach1, lejos, va a moverse al 5/5 12:30
+  ]);
+  r = simulateChange([{ id: 2, fecha: '2026-05-05', hora_inicio: '12:30:00', operario_id: opId2, maquina_id: machId1 }]);
+  // Eje T ancla 12:30-14:00. Buje 12:00-13:45 mach1. Buje y Eje T comparten maq -> Buje pisa por maq.
+  // Como Buje no es ancla y Eje T si, Buje se mueve DESPUES del fin de Eje T (>= 14:00).
+  expectEq('T33: bug del usuario - ancla a las 12:30 desplaza buje en mach compartida',
+    { ok: r.ok, ids: r.affected ? r.affected.map(a => a.id).sort() : [] },
+    { ok: true, ids: [1] });
+  if (r.ok) {
+    const buje = r.state.get(1);
+    expectTrue('T33: Buje arranca >= 14:00 (despues del fin de Eje T)',
+      tM(buje.hora_inicio) >= 840 || buje.fecha > '2026-05-05');
   }
 
   // ===== Restaurar =====
