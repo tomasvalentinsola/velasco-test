@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v27</title>
+<title>Velasco App 2.0 — Proyectos v28</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -1056,39 +1056,76 @@ async function confirmDeleteProject() {
 }
 
 // ========== PROJECT STATE CHANGE MODAL ==========
+// Reglas de transicion:
+// - Proyectando -> Confirmado, Perdido (NO se puede ir directo a Cerrado/Anulado)
+// - Confirmado -> Cerrado, Anulado, Perdido (cualquiera con pedido)
+// - Cerrado -> ningun cambio (estado final)
+// - Anulado -> ningun cambio (estado final)
+// - Perdido -> Confirmado (si se reactivara)
+// La regla "para llegar a Cerrado o Anulado, el proyecto tiene que estar
+// actualmente en Confirmado" se implementa filtrando las opciones del select.
+function _allowedNextStates(currentEstado) {
+  if (currentEstado === 'Proyectando') return ['Proyectando', 'Confirmado', 'Perdido'];
+  if (currentEstado === 'Confirmado') return ['Confirmado', 'Cerrado', 'Anulado', 'Perdido'];
+  if (currentEstado === 'Cerrado') return ['Cerrado'];  // estado final
+  if (currentEstado === 'Anulado') return ['Anulado'];  // estado final
+  if (currentEstado === 'Perdido') return ['Perdido', 'Confirmado'];
+  return PROJ_STATES.slice();
+}
+
 function showProjectStateModal(projectId) {
   const proj = getProject(projectId);
   if (!proj) return;
+  const allowedStates = _allowedNextStates(proj.estado);
   const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'state-modal';
   const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '500px';
   let h = '<div class="md-t">Cambiar estado del proyecto</div>';
   h += '<div style="font-size:12px;color:#5F5E5A;margin-bottom:12px">Estado actual: <b>' + proj.estado + (proj.estado === 'Cerrado' && proj.sub_estado_cerrado ? ' / ' + proj.sub_estado_cerrado : '') + '</b></div>';
+  if (allowedStates.length === 1) {
+    h += '<div style="background:#F5F3EC;padding:10px;border-radius:5px;font-size:12px;color:#5F5E5A;margin-bottom:14px">Este estado es final, no admite cambios.</div>';
+    h += '<div class="actions"><button class="b" onclick="this.closest(\'.mo\').remove()">Cerrar</button></div>';
+    m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
+    return;
+  }
   h += '<div class="ef"><div class="ef-l">Nuevo estado <span style="color:#A32D2D">*</span></div>';
-  h += '<select class="ef-i" id="ps-estado" onchange="onProjStateChange()">';
-  PROJ_STATES.forEach(st => {
+  h += '<select class="ef-i" id="ps-estado" onchange="onProjStateChange(' + projectId + ')">';
+  allowedStates.forEach(st => {
     h += '<option value="' + st + '"' + (st === proj.estado ? ' selected' : '') + '>' + st + '</option>';
   });
   h += '</select></div>';
-  h += '<div class="ef" id="ps-sub-wrap" style="display:' + (proj.estado === 'Cerrado' ? 'block' : 'none') + '">';
+  h += '<div class="ef" id="ps-sub-wrap" style="display:none">';
   h += '<div class="ef-l">Sub-estado <span style="color:#A32D2D">*</span></div>';
   h += '<select class="ef-i" id="ps-sub">';
   PROJ_STATES_SUB_CERRADO.forEach(s => {
     h += '<option value="' + s + '"' + (s === proj.sub_estado_cerrado ? ' selected' : '') + '>' + s + '</option>';
   });
   h += '</select></div>';
-  h += '<div class="ef" id="ps-obs-wrap" style="display:' + (proj.estado === 'Anulado' ? 'block' : 'none') + '">';
+  h += '<div class="ef" id="ps-obs-wrap" style="display:none">';
   h += '<div class="ef-l">Observaciones de anulacion <span style="color:#A32D2D">*</span></div>';
   h += '<textarea class="ef-i" id="ps-obs" rows="3" placeholder="Ej. Cliente se arrepintio, se cobra parcial">' + escapeHtml(proj.observaciones_anulacion || '') + '</textarea></div>';
+  // Campo Nº pedido inline. Solo se muestra cuando: (a) el estado nuevo
+  // requiere pedido (Confirmado/Cerrado/Anulado), Y (b) el proyecto NO tiene
+  // ya un pedido cargado. Asi evitamos pisar valores existentes.
+  h += '<div class="ef" id="ps-pedido-wrap" style="display:none">';
+  h += '<div class="ef-l">Numero de pedido</div>';
+  h += '<input type="text" class="ef-i" id="ps-pedido" placeholder="Si lo dejas vacio, queda con advertencia roja hasta cargarlo">';
+  h += '</div>';
   h += '<div class="actions">';
   h += '<button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button>';
   h += '<button class="b b-p" onclick="saveProjectState(' + projectId + ')">Aplicar</button></div>';
   m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
+  // Disparar onChange inicial para mostrar/ocultar campos segun el estado seleccionado
+  onProjStateChange(projectId);
 }
 
-function onProjStateChange() {
+function onProjStateChange(projectId) {
+  const proj = getProject(projectId);
   const v = document.getElementById('ps-estado').value;
   document.getElementById('ps-sub-wrap').style.display = (v === 'Cerrado') ? 'block' : 'none';
   document.getElementById('ps-obs-wrap').style.display = (v === 'Anulado') ? 'block' : 'none';
+  // Nº pedido: solo si el estado nuevo lo requiere y no hay pedido cargado
+  const needsPedido = PROJ_STATES_REQUIRE_PEDIDO.has(v) && !proj.pedido_nro;
+  document.getElementById('ps-pedido-wrap').style.display = needsPedido ? 'block' : 'none';
 }
 
 async function saveProjectState(projectId) {
@@ -1099,13 +1136,26 @@ async function saveProjectState(projectId) {
   const newObs = newEstado === 'Anulado' ? document.getElementById('ps-obs').value.trim() : null;
   if (newEstado === 'Anulado' && !newObs) { toast('Las observaciones son obligatorias al anular', true); return; }
 
-  // If moving to Confirmado without pedido, warn but don't block
-  if (newEstado === 'Confirmado' && !proj.pedido_nro) {
-    if (!confirm('El proyecto no tiene numero de pedido. Va a aparecer una advertencia hasta que lo cargues. ¿Continuar?')) return;
+  // Pedido inline: tomar lo escrito si el campo se mostro
+  const pedidoEl = document.getElementById('ps-pedido');
+  const pedidoNew = (pedidoEl && pedidoEl.style.display !== 'none' && pedidoEl.value.trim()) ? pedidoEl.value.trim() : null;
+  // Verificar si el wrap del pedido esta visible (puede pasar que el input
+  // exista pero el wrap este oculto si el proyecto ya tenia pedido).
+  const pedidoWrap = document.getElementById('ps-pedido-wrap');
+  const pedidoVisible = pedidoWrap && pedidoWrap.style.display === 'block';
+
+  // Si el estado nuevo requiere pedido y el proyecto NO tiene, y el campo
+  // estaba visible y vacio, mostrar advertencia (no bloqueante).
+  if (PROJ_STATES_REQUIRE_PEDIDO.has(newEstado) && !proj.pedido_nro && pedidoVisible && !pedidoNew) {
+    if (!confirm('Vas a dejar el proyecto sin numero de pedido. Va a aparecer una advertencia roja hasta que lo cargues. ¿Continuar?')) return;
   }
-  await sb.from('proyectos').update({
+
+  const payload = {
     estado: newEstado, sub_estado_cerrado: newSub, observaciones_anulacion: newObs
-  }).eq('id', projectId);
+  };
+  if (pedidoNew) payload.pedido_nro = pedidoNew;
+
+  await sb.from('proyectos').update(payload).eq('id', projectId);
   await loadAll();
   document.getElementById('state-modal').remove();
   toast('Estado actualizado');

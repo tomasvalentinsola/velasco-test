@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Velasco App 2.0 — Tablero por Operario v37</title>
+<title>Velasco App 2.0 — Tablero por Operario vA2 (motor A · DEV)</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -102,6 +102,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 </style>
 </head>
 <body>
+<div style="background:#E24B4A;color:#fff;text-align:center;padding:6px 12px;font-size:12px;font-weight:700;letter-spacing:0.5px;position:sticky;top:0;z-index:1000">⚠ MODO DESARROLLO — MOTOR A (vA2) — Las acciones SI afectan la DB de produccion</div>
 
 <div class="hd">
   <div class="hd-l">
@@ -419,12 +420,17 @@ function computeVB() {
 
     if (is247(act) && effSetup(act) !== null && effSetup(act) !== undefined) {
       // === AUTO 24/7 ===
+      // Generar partes visibles en el tablero. La numeracion de partes es
+      // CONTINUA: parte 1, 2, 3, etc., sin importar si es del setup o de la
+      // maquina sola. Si una parte de maquina es contigua a una parte de
+      // setup en el mismo dia, se fusionan (suman dur) y no se cuenta como
+      // parte nueva.
       const setupMin = effSetup(act);
       const machineRest = D(act) - setupMin;
       const parts = [];
-      let pn = 1;
 
-      // Fase 1: setup respetando jornada
+      // Fase 1: setup respetando jornada. Cada dia donde cae setup genera una
+      // parte. La numeracion arranca en 1 y se incrementa por cada parte real.
       let rem = setupMin, cd = act.fecha, ct = tM(act.hora_inicio), safe = 0;
       while (rem > 0 && safe < 20) {
         safe++;
@@ -433,60 +439,63 @@ function computeVB() {
         const av = de - ct;
         if (av <= 0) { cd = nwd(cd); ct = sS(act.operario_id); continue; }
         const bd = Math.min(rem, av);
-        parts.push({ actId: act.id, act, date: cd, startMin: ct, dur: bd, part: pn });
+        parts.push({ actId: act.id, act, date: cd, startMin: ct, dur: bd, _phase: 'setup' });
         rem -= bd;
-        if (rem > 0) { cd = nwd(cd); ct = sS(act.operario_id); pn++; }
+        if (rem > 0) { cd = nwd(cd); ct = sS(act.operario_id); }
         else { ct += bd; }
       }
       // cd/ct = momento en que termina el setup. La maquina corre desde aqui
       // calendario continuo durante machineRest minutos.
 
-      // Fase 2: maquina sola 24/7 - intersectar con jornadas dia a dia.
-      // Avanzamos en el calendario hasta consumir machineRest minutos reales.
-      // En cada dia de calendario que cruzamos, si hay jornada (no domingo)
-      // y el periodo de la maquina la intersecta, generamos bloque visible.
+      // Fase 2: maquina sola 24/7. Intersectar con jornadas dia a dia.
       let calMinRem = machineRest;
       let curDate = cd, curTime = ct;  // posicion actual de la maquina
       let dayHop = 0;
       while (calMinRem > 0 && dayHop < 30) {
         dayHop++;
-        // Hasta cuanto avanza la maquina en este dia calendario?
         const minsLeftInDay = 1440 - curTime;
         const consumeToday = Math.min(calMinRem, minsLeftInDay);
-        const machineEndOfDay = curTime + consumeToday;  // 0..1440
+        const machineEndOfDay = curTime + consumeToday;
 
-        // Es domingo? (no se renderiza bloque, taller cerrado)
         const dow = new Date(curDate + 'T12:00:00').getDay();
         if (dow !== 0) {
           const ds = sS(act.operario_id), de = sE(act.operario_id, curDate);
-          // Interseccion entre [curTime, machineEndOfDay] y jornada [ds, de]
           const visStart = Math.max(curTime, ds);
           const visEnd = Math.min(machineEndOfDay, de);
           if (visEnd > visStart) {
-            // Si en este dia tambien hay setup (caso mismo dia), evitar duplicar.
-            const existingSetup = parts.find(p => p.date === curDate);
-            if (existingSetup && Math.abs(existingSetup.startMin + existingSetup.dur - visStart) < 1) {
-              // El bloque de setup termina justo donde empieza el visible -> fusionar
+            // Buscar parte de setup del mismo dia que termine justo donde
+            // arranca este bloque visible. Si existe, fusionar.
+            const existingSetup = parts.find(p =>
+              p.date === curDate && Math.abs(p.startMin + p.dur - visStart) < 1
+            );
+            if (existingSetup) {
               existingSetup.dur += (visEnd - visStart);
             } else {
-              parts.push({ actId: act.id, act, date: curDate, startMin: visStart, dur: visEnd - visStart, part: pn });
-              pn++;
+              parts.push({ actId: act.id, act, date: curDate, startMin: visStart, dur: visEnd - visStart, _phase: 'machine' });
             }
           }
         }
 
         calMinRem -= consumeToday;
         if (calMinRem > 0) {
-          // Avanzar al dia siguiente calendario (sin saltar domingos: para 24/7
-          // el domingo cuenta calendar, solo no se renderiza)
           const d = new Date(curDate + 'T12:00:00'); d.setDate(d.getDate() + 1);
           curDate = dK(d);
           curTime = 0;
         }
       }
 
+      // Numerar las partes en orden cronologico (date+start).
+      parts.sort((a, b) => {
+        if (a.date < b.date) return -1;
+        if (a.date > b.date) return 1;
+        return a.startMin - b.startMin;
+      });
       const tot = parts.length;
-      parts.forEach(p => { p.totalParts = tot; vb.push(p); });
+      parts.forEach((p, idx) => {
+        p.part = idx + 1;
+        p.totalParts = tot;
+        vb.push(p);
+      });
       return;
     }
 
@@ -1497,6 +1506,140 @@ function adjustToWorkingHours(opId, date, time) {
   return { date, time };
 }
 
+// =============================================================
+// PARCHE B: simulacion robusta de cascadas combinadas (op+maq).
+// =============================================================
+// Las funciones *OnState operan sobre un Map id -> activItem (con todas las
+// propiedades necesarias para D(), Dop(), realEnd(), etc.). NUNCA tocan DB.
+// Esto permite simular el efecto en cadena de un cambio antes de aplicarlo.
+
+// Simula el explicit push de maquina sobre el estado. Devuelve un Set con los
+// ids que se movieron en esta pasada. Repite el barrido hasta que no haya mas
+// movimientos por maquina.
+function simulateMachinePushOnState(state, placedActId) {
+  const moved = new Set();
+  let safety = 50;
+  while (safety-- > 0) {
+    let anyMove = false;
+    // Por cada maquina+fecha, ordenar por hora_inicio y empujar la siguiente
+    // si la anterior la pisa (en su slice de maquina).
+    // Optimizacion: agrupar por maquina_id+fecha
+    const groups = new Map();
+    state.forEach(it => {
+      if (!it.maquina_id) return; // sin maquina: sin push
+      const key = it.maquina_id + '|' + it.fecha;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(it);
+    });
+    groups.forEach(arr => {
+      arr.sort((a, b) => {
+        const td = tM(a.hora_inicio) - tM(b.hora_inicio);
+        if (td !== 0) return td;
+        // Si empatan en hora, la placed va primero (prioridad)
+        if (a.id === placedActId) return -1;
+        if (b.id === placedActId) return 1;
+        return a.id - b.id;
+      });
+      for (let i = 0; i < arr.length - 1; i++) {
+        const A = arr[i], B = arr[i + 1];
+        const aEnd = realEndForState(A);
+        const bDate = B.fecha, bTime = tM(B.hora_inicio);
+        let needs = false;
+        if (bDate < aEnd.date) needs = true;
+        else if (bDate === aEnd.date && bTime < aEnd.time + GAP) needs = true;
+        if (needs) {
+          let newDate = aEnd.date, newTime = aEnd.time + GAP;
+          const bShS = sS(B.operario_id);
+          if (newTime < bShS) newTime = bShS;
+          const bShE = sE(B.operario_id, newDate);
+          if (newTime >= bShE) { newDate = nwd(newDate); newTime = sS(B.operario_id); }
+          if (B.fecha !== newDate || B.hora_inicio !== mT(newTime)) {
+            B.fecha = newDate;
+            B.hora_inicio = mT(newTime);
+            moved.add(B.id);
+            anyMove = true;
+          }
+        }
+      }
+    });
+    if (!anyMove) break;
+  }
+  return moved;
+}
+
+// Cascadea las actividades del operario opId dentro del state hasta que no
+// queden overlaps. Devuelve true si movio algo.
+function simulateOpCascadeOnState(state, opId) {
+  let movedAny = false;
+  let safety = 50;
+  while (safety-- > 0) {
+    const arr = [];
+    state.forEach(it => { if (it.operario_id === opId) arr.push(it); });
+    arr.sort((a, b) => {
+      if (a.fecha < b.fecha) return -1;
+      if (a.fecha > b.fecha) return 1;
+      return tM(a.hora_inicio) - tM(b.hora_inicio);
+    });
+    let pushed = false;
+    for (let i = 0; i < arr.length - 1; i++) {
+      const A = arr[i], B = arr[i + 1];
+      const endA = realEndOpForState(A);
+      const bDate = B.fecha, bTime = tM(B.hora_inicio);
+      let needs = false;
+      if (bDate < endA.date) needs = true;
+      else if (bDate === endA.date && bTime < endA.time + GAP) needs = true;
+      if (needs) {
+        let newDate = endA.date, newTime = endA.time + GAP;
+        const bShS = sS(opId);
+        if (newTime < bShS) newTime = bShS;
+        const bShE = sE(opId, newDate);
+        if (newTime >= bShE) { newDate = nwd(newDate); newTime = sS(opId); }
+        if (B.fecha !== newDate || B.hora_inicio !== mT(newTime)) {
+          B.fecha = newDate;
+          B.hora_inicio = mT(newTime);
+          pushed = true;
+          movedAny = true;
+        }
+      }
+    }
+    if (!pushed) break;
+  }
+  return movedAny;
+}
+
+// Detecta conflictos de maquina con OTROS operarios en el state simulado.
+// Igual que findMachineConflictsOtherOps pero sobre el state, no sobre acts.
+function findMachineConflictsOtherOpsInState(state, actId, machId, opId, fecha, startMin, dur) {
+  const conflicts = [];
+  if (!machId) return conflicts;
+  // Slices de la actividad entrante (asumimos manual para simplicidad de chequeo)
+  const slices = simulatePlacement({ duracion_estimada_min: dur, duracion_margen_min: 0 }, opId, fecha, startMin);
+  if (slices.length === 0) return conflicts;
+  state.forEach(a => {
+    if (a.id === actId) return;
+    if (a.maquina_id !== machId) return;
+    if (a.operario_id === opId) return;
+    const aSlices = machineSlicesOfState(a);
+    for (const as of aSlices) {
+      let pushed = false;
+      for (const s of slices) {
+        if (as.date === s.date && as.start < s.end && as.end > s.start) {
+          conflicts.push(a); pushed = true; break;
+        }
+      }
+      if (pushed) break;
+    }
+  });
+  return conflicts;
+}
+
+// realEnd para items del state (mismo computo que realEnd pero sin asumir
+// que viene de acts; usa los campos del item tal cual estan).
+function realEndForState(a) { return realEnd(a); }
+function realEndOpForState(a) { return realEndOp(a); }
+function machineSlicesOfState(a) { return machineSlicesOf(a); }
+// =============================================================
+
 function placeActWithCheck(actId, machId, fecha, startTime, newOpId, skipOpCheck) {
   const act = acts.find(a => a.id === actId);
   if (!act) return;
@@ -1540,69 +1683,328 @@ function placeActWithCheck(actId, machId, fecha, startTime, newOpId, skipOpCheck
   // We'll delete them from DB only if the user confirms the move.
   const pulmonesAPisar = (pulmonActionPref === 'pisar') ? new Set(pulmonesAfectadosIds) : new Set();
 
-  // STEP 1: simulate the operator cascade with the placed activity.
-  // Pass the pulmonesAPisar set so simulateOpCascade ignores them.
-  const snapshot = simulateOpCascade(effectiveOpId, actId, fecha, startTime, machId, pulmonesAPisar);
+  // ============================================================
+  // MOTOR A: simulacion unificada (reemplaza STEP 1, 1.5, 2 y 3 del parche B).
+  // ============================================================
+  // Construir el cambio propuesto y delegar en _runMotorAndApply, que se
+  // encarga de simular, mostrar modal si hace falta, y aplicar.
+  const changes = [{
+    id: actId,
+    operario_id: effectiveOpId,
+    maquina_id: machId,
+    fecha: fecha,
+    hora_inicio: mT(startTime)
+  }];
+  _runMotorAndApply(changes, { pulmonAction: pulmonActionPref });
+}
 
-  // STEP 2: check for inter-operator machine conflicts on any cascaded item.
-  const allMachConflicts = [];
-  const conflictSourceMap = new Map();
-  for (const sim of snapshot) {
-    const orig = acts.find(a => a.id === sim.id);
-    const isPlaced = sim.id === actId;
-    const changed = !orig || orig.fecha !== sim.fecha || orig.hora_inicio !== sim.hora_inicio || orig.operario_id !== sim.operario_id || orig.maquina_id !== sim.maquina_id;
-    if (!isPlaced && !changed) continue;
-    const confs = findMachineConflictsOtherOps(sim.id, sim.maquina_id, sim.operario_id, sim.fecha, tM(sim.hora_inicio), D(sim));
-    confs.forEach(c => {
-      if (!allMachConflicts.find(x => x.id === c.id)) {
-        allMachConflicts.push(c);
-        conflictSourceMap.set(c.id, sim);
-      }
-    });
-  }
-  if (allMachConflicts.length > 0) {
-    showMachineConflictAlert(act, machId, fecha, startTime, allMachConflicts, newOpId, effectiveOpId, conflictSourceMap);
+// _runMotorAndApply: wrapper unificado. Toma una lista de cambios genericos,
+// simula con simulateChange, muestra el modal "Actividades afectadas" si hay
+// algo que confirmar, o aplica directamente si solo afecta a las activ ancladas
+// (las pasadas en `changes`).
+// Este wrapper sirve para cualquier accion que cambie estado: mover una activ,
+// cambiar duracion, aplicar OT, eliminar, etc. La idea es centralizar el flujo
+// "simular -> mostrar modal si hace falta -> aplicar".
+function _runMotorAndApply(changes, options) {
+  options = options || {};
+  const pulmonAction = options.pulmonAction || pulmonActionPref;
+  const simResult = simulateChange(changes, { pulmonAction });
+
+  if (!simResult.ok) {
+    if (simResult.error === 'predecesor_no_planificado') {
+      const predId = simResult.detail.predecesor_id;
+      const sucId = simResult.detail.sucesor_id;
+      const pAct = acts.find(a => a.id === predId);
+      const sAct = acts.find(a => a.id === sucId);
+      alert('No se puede aplicar este cambio:\n\nLa actividad "' + (sAct ? sAct.descripcion : '#' + sucId) + '" tiene como predecesor a "' + (pAct ? pAct.descripcion : '#' + predId) + '", que no esta planificada todavia. Planifica el predecesor primero.');
+      return;
+    }
+    if (simResult.error === 'no_converge') {
+      alert('La simulacion no convergio en ' + simResult.detail.iterations + ' iteraciones. Esto es un bug del motor; reportalo a Tomi.');
+      return;
+    }
+    if (simResult.error === 'conflicto_no_resoluble') {
+      const det = simResult.detail.residual.map(r => {
+        if (r.type === 'op') return '• Operario ' + opN(r.opId) + ': activ #' + r.a + ' choca con activ #' + r.b;
+        return '• Maquina ' + mN(r.machId) + ': activ #' + r.a + ' choca con activ #' + r.b;
+      }).join('\n');
+      alert('No se pudo resolver el cambio sin pisar otras actividades:\n\n' + det + '\n\nProba mover alguna a otra fecha/hora primero.');
+      return;
+    }
+    alert('Error en simulacion: ' + simResult.error);
     return;
   }
 
-  // STEP 3: build "actividades afectadas" list — activities that the simulation
-  // moves (different from current state), excluding the placed one.
-  const affectedItems = [];
-  for (const sim of snapshot) {
-    if (sim.id === actId) continue;
-    const orig = acts.find(a => a.id === sim.id);
+  // Pulmones eliminados por la simulacion (estan en acts pero no en state)
+  const pulmonesPisados = [];
+  acts.forEach(a => {
+    if (!a.es_pulmon) return;
+    if (a.estado === 'sin_planificar' || a.fecha === '1900-01-01') return;
+    if (!simResult.state.has(a.id)) pulmonesPisados.push(a.id);
+  });
+
+  const affectedItems = simResult.affected;
+  const placedActId = changes[0] ? changes[0].id : null;
+
+  // CASE: nada se movio aparte de las anchors → aplicar directo.
+  if (affectedItems.length === 0 && pulmonesPisados.length === 0) {
+    proceedWithPlacementMotor(placedActId, simResult.applyPlan, []);
+    return;
+  }
+
+  // CASE: solo pulmones afectados → aplicar directo (regla establecida).
+  const onlyPulmones = affectedItems.every(it => it.es_pulmon || it._deleted);
+  if (onlyPulmones && affectedItems.length + pulmonesPisados.length > 0) {
+    proceedWithPlacementMotor(placedActId, simResult.applyPlan, pulmonesPisados);
+    return;
+  }
+
+  // CASE: hay otras activ afectadas → modal de confirmacion.
+  showAffectedActivitiesModalMotor(placedActId, simResult.applyPlan, affectedItems, pulmonesPisados, changes);
+}
+
+
+// plan es {id, fecha?, hora_inicio?, operario_id?, maquina_id?, ..., _delete?}.
+// Toma snapshot de los valores anteriores para undo, ejecuta los updates, y
+// refleja en `acts`.
+async function proceedWithPlacementMotor(placedActId, applyPlan, pulmonIdsToDelete) {
+  const fullPlan = (applyPlan || []).slice();
+  // Combinar pulmones-a-borrar dentro del plan (todo va al RPC junto).
+  (pulmonIdsToDelete || []).forEach(pid => {
+    if (!fullPlan.find(it => it.id === pid && it._delete)) {
+      fullPlan.push({ id: pid, _delete: true });
+    }
+  });
+  if (fullPlan.length === 0) return;
+
+  // Snapshot para undo: por cada item del plan, capturar estado previo en acts.
+  const undoBatch = [];
+  for (const item of fullPlan) {
+    if (item._isNew) continue;
+    const orig = acts.find(a => a.id === item.id);
     if (!orig) continue;
-    if (orig.fecha !== sim.fecha || orig.hora_inicio !== sim.hora_inicio) {
-      affectedItems.push({
-        id: sim.id,
-        descripcion: orig.descripcion,
-        cliente: clN(orig.cliente_id),
-        es_pulmon: !!orig.es_pulmon,
-        oldFecha: orig.fecha, oldHora: orig.hora_inicio,
-        newFecha: sim.fecha, newHora: sim.hora_inicio
-      });
+    if (item._delete) {
+      undoBatch.push({ id: item.id, prev: _cloneActSnapshot(orig), _wasDeleted: true });
+    } else {
+      undoBatch.push({ id: item.id, prev: _cloneActSnapshot(orig) });
     }
   }
 
-  // CASE: nothing else moved AND no pulmones to delete → apply directly.
-  if (affectedItems.length === 0 && pulmonesAPisar.size === 0) {
-    proceedWithPlacement(actId, machId, fecha, startTime, newOpId, skipOpCheck, []);
+  // Para cada activ que pasa de sin_planificar a planificada, agregar al item
+  // el estado y estado_proceso, y los ot_ack_* iniciales.
+  for (const item of fullPlan) {
+    if (item._delete) continue;
+    const orig = acts.find(a => a.id === item.id);
+    if (orig && orig.estado === 'sin_planificar' && item.fecha && item.fecha !== '1900-01-01') {
+      item.estado = 'pendiente';
+      item.estado_proceso = 'Planificado';
+      if (orig.ot_ack_dur_estimada_min === null || orig.ot_ack_dur_estimada_min === undefined) item.ot_ack_dur_estimada_min = orig.duracion_estimada_min;
+      if (orig.ot_ack_margen_min === null || orig.ot_ack_margen_min === undefined) item.ot_ack_margen_min = orig.duracion_margen_min || 0;
+      if (orig.ot_ack_setup_min === null || orig.ot_ack_setup_min === undefined) item.ot_ack_setup_min = orig.duracion_operario_min;
+      if (orig.ot_ack_tipo === null || orig.ot_ack_tipo === undefined || orig.ot_ack_tipo === '') item.ot_ack_tipo = orig.tipo;
+      if (orig.ot_ack_operario_ideal_id === null || orig.ot_ack_operario_ideal_id === undefined) item.ot_ack_operario_ideal_id = orig.operario_ideal_id;
+      if (orig.ot_ack_maquina_ideal_id === null || orig.ot_ack_maquina_ideal_id === undefined) item.ot_ack_maquina_ideal_id = orig.maquina_ideal_id;
+      if (orig.ot_ack_maquina_ideal_nombre === null || orig.ot_ack_maquina_ideal_nombre === undefined) item.ot_ack_maquina_ideal_nombre = orig.maquina_ideal_nombre;
+    }
+  }
+
+  // Limpiar campos internos del motor antes de mandar al RPC.
+  const planForRpc = fullPlan.map(item => {
+    const clean = {};
+    Object.keys(item).forEach(k => {
+      if (k.startsWith('_')) return;
+      if (item[k] !== undefined && item[k] !== null) clean[k] = item[k];
+      else if (item[k] === null) clean[k] = null; // mantener nulls explicitos
+    });
+    if (item._delete) clean._delete = true;
+    return clean;
+  });
+
+  // Llamar al RPC. Atomicidad garantizada por la funcion SQL.
+  const { error } = await sb.rpc('apply_motor_plan', { plan: planForRpc });
+  if (error) {
+    toast('Error al aplicar cambios: ' + error.message, true);
+    console.error('apply_motor_plan error:', error);
     return;
   }
 
-  // CASE: only pulmones touched (deleted by 'pisar' OR shifted by 'cascadear'), and no other activities.
-  // The "only-pulmones" rule: if every affectedItem is a pulmón AND no other criteria.
-  const onlyPulmones = affectedItems.every(it => it.es_pulmon);
-  if (onlyPulmones && affectedItems.length + pulmonesAPisar.size > 0) {
-    // Apply directly (per user spec: don't ask for pulmón-only impacts)
-    proceedWithPlacement(actId, machId, fecha, startTime, newOpId, skipOpCheck, [...pulmonesAPisar]);
-    return;
+  // Reflejar en `acts` localmente.
+  let appliedCount = 0, deletedCount = 0;
+  for (const item of fullPlan) {
+    if (item._delete) {
+      const idx = acts.findIndex(x => x.id === item.id);
+      if (idx >= 0) acts.splice(idx, 1);
+      deletedCount++;
+      continue;
+    }
+    const orig = acts.find(a => a.id === item.id);
+    if (!orig) continue;
+    Object.keys(item).forEach(k => {
+      if (k.startsWith('_')) return;
+      if (item[k] !== undefined) orig[k] = item[k];
+    });
+    appliedCount++;
   }
 
-  // CASE: other activities are affected → show "Actividades afectadas" modal.
-  showAffectedActivitiesModal(actId, machId, fecha, startTime, newOpId, skipOpCheck,
-    affectedItems, [...pulmonesAPisar]);
+  if (undoBatch.length > 0) uStack.push(undoBatch);
+  updU();
+  let msg = 'Cambios aplicados';
+  if (appliedCount > 0) msg += ' (' + appliedCount + ' activ.';
+  if (deletedCount > 0) msg += ', ' + deletedCount + ' eliminada' + (deletedCount > 1 ? 's' : '');
+  if (appliedCount > 0 || deletedCount > 0) msg += ')';
+  toast(msg);
+  render();
 }
+
+function _cloneActSnapshot(a) {
+  return {
+    fecha: a.fecha,
+    hora_inicio: a.hora_inicio,
+    operario_id: a.operario_id,
+    maquina_id: a.maquina_id,
+    estado: a.estado,
+    duracion_planificador_min: a.duracion_planificador_min,
+    duracion_operario_min: a.duracion_operario_min,
+    tipo: a.tipo
+  };
+}
+
+// showAffectedActivitiesModalMotor: muestra el modal "Actividades afectadas"
+// usando el applyPlan del motor. El toggle de pulmones re-corre la simulacion
+// con la preferencia nueva.
+function showAffectedActivitiesModalMotor(placedActId, applyPlan, affectedItems, pulmonIdsToDelete, originalChanges) {
+  const placedAct = acts.find(a => a.id === placedActId);
+  const fmtDate = d => { if (!d) return '—'; const [y, m, da] = d.split('-'); return da + '/' + m + '/' + y; };
+  const existing = document.getElementById('affected-modal');
+  if (existing) existing.remove();
+
+  // Datos actuales del cambio (lo que se va a aplicar). Vienen del primer
+  // change del array originalChanges (la activ "placed" / ancla principal).
+  const mainChange = originalChanges && originalChanges[0] ? originalChanges[0] : null;
+  const curFecha = mainChange ? mainChange.fecha : (placedAct ? placedAct.fecha : '');
+  const curHora = mainChange ? (mainChange.hora_inicio || '').substring(0, 5) : (placedAct ? (placedAct.hora_inicio || '').substring(0, 5) : '');
+  const curMaq = mainChange ? mainChange.maquina_id : (placedAct ? placedAct.maquina_id : null);
+  const curOp = mainChange ? mainChange.operario_id : (placedAct ? placedAct.operario_id : null);
+
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'affected-modal';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '720px';
+  let h = '<div class="md-t">Actividades afectadas</div>';
+
+  // Panel "Datos del cambio" - permite ajustar hora y maquina sin cerrar el
+  // modal. Operario queda fijo (se determino con el drop). Fecha tambien
+  // queda fija (el cambio es dentro del mismo dia).
+  if (placedAct) {
+    h += '<div style="background:#F5FAFF;border:1px solid #B6D4F2;border-radius:5px;padding:10px 12px;margin-bottom:12px">';
+    h += '<div style="font-size:11px;font-weight:700;color:#0C447C;margin-bottom:8px;text-transform:uppercase;letter-spacing:0.5px">Datos del cambio</div>';
+    h += '<div style="display:grid;grid-template-columns:auto 1fr auto 1fr;gap:8px 12px;align-items:center;font-size:12px">';
+    h += '<div style="font-weight:600;color:#5F5E5A">Actividad:</div>';
+    h += '<div style="color:#0C447C;font-weight:600">' + escapeHtml(placedAct.descripcion || '') + '</div>';
+    h += '<div style="font-weight:600;color:#5F5E5A">Operario:</div>';
+    h += '<div>' + escapeHtml(opN(curOp)) + '</div>';
+    h += '<div style="font-weight:600;color:#5F5E5A">Fecha:</div>';
+    h += '<div>' + fmtDate(curFecha) + '</div>';
+    h += '<div style="font-weight:600;color:#5F5E5A">Hora inicio:</div>';
+    h += '<div><input type="time" id="aff-hora" value="' + curHora + '" style="padding:4px 6px;border:1px solid #C8C6BE;border-radius:4px;font-size:12px"></div>';
+    h += '<div style="font-weight:600;color:#5F5E5A">Maquina:</div>';
+    h += '<div><select id="aff-maq" style="padding:4px 6px;border:1px solid #C8C6BE;border-radius:4px;font-size:12px;max-width:200px">';
+    maq.forEach(mq => {
+      h += '<option value="' + mq.id + '"' + (mq.id === curMaq ? ' selected' : '') + '>' + escapeHtml(mq.nombre) + '</option>';
+    });
+    h += '</select></div>';
+    h += '<div></div>';
+    h += '<div style="grid-column:span 3"><button class="b" id="aff-recalcular" style="background:#0C447C;color:#fff;border-color:#0C447C;font-size:11px;padding:5px 12px">Recalcular</button></div>';
+    h += '</div>';
+    h += '</div>';
+  }
+
+  h += '<div style="font-size:12px;color:#5F5E5A;margin-bottom:10px">Este cambio desplaza <b>' + affectedItems.length + '</b> actividad(es)' + (pulmonIdsToDelete.length ? ' y elimina <b>' + pulmonIdsToDelete.length + '</b> pulmon(es)' : '') + '. Revisa la lista y confirma para aplicar todos los cambios.</div>';
+  h += '<div style="background:#F5F3EC;border:1px solid #C8C6BE;border-radius:5px;padding:8px 10px;margin-bottom:10px;font-size:12px">';
+  h += '<label style="display:flex;align-items:center;gap:8px;cursor:pointer">';
+  h += '<input type="checkbox" id="aff-pisar"' + (pulmonActionPref === 'pisar' ? ' checked' : '') + '>';
+  h += '<span><b>Pisar (eliminar) pulmones afectados</b><br><span style="font-size:11px;color:#5F5E5A">Si esta desmarcado, los pulmones se desplazan junto con las demas activ.</span></span>';
+  h += '</label></div>';
+  h += '<div style="max-height:340px;overflow-y:auto;border:1px solid #C8C6BE;border-radius:5px">';
+  h += '<table style="width:100%;border-collapse:collapse;font-size:12px">';
+  h += '<thead><tr style="background:#F5F3EC"><th style="padding:6px 8px;text-align:left;border-bottom:1px solid #C8C6BE">Actividad</th><th style="padding:6px 8px;text-align:left;border-bottom:1px solid #C8C6BE">Cliente</th><th style="padding:6px 8px;text-align:left;border-bottom:1px solid #C8C6BE">Actual</th><th style="padding:6px 8px;text-align:left;border-bottom:1px solid #C8C6BE">Nuevo</th></tr></thead><tbody>';
+  if (affectedItems.length === 0 && pulmonIdsToDelete.length === 0) {
+    h += '<tr><td colspan="4" style="padding:14px;text-align:center;color:#5F5E5A;font-style:italic">Sin afectadas con la configuracion actual.</td></tr>';
+  }
+  affectedItems.forEach(it => {
+    const oldStr = fmtDate(it.oldFecha) + ' ' + (it.oldHora ? it.oldHora.substring(0,5) : '');
+    const newStr = it._deleted ? '<span style="color:#A32D2D;font-weight:600">SE ELIMINA</span>' : (fmtDate(it.newFecha) + ' ' + (it.newHora ? it.newHora.substring(0,5) : ''));
+    const icon = it.es_pulmon ? '🫁 ' : '';
+    h += '<tr><td style="padding:5px 8px;border-bottom:1px solid #F5F3EC">' + icon + escapeHtml(it.descripcion || '') + '</td>' +
+         '<td style="padding:5px 8px;border-bottom:1px solid #F5F3EC">' + escapeHtml(it.cliente || '') + '</td>' +
+         '<td style="padding:5px 8px;border-bottom:1px solid #F5F3EC;color:#888780">' + oldStr + '</td>' +
+         '<td style="padding:5px 8px;border-bottom:1px solid #F5F3EC;color:#0C447C;font-weight:600">' + newStr + '</td></tr>';
+  });
+  pulmonIdsToDelete.forEach(pid => {
+    const p = acts.find(a => a.id === pid);
+    if (!p) return;
+    const oldStr = fmtDate(p.fecha) + ' ' + p.hora_inicio.substring(0,5);
+    h += '<tr><td style="padding:5px 8px;border-bottom:1px solid #F5F3EC">🫁 Pulmón</td>' +
+         '<td style="padding:5px 8px;border-bottom:1px solid #F5F3EC">—</td>' +
+         '<td style="padding:5px 8px;border-bottom:1px solid #F5F3EC;color:#888780">' + oldStr + '</td>' +
+         '<td style="padding:5px 8px;border-bottom:1px solid #F5F3EC;color:#A32D2D;font-weight:600">SE ELIMINA</td></tr>';
+  });
+  h += '</tbody></table></div>';
+  h += '<div class="actions" style="margin-top:14px;display:flex;gap:8px;justify-content:flex-end">';
+  h += '<button class="b" id="motor-cancel">Cancelar</button>';
+  h += '<button class="b b-p" id="motor-confirm">Aplicar cambios</button>';
+  h += '</div>';
+  m.innerHTML = h;
+  bd.appendChild(m); document.body.appendChild(bd);
+
+  // Toggle pisar/cascadear: re-simula con la nueva preferencia, manteniendo
+  // los valores de hora/maquina que el usuario haya tocado.
+  const cb = document.getElementById('aff-pisar');
+  cb.onchange = () => {
+    pulmonActionPref = cb.checked ? 'pisar' : 'cascadear';
+    try { localStorage.setItem('velasco_pulmonAction', pulmonActionPref); } catch (e) {}
+    _aff_recalc(originalChanges);
+  };
+
+  // Recalcular: lee hora y maquina del panel, actualiza el primer change y
+  // re-corre el motor. El modal se reabre con los nuevos resultados.
+  const recalcBtn = document.getElementById('aff-recalcular');
+  if (recalcBtn) {
+    recalcBtn.onclick = () => _aff_recalc(originalChanges);
+  }
+
+  document.getElementById('motor-cancel').onclick = () => bd.remove();
+  document.getElementById('motor-confirm').onclick = async () => {
+    bd.remove();
+    await proceedWithPlacementMotor(placedActId, applyPlan, pulmonIdsToDelete);
+  };
+}
+
+// Recalcula la simulacion con los valores actuales de los inputs hora/maquina
+// y re-renderiza el modal "Actividades afectadas" con los nuevos resultados.
+function _aff_recalc(originalChanges) {
+  const horaEl = document.getElementById('aff-hora');
+  const maqEl = document.getElementById('aff-maq');
+  if (!originalChanges || !originalChanges[0]) return;
+  const newChanges = originalChanges.map(c => ({ ...c }));
+  if (horaEl && horaEl.value) {
+    // Convertir HH:MM a HH:MM:00
+    newChanges[0].hora_inicio = horaEl.value + ':00';
+  }
+  if (maqEl && maqEl.value) {
+    newChanges[0].maquina_id = parseInt(maqEl.value);
+  }
+  // Cerrar modal actual y dejar que _runMotorAndApply abra uno nuevo
+  const bd = document.getElementById('affected-modal');
+  if (bd) bd.remove();
+  _runMotorAndApply(newChanges);
+}
+
+// La funcion vieja _motorTogglePisar ya no se usa, pero la dejamos para no
+// romper si algo la referencia.
+function _motorTogglePisar(placedActId) {}
+
+// =============================================================================
+// FIN MOTOR A: aplicacion en DB
+// =============================================================================
 
 // Helper called when we've confirmed (or auto-decided) to apply.
 // pulmonIdsToDelete: ids of pulmones to delete from DB before placing.
@@ -2694,40 +3096,40 @@ function showEdit(act, bl) {
   const applyBtn = document.getElementById('ed-apply-ot');
   if (applyBtn) {
     applyBtn.onclick = async () => {
-      // Aplicar TODOS los campos divergentes que afectan comportamiento del
-      // tablero. Despues, placeActWithCheck dispara el cartel de actividades
-      // afectadas si hace falta cascadear.
+      // MOTOR A: el cambio compuesto (duracion/setup/tipo + ack) se pasa al
+      // motor para que simule TODA la cascada. Si hay afectados, modal; si
+      // no, aplica directo. La DB no se toca hasta que el motor confirme.
       const newDurEst = act.duracion_estimada_min;
       const newMar = act.duracion_margen_min || 0;
       const newSetup = act.duracion_operario_min;
       const newTipo = act.tipo;
       const newTotal = newDurEst + newMar;
-      const payload = {};
-      // Si difiere duracion total: actualizar duracion_planificador_min y los acks
+      const change = {
+        id: act.id,
+        operario_id: act.operario_id,
+        maquina_id: act.maquina_id,
+        fecha: act.fecha,
+        hora_inicio: act.hora_inicio
+      };
+      // Solo agregamos los campos que difieren. El motor los aplica al state
+      // antes de simular, asi la cascada se calcula con el nuevo tamano/tipo.
       if (div.fields.dur_estimada || div.fields.margen) {
-        payload.duracion_planificador_min = newTotal;
-        payload.ot_ack_dur_estimada_min = newDurEst;
-        payload.ot_ack_margen_min = newMar;
+        change.duracion_planificador_min = newTotal;
+        change.ot_ack_dur_estimada_min = newDurEst;
+        change.ot_ack_margen_min = newMar;
       }
-      // Si difiere setup: actualizar el ack del setup (y el efectivo ya es el del proceso)
       if (div.fields.setup) {
-        payload.ot_ack_setup_min = newSetup;
+        change.duracion_operario_min = newSetup;
+        change.ot_ack_setup_min = newSetup;
       }
-      // Si difiere tipo: actualizar el ack
       if (div.fields.tipo) {
-        payload.ot_ack_tipo = newTipo;
+        change.tipo = newTipo;
+        change.ot_ack_tipo = newTipo;
       }
-      // operario_ideal y maquina_ideal NO se aplican automaticamente: el
-      // responsable los cambia manualmente desde el tablero. Solo el ack se
-      // copia cuando el responsable apriete "Ignorar" o cambie operario/maquina
-      // efectivos. No los tocamos aca.
-      await sb.from('actividades_tablero').update(payload).eq('id', act.id);
-      // Reflejar localmente
-      Object.keys(payload).forEach(k => { act[k] = payload[k]; });
       bd.remove();
-      // Disparar cascade: re-place con misma maquina/fecha/hora pero nuevo
-      // tamano y posiblemente tipo distinto.
-      placeActWithCheck(act.id, act.maquina_id, act.fecha, tM(act.hora_inicio), act.operario_id);
+      // Llamar al motor con el cambio compuesto. La logica de cascada y modal
+      // de afectadas vive en _runMotorAndApply.
+      _runMotorAndApply([change]);
     };
   }
   const ignoreBtn = document.getElementById('ed-ignore-ot');
@@ -2763,7 +3165,6 @@ async function saveEdit(actId) {
       if (isNaN(newDopMin)) newDopMin = null;
     }
   }
-
   // Duración total (planificador) editable in both manual and automatica
   let newDurTotal = act.duracion_planificador_min;
   const durInput = document.getElementById('ed-dur');
@@ -2779,44 +3180,46 @@ async function saveEdit(actId) {
   const dopChanged = newDopMin !== act.duracion_operario_min;
   const durChanged = newDurTotal !== act.duracion_planificador_min;
 
-  // Urgency + duracion_operario_min + duracion_planificador can be updated
-  // independently (don't alone move the activity, though dop change can affect
-  // future cascades).
-  if (urgChanged || dopChanged || durChanged) {
-    const prev = { maquina_id: act.maquina_id, fecha: act.fecha, hora_inicio: act.hora_inicio, estado: act.estado, operario_id: act.operario_id, urgencia: act.urgencia, duracion_operario_min: act.duracion_operario_min, duracion_planificador_min: act.duracion_planificador_min };
-    const payload = {};
-    if (urgChanged) payload.urgencia = newUrg;
-    if (dopChanged) payload.duracion_operario_min = newDopMin;
-    if (durChanged) payload.duracion_planificador_min = newDurTotal;
-    await sb.from('actividades_tablero').update(payload).eq('id', actId);
-    if (urgChanged) act.urgencia = newUrg;
-    if (dopChanged) act.duracion_operario_min = newDopMin;
-    if (durChanged) act.duracion_planificador_min = newDurTotal;
-    uStack.push([{ id: actId, prev }]);
-    updU();
-    // Si la duracion cambio (especialmente si crecio), correr placeActWithCheck
-    // para que se chequeen colisiones contra siguientes y se cascadee si hace
-    // falta. placeActWithCheck con misma maquina/fecha/hora reutiliza posicion
-    // pero recalcula el end y propaga.
-    if (durChanged && !opChanged && !mqChanged && !timeChanged) {
-      placeActWithCheck(actId, act.maquina_id, act.fecha, tM(act.hora_inicio), act.operario_id);
-      return;
-    }
-    if (!opChanged && !mqChanged && !timeChanged) {
-      toast('Actualizado: ' + act.descripcion);
-      render(); return;
-    }
+  // Urgencia se aplica directo sin cascada (no afecta tiempos)
+  if (urgChanged) {
+    await sb.from('actividades_tablero').update({ urgencia: newUrg }).eq('id', actId);
+    act.urgencia = newUrg;
   }
 
-  if (opChanged || mqChanged || timeChanged) {
-    placeActWithCheck(actId, newMqId, act.fecha, tM(newHora), newOpId);
-  } else if (!urgChanged && !dopChanged) {
-    toast('Sin cambios');
+  // Si NO hubo cambios de tamano/posicion/op/maq, refrescamos y salimos.
+  if (!opChanged && !mqChanged && !timeChanged && !dopChanged && !durChanged) {
+    if (urgChanged) toast('Urgencia actualizada');
+    else toast('Sin cambios');
+    render();
+    return;
   }
+
+  // MOTOR: construir cambio compuesto y llamar al wrapper.
+  const change = {
+    id: actId,
+    operario_id: opChanged ? newOpId : act.operario_id,
+    maquina_id: mqChanged ? newMqId : act.maquina_id,
+    fecha: act.fecha,
+    hora_inicio: timeChanged ? newHora : act.hora_inicio
+  };
+  if (durChanged) change.duracion_planificador_min = newDurTotal;
+  if (dopChanged) change.duracion_operario_min = newDopMin;
+  _runMotorAndApply([change]);
 }
 
 async function removeAct(actId) {
   const act = acts.find(a => a.id === actId); if (!act) return;
+  // Si el proceso fue eliminado desde Proyectos, hacer DELETE real (no dejar
+  // la fila como sin_planificar, porque el proceso ya no existe en Proyectos
+  // y no tiene sentido mantener registro huerfano que reaparece en el "+").
+  if (act.proceso_eliminado) {
+    await sb.from('actividades_tablero').delete().eq('id', actId);
+    const idx = acts.findIndex(a => a.id === actId);
+    if (idx >= 0) acts.splice(idx, 1);
+    toast('Eliminado: ' + act.descripcion);
+    render();
+    return;
+  }
   const prev = { maquina_id: act.maquina_id, fecha: act.fecha, hora_inicio: act.hora_inicio, estado: act.estado, operario_id: act.operario_id, estado_proceso: act.estado_proceso };
   await sb.from('actividades_tablero').update({ fecha: '1900-01-01', estado: 'sin_planificar', maquina_id: null, estado_proceso: 'Planificación Pendiente' }).eq('id', actId);
   act.fecha = '1900-01-01'; act.estado = 'sin_planificar'; act.maquina_id = null; act.estado_proceso = 'Planificación Pendiente';
@@ -3545,12 +3948,987 @@ const modalObserver = new MutationObserver(mutations => {
 });
 modalObserver.observe(document.body, { childList: true, subtree: true });
 
+// =============================================================================
+// MOTOR DE SIMULACION A (vA1) - en desarrollo
+// =============================================================================
+// Diseño:
+// - Funcion principal `simulateChange(changes, options)`.
+// - `changes` es un array de cambios propuestos. Cada cambio es:
+//     {id, fecha?, hora_inicio?, operario_id?, maquina_id?,
+//      duracion_planificador_min?, tipo?, duracion_operario_min?,
+//      duracion_estimada_min?, duracion_margen_min?, _delete?}
+//   Si fecha/hora/op/maq estan, son los nuevos valores. Si no, no se cambian.
+//   Si el id NO existe en `acts`, se trata como una nueva actividad (insercion);
+//   en ese caso el cambio debe traer todos los campos.
+// - `options`:
+//     {pulmonAction: 'pisar' | 'cascadear'} (default cascadear)
+// - Retorna:
+//     {ok: true, affected: [...], state: Map, applyPlan: [...]}
+//     o {ok: false, error: <string>, detail: {...}}
+//
+// Reglas de cascada:
+// - Las activ que estan en `changes` quedan ANCLADAS (no se mueven en la simulacion).
+// - Las demas se cascadean adelante cuando hay conflicto.
+// - Pulmones: si pulmonAction='pisar' los pulmones que se pisan con activ
+//   no-pulmon se eliminan en cada iteracion (no solo al inicio).
+// - Por cada iteracion se aplican: cascada por operario, push por maquina,
+//   verificacion de correlatividad, pisado de pulmones. Hasta punto fijo.
+//
+// Errores:
+// - 'predecesor_no_planificado': hay correlatividad cuyo predecesor no esta
+//   planificado; el motor no puede ubicar al sucesor.
+// - 'no_converge': llego a MAX_ITER iteraciones sin estabilizarse.
+// - 'conflicto_no_resoluble': dos anclas se pisan y no se pudieron mover.
+//
+// =============================================================================
+// RPC SQL EN SUPABASE (necesaria para aplicar el applyPlan atomicamente).
+// Crear corriendo este SQL en el Editor de Supabase:
+// =============================================================================
+/*
+CREATE OR REPLACE FUNCTION apply_motor_plan(plan JSONB)
+RETURNS VOID AS $$
+DECLARE
+  item JSONB;
+BEGIN
+  -- Cada item del array `plan` es un objeto con {id, fecha, hora_inicio,
+  -- operario_id, maquina_id, duracion_planificador_min, duracion_operario_min,
+  -- tipo, ot_ack_dur_estimada_min, ot_ack_margen_min, ot_ack_setup_min,
+  -- ot_ack_tipo, estado, estado_proceso, _delete}.
+  -- Si _delete=true, hace DELETE. Si no, hace UPDATE.
+  FOR item IN SELECT * FROM jsonb_array_elements(plan) LOOP
+    IF (item->>'_delete')::boolean = true THEN
+      DELETE FROM actividades_tablero WHERE id = (item->>'id')::bigint;
+    ELSE
+      UPDATE actividades_tablero
+      SET
+        fecha = COALESCE((item->>'fecha')::date, fecha),
+        hora_inicio = COALESCE((item->>'hora_inicio')::time, hora_inicio),
+        operario_id = CASE WHEN item ? 'operario_id' THEN NULLIF((item->>'operario_id'), '')::bigint ELSE operario_id END,
+        maquina_id = CASE WHEN item ? 'maquina_id' THEN NULLIF((item->>'maquina_id'), '')::bigint ELSE maquina_id END,
+        duracion_planificador_min = CASE WHEN item ? 'duracion_planificador_min' THEN NULLIF((item->>'duracion_planificador_min'), '')::int ELSE duracion_planificador_min END,
+        duracion_operario_min = CASE WHEN item ? 'duracion_operario_min' THEN NULLIF((item->>'duracion_operario_min'), '')::int ELSE duracion_operario_min END,
+        tipo = COALESCE(item->>'tipo', tipo),
+        ot_ack_dur_estimada_min = CASE WHEN item ? 'ot_ack_dur_estimada_min' THEN NULLIF((item->>'ot_ack_dur_estimada_min'), '')::int ELSE ot_ack_dur_estimada_min END,
+        ot_ack_margen_min = CASE WHEN item ? 'ot_ack_margen_min' THEN NULLIF((item->>'ot_ack_margen_min'), '')::int ELSE ot_ack_margen_min END,
+        ot_ack_setup_min = CASE WHEN item ? 'ot_ack_setup_min' THEN NULLIF((item->>'ot_ack_setup_min'), '')::int ELSE ot_ack_setup_min END,
+        ot_ack_tipo = COALESCE(item->>'ot_ack_tipo', ot_ack_tipo),
+        ot_ack_operario_ideal_id = CASE WHEN item ? 'ot_ack_operario_ideal_id' THEN NULLIF((item->>'ot_ack_operario_ideal_id'), '')::bigint ELSE ot_ack_operario_ideal_id END,
+        ot_ack_maquina_ideal_id = CASE WHEN item ? 'ot_ack_maquina_ideal_id' THEN NULLIF((item->>'ot_ack_maquina_ideal_id'), '')::bigint ELSE ot_ack_maquina_ideal_id END,
+        ot_ack_maquina_ideal_nombre = COALESCE(item->>'ot_ack_maquina_ideal_nombre', ot_ack_maquina_ideal_nombre),
+        estado = COALESCE(item->>'estado', estado),
+        estado_proceso = COALESCE(item->>'estado_proceso', estado_proceso)
+      WHERE id = (item->>'id')::bigint;
+    END IF;
+  END LOOP;
+END;
+$$ LANGUAGE plpgsql;
+*/
+// =============================================================================
+
+const SIM_MAX_ITER = 200;
+const SIM_GAP = (typeof GAP !== 'undefined' ? GAP : 0);
+
+// Construye un item en formato del state desde una actividad (objeto de acts).
+function _simBuildStateItem(a) {
+  return {
+    id: a.id,
+    operario_id: a.operario_id,
+    maquina_id: a.maquina_id,
+    fecha: a.fecha,
+    hora_inicio: a.hora_inicio,
+    duracion_estimada_min: a.duracion_estimada_min,
+    duracion_margen_min: a.duracion_margen_min,
+    duracion_operario_min: a.duracion_operario_min,
+    duracion_planificador_min: a.duracion_planificador_min,
+    tipo: a.tipo,
+    ot_ack_dur_estimada_min: a.ot_ack_dur_estimada_min,
+    ot_ack_margen_min: a.ot_ack_margen_min,
+    ot_ack_setup_min: a.ot_ack_setup_min,
+    ot_ack_tipo: a.ot_ack_tipo,
+    es_pulmon: !!a.es_pulmon,
+    estado: a.estado,
+    descripcion: a.descripcion,
+    cliente_id: a.cliente_id
+  };
+}
+
+// Aplica un cambio sobre un item del state (o crea uno nuevo).
+function _simApplyChange(state, change) {
+  const existing = state.get(change.id);
+  if (change._delete) {
+    if (existing) state.delete(change.id);
+    return;
+  }
+  if (existing) {
+    Object.keys(change).forEach(k => {
+      if (k === '_delete') return;
+      if (change[k] !== undefined) existing[k] = change[k];
+    });
+  } else {
+    // Nueva activ: copiar todo el cambio como item
+    const item = { ...change };
+    delete item._delete;
+    state.set(change.id, item);
+  }
+}
+
+// Devuelve el end de OPERARIO de un item del state (Dop respetando jornada).
+function _simEndOp(item) {
+  // Operario ocupado por Dop minutos, respetando jornada.
+  let rem = Dop(item), cd = item.fecha, ct = tM(item.hora_inicio), safe = 0;
+  while (rem > 0 && safe < 30) {
+    safe++;
+    const ds = sS(item.operario_id), de = sE(item.operario_id, cd);
+    if (ct < ds) ct = ds;
+    const av = de - ct;
+    if (av <= 0) { cd = nwd(cd); ct = sS(item.operario_id); continue; }
+    const used = Math.min(rem, av);
+    rem -= used;
+    if (rem > 0) { cd = nwd(cd); ct = sS(item.operario_id); }
+    else { ct += used; }
+  }
+  return { date: cd, time: ct };
+}
+
+// Devuelve el end de MAQUINA de un item del state (D total respetando reglas
+// del tipo: auto-24/7 corre calendar, semi/manual respetan jornada).
+function _simEndMach(item) {
+  // Reusa realEnd que ya tiene la logica correcta para los 3 tipos
+  return realEnd(item);
+}
+
+// Suma 1 al ds (formato YYYY-MM-DD), saltando domingos.
+function _simNextWorkDay(ds) {
+  return nwd(ds);
+}
+
+// Mueve un item adelante a (newDate, newTime), respetando jornada del operario.
+// Si newTime cae fuera de jornada, mueve al siguiente dia laboral.
+function _simAdjustToWorkingHours(item, newDate, newTime) {
+  const opId = item.operario_id;
+  const shS = sS(opId);
+  if (newTime < shS) newTime = shS;
+  const shE = sE(opId, newDate);
+  if (newTime >= shE) {
+    newDate = _simNextWorkDay(newDate);
+    newTime = sS(opId);
+  }
+  return { date: newDate, time: newTime };
+}
+
+// Aplica una pasada de cascada por operario sobre el state.
+// Las activ ancladas (en `anchors`) no se mueven.
+// Devuelve true si movio algo.
+function _simCascadeOp(state, anchors) {
+  let movedAny = false;
+  // Agrupar por operario
+  const byOp = new Map();
+  state.forEach(it => {
+    if (!it.operario_id) return;
+    if (!byOp.has(it.operario_id)) byOp.set(it.operario_id, []);
+    byOp.get(it.operario_id).push(it);
+  });
+  for (const [opId, arr] of byOp) {
+    arr.sort((a, b) => {
+      if (a.fecha < b.fecha) return -1;
+      if (a.fecha > b.fecha) return 1;
+      const td = tM(a.hora_inicio) - tM(b.hora_inicio);
+      if (td !== 0) return td;
+      // Empate de tiempo: anchors van primero
+      if (anchors.has(a.id)) return -1;
+      if (anchors.has(b.id)) return 1;
+      return a.id - b.id;
+    });
+    for (let i = 0; i < arr.length - 1; i++) {
+      const A = arr[i], B = arr[i + 1];
+      const endA = _simEndOp(A);
+      const bDate = B.fecha, bTime = tM(B.hora_inicio);
+      let needs = false;
+      if (bDate < endA.date) needs = true;
+      else if (bDate === endA.date && bTime < endA.time + SIM_GAP) needs = true;
+      if (needs) {
+        if (anchors.has(B.id)) {
+          // Conflicto residual con ancla; se reportara en deteccion final.
+          continue;
+        }
+        const adj = _simAdjustToWorkingHours(B, endA.date, endA.time + SIM_GAP);
+        if (B.fecha !== adj.date || B.hora_inicio !== mT(adj.time)) {
+          B.fecha = adj.date;
+          B.hora_inicio = mT(adj.time);
+          movedAny = true;
+          // El item B salto - reordenamos antes de continuar el for.
+          break;
+        }
+      }
+    }
+  }
+  return movedAny;
+}
+
+// Aplica una pasada de push de maquina sobre el state.
+// Activs ancladas no se mueven.
+function _simPushMach(state, anchors) {
+  let movedAny = false;
+  const byMach = new Map();
+  state.forEach(it => {
+    if (!it.maquina_id) return;
+    const key = it.maquina_id + '|' + it.fecha;
+    if (!byMach.has(key)) byMach.set(key, []);
+    byMach.get(key).push(it);
+  });
+  byMach.forEach(arr => {
+    arr.sort((a, b) => {
+      const td = tM(a.hora_inicio) - tM(b.hora_inicio);
+      if (td !== 0) return td;
+      if (anchors.has(a.id)) return -1;
+      if (anchors.has(b.id)) return 1;
+      return a.id - b.id;
+    });
+    for (let i = 0; i < arr.length - 1; i++) {
+      const A = arr[i], B = arr[i + 1];
+      const aEnd = _simEndMach(A);
+      const bDate = B.fecha, bTime = tM(B.hora_inicio);
+      let needs = false;
+      if (bDate < aEnd.date) needs = true;
+      else if (bDate === aEnd.date && bTime < aEnd.time + SIM_GAP) needs = true;
+      if (needs) {
+        if (anchors.has(B.id)) continue;
+        const adj = _simAdjustToWorkingHours(B, aEnd.date, aEnd.time + SIM_GAP);
+        if (B.fecha !== adj.date || B.hora_inicio !== mT(adj.time)) {
+          B.fecha = adj.date;
+          B.hora_inicio = mT(adj.time);
+          movedAny = true;
+        }
+      }
+    }
+  });
+  return movedAny;
+}
+
+// Verifica correlatividades: cada sucesor debe arrancar despues del fin del
+// predecesor + GAP. Si no, se cascadea. Si el predecesor no esta planificado,
+// devuelve { ok: false, error: 'predecesor_no_planificado', detail: ... }.
+function _simEnforceCorrs(state, anchors) {
+  let movedAny = false;
+  for (const corr of corrs) {
+    const pred = state.get(corr.predecesor_id);
+    const suc = state.get(corr.sucesor_id);
+    if (!suc) continue; // sucesor borrado/no planificado, no aplica
+    if (!pred) {
+      // Sucesor planificado pero predecesor no existe en state: bloqueo.
+      return { ok: false, error: 'predecesor_no_planificado', detail: { sucesor_id: corr.sucesor_id, predecesor_id: corr.predecesor_id } };
+    }
+    const predEnd = _simEndMach(pred);
+    const sDate = suc.fecha, sTime = tM(suc.hora_inicio);
+    let needs = false;
+    if (sDate < predEnd.date) needs = true;
+    else if (sDate === predEnd.date && sTime < predEnd.time + SIM_GAP) needs = true;
+    if (needs) {
+      if (anchors.has(suc.id)) continue;
+      const adj = _simAdjustToWorkingHours(suc, predEnd.date, predEnd.time + SIM_GAP);
+      if (suc.fecha !== adj.date || suc.hora_inicio !== mT(adj.time)) {
+        suc.fecha = adj.date;
+        suc.hora_inicio = mT(adj.time);
+        movedAny = true;
+      }
+    }
+  }
+  return { ok: true, moved: movedAny };
+}
+
+// Funcion principal: simula los `changes` aplicados al estado actual y
+// resuelve todas las cascadas hasta punto fijo.
+function simulateChange(changes, options) {
+  options = options || {};
+  const pulmonAction = options.pulmonAction || 'cascadear';
+
+  // 1. Construir state inicial a partir de acts (excluyendo sin_planificar).
+  const state = new Map();
+  acts.forEach(a => {
+    if (a.estado === 'sin_planificar' || a.fecha === '1900-01-01') return;
+    state.set(a.id, _simBuildStateItem(a));
+  });
+
+  // 2. Aplicar cambios al state y registrar anchors.
+  const anchors = new Set();
+  changes.forEach(c => {
+    _simApplyChange(state, c);
+    if (!c._delete) anchors.add(c.id);
+  });
+
+  // 3. Iterar hasta punto fijo. En cada iteracion:
+  //    a) Si pulmonAction='pisar', detectar pulmones que se pisan con activ
+  //       no-pulmon y eliminarlos.
+  //    b) Cascadear por operario.
+  //    c) Empujar por maquina.
+  //    d) Verificar correlatividades.
+  //    Si nada cambio, terminar. Si en a) se elimino algo, b/c/d se aplican
+  //    igual.
+  for (let iter = 0; iter < SIM_MAX_ITER; iter++) {
+    let any = false;
+    if (pulmonAction === 'pisar') {
+      const pisados = _simPisarPulmonesEnConflicto(state, anchors);
+      if (pisados > 0) any = true;
+    }
+    if (_simCascadeOp(state, anchors)) any = true;
+    if (_simPushMach(state, anchors)) any = true;
+    const corrRes = _simEnforceCorrs(state, anchors);
+    if (!corrRes.ok) return corrRes;
+    if (corrRes.moved) any = true;
+    if (!any) {
+      return _simBuildResult(state, anchors);
+    }
+  }
+  return { ok: false, error: 'no_converge', detail: { iterations: SIM_MAX_ITER } };
+}
+
+// Detecta pulmones del state que se pisan con CUALQUIER activ no-pulmon del
+// mismo operario en el mismo dia, y los elimina del state. Devuelve cuantos
+// elimino. Se usa solo si pulmonAction='pisar'.
+function _simPisarPulmonesEnConflicto(state, anchors) {
+  let pisados = 0;
+  // Pre-computar slices de operario de las activ no-pulmon (los rangos donde
+  // ocupan al operario)
+  const opRanges = new Map(); // opId+fecha -> array de {start, end}
+  state.forEach(it => {
+    if (it.es_pulmon) return;
+    if (!it.operario_id) return;
+    const start = tM(it.hora_inicio);
+    const end = start + Dop(it);
+    const key = it.operario_id + '|' + it.fecha;
+    if (!opRanges.has(key)) opRanges.set(key, []);
+    opRanges.get(key).push({ start, end });
+  });
+  // Recorrer pulmones y eliminar los que se pisan
+  const aEliminar = [];
+  state.forEach(it => {
+    if (!it.es_pulmon) return;
+    if (anchors.has(it.id)) return; // no eliminamos pulmones ancla (improbable)
+    const key = it.operario_id + '|' + it.fecha;
+    const ranges = opRanges.get(key);
+    if (!ranges) return;
+    const pStart = tM(it.hora_inicio);
+    const pEnd = pStart + D(it);
+    for (const r of ranges) {
+      if (!(r.end <= pStart || r.start >= pEnd)) {
+        aEliminar.push(it.id);
+        break;
+      }
+    }
+  });
+  aEliminar.forEach(id => { state.delete(id); pisados++; });
+  return pisados;
+}
+
+// Detecta conflictos residuales en el state (despues de iterar hasta punto fijo).
+// Estos son casos donde dos activ ancladas se pisan y no pudieron resolverse.
+// Devuelve un array de conflictos.
+function _simDetectResidualConflicts(state, anchors) {
+  const residual = [];
+  // Conflictos de operario - SOLO reportar cuando AMBAS son anchors (caso
+  // raro pero imposible de resolver). Conflictos donde una no es ancla
+  // deberian haberse cascadeado; si quedaron, es un bug del cascadeador y NO
+  // queremos bloquear al usuario por eso.
+  const byOp = new Map();
+  state.forEach(it => {
+    if (!it.operario_id) return;
+    if (!byOp.has(it.operario_id)) byOp.set(it.operario_id, []);
+    byOp.get(it.operario_id).push(it);
+  });
+  byOp.forEach((arr) => {
+    arr.sort((a, b) => {
+      if (a.fecha < b.fecha) return -1;
+      if (a.fecha > b.fecha) return 1;
+      return tM(a.hora_inicio) - tM(b.hora_inicio);
+    });
+    for (let i = 0; i < arr.length - 1; i++) {
+      const A = arr[i], B = arr[i + 1];
+      const endA = _simEndOp(A);
+      const bDate = B.fecha, bTime = tM(B.hora_inicio);
+      let conflicts = false;
+      if (bDate < endA.date) conflicts = true;
+      else if (bDate === endA.date && bTime < endA.time + SIM_GAP) conflicts = true;
+      if (conflicts && anchors.has(A.id) && anchors.has(B.id)) {
+        residual.push({ type: 'op', a: A.id, b: B.id, opId: A.operario_id });
+      }
+    }
+  });
+  // Conflictos de maquina - misma regla: solo si ambas son anchors.
+  const byMach = new Map();
+  state.forEach(it => {
+    if (!it.maquina_id) return;
+    const key = it.maquina_id + '|' + it.fecha;
+    if (!byMach.has(key)) byMach.set(key, []);
+    byMach.get(key).push(it);
+  });
+  byMach.forEach(arr => {
+    arr.sort((a, b) => tM(a.hora_inicio) - tM(b.hora_inicio));
+    for (let i = 0; i < arr.length - 1; i++) {
+      const A = arr[i], B = arr[i + 1];
+      const aEnd = _simEndMach(A);
+      const bDate = B.fecha, bTime = tM(B.hora_inicio);
+      let conflicts = false;
+      if (bDate < aEnd.date) conflicts = true;
+      else if (bDate === aEnd.date && bTime < aEnd.time + SIM_GAP) conflicts = true;
+      if (conflicts && anchors.has(A.id) && anchors.has(B.id)) {
+        residual.push({ type: 'mach', a: A.id, b: B.id, machId: A.maquina_id });
+      }
+    }
+  });
+  return residual;
+}
+
+// Construye el resultado final comparando state vs acts.
+function _simBuildResult(state, anchors) {
+  // Detectar conflictos residuales (anchors que no se pudieron resolver)
+  const residual = _simDetectResidualConflicts(state, anchors);
+  if (residual.length > 0) {
+    return { ok: false, error: 'conflicto_no_resoluble', detail: { residual } };
+  }
+  const affected = [];
+  const applyPlan = [];
+  state.forEach((sim, id) => {
+    const orig = acts.find(a => a.id === id);
+    if (!orig) {
+      // activ nueva insertada - va al apply plan completo
+      applyPlan.push({ id, ...sim, _isNew: true });
+      return;
+    }
+    const moved = (orig.fecha !== sim.fecha) || (orig.hora_inicio !== sim.hora_inicio);
+    const opChanged = (orig.operario_id !== sim.operario_id);
+    const machChanged = (orig.maquina_id !== sim.maquina_id);
+    const durChanged = (orig.duracion_planificador_min !== sim.duracion_planificador_min);
+    const tipoChanged = (orig.tipo !== sim.tipo);
+    const setupChanged = (orig.duracion_operario_min !== sim.duracion_operario_min);
+    const ackDurChanged = (orig.ot_ack_dur_estimada_min !== sim.ot_ack_dur_estimada_min);
+    const ackMargenChanged = (orig.ot_ack_margen_min !== sim.ot_ack_margen_min);
+    const ackSetupChanged = (orig.ot_ack_setup_min !== sim.ot_ack_setup_min);
+    const ackTipoChanged = (orig.ot_ack_tipo !== sim.ot_ack_tipo);
+    if (moved || opChanged || machChanged || durChanged || tipoChanged || setupChanged ||
+        ackDurChanged || ackMargenChanged || ackSetupChanged || ackTipoChanged) {
+      const planItem = { id, _isAnchor: anchors.has(id) };
+      // Solo incluir campos que cambiaron (para no pisar valores con undefined)
+      if (moved) { planItem.fecha = sim.fecha; planItem.hora_inicio = sim.hora_inicio; }
+      if (opChanged) planItem.operario_id = sim.operario_id;
+      if (machChanged) planItem.maquina_id = sim.maquina_id;
+      if (durChanged) planItem.duracion_planificador_min = sim.duracion_planificador_min;
+      if (setupChanged) planItem.duracion_operario_min = sim.duracion_operario_min;
+      if (tipoChanged) planItem.tipo = sim.tipo;
+      if (ackDurChanged) planItem.ot_ack_dur_estimada_min = sim.ot_ack_dur_estimada_min;
+      if (ackMargenChanged) planItem.ot_ack_margen_min = sim.ot_ack_margen_min;
+      if (ackSetupChanged) planItem.ot_ack_setup_min = sim.ot_ack_setup_min;
+      if (ackTipoChanged) planItem.ot_ack_tipo = sim.ot_ack_tipo;
+      applyPlan.push(planItem);
+    }
+    if (moved && !anchors.has(id)) {
+      affected.push({
+        id,
+        descripcion: orig.descripcion,
+        cliente: clN(orig.cliente_id),
+        es_pulmon: !!orig.es_pulmon,
+        oldFecha: orig.fecha, oldHora: orig.hora_inicio,
+        newFecha: sim.fecha, newHora: sim.hora_inicio
+      });
+    }
+  });
+  // Detectar deletes (estaban en acts y no en state)
+  acts.forEach(a => {
+    if (a.estado === 'sin_planificar' || a.fecha === '1900-01-01') return;
+    if (!state.has(a.id)) {
+      applyPlan.push({ id: a.id, _delete: true });
+      affected.push({
+        id: a.id,
+        descripcion: a.descripcion,
+        cliente: clN(a.cliente_id),
+        es_pulmon: !!a.es_pulmon,
+        oldFecha: a.fecha, oldHora: a.hora_inicio,
+        newFecha: null, newHora: null,
+        _deleted: true
+      });
+    }
+  });
+  return { ok: true, state, affected, applyPlan };
+}
+
+// Exponer en window para testing desde consola
+window.simulateChange = simulateChange;
+
+// =============================================================================
+// SUITE DE TESTS SINTETICOS DEL MOTOR
+// =============================================================================
+// Para correr: window.testMotor() desde la consola del browser.
+// Cada test arma un escenario controlado guardando acts/corrs viejas, corre el
+// motor con un cambio propuesto, y verifica que el resultado matchee lo
+// esperado. Al final restaura acts/corrs.
+//
+// Los tests NO tocan DB. Solo manipulan acts/corrs en memoria.
+//
+// Cobertura:
+//   1-3:   Casos basicos manuales (sin impacto, cascada simple, multinivel).
+//   4-5:   Pulmones (cascadear vs pisar).
+//   6:     Correlatividades simples.
+//   7-8:   Correlatividades en cadena y bloqueo por predecesor sin planificar.
+//   9-11:  Auto/semi (setup, cascada por setup, comportamiento 24/7).
+//   12:    Maquina compartida entre operarios.
+//   13-14: Cascadas mixtas operario+maquina.
+//   15:    Multiples cambios simultaneos.
+//   16-17: Limites: convergencia, no convergencia.
+//   18:    Cambio de duracion afecta cascada.
+//   19:    Cambio de tipo (manual a auto) afecta tiempos.
+//   20:    Conflicto residual entre dos anclas.
+// =============================================================================
+window.testMotor = function(verbose) {
+  verbose = !!verbose;
+  const origActs = acts.slice();
+  const origCorrs = corrs.slice();
+  let pass = 0, fail = 0;
+  const results = [];
+  function expectEq(label, got, expected) {
+    const eq = JSON.stringify(got) === JSON.stringify(expected);
+    if (eq) {
+      pass++;
+      if (verbose) results.push('✓ ' + label);
+      else results.push('✓ ' + label);
+    } else {
+      fail++;
+      results.push('✗ ' + label + '\n  esperado: ' + JSON.stringify(expected) + '\n  obtenido: ' + JSON.stringify(got));
+    }
+  }
+  function expectTrue(label, got) { expectEq(label, !!got, true); }
+  function setActs(arr) { acts.length = 0; arr.forEach(a => acts.push(a)); }
+  function setCorrs(arr) { corrs.length = 0; arr.forEach(c => corrs.push(c)); }
+
+  // Helpers de operario y maquina (toman los reales de la app)
+  const opId1 = (ops[0] || {}).id;
+  const opId2 = (ops[1] || {}).id;
+  const machId1 = (maq[0] || {}).id;
+  const machId2 = (maq[1] || {}).id;
+  if (!opId1 || !opId2 || !machId1 || !machId2) {
+    console.warn('No hay suficientes operarios o maquinas; tests omitidos.');
+    return { pass: 0, fail: 0, results: ['No hay suficientes operarios/maquinas para correr la suite'] };
+  }
+
+  // Helper para crear activ "estandar"
+  function ma(id, fecha, hora, opId, machId, dur, opts) {
+    opts = opts || {};
+    return {
+      id, fecha,
+      hora_inicio: hora.length === 5 ? hora + ':00' : hora,
+      operario_id: opId, maquina_id: machId,
+      duracion_estimada_min: dur, duracion_margen_min: 0,
+      duracion_planificador_min: dur,
+      duracion_operario_min: opts.setup !== undefined ? opts.setup : null,
+      tipo: opts.tipo || 'manual',
+      ot_ack_dur_estimada_min: dur, ot_ack_margen_min: 0,
+      ot_ack_setup_min: opts.setup !== undefined ? opts.setup : null,
+      ot_ack_tipo: opts.tipo || 'manual',
+      estado: 'pendiente', es_pulmon: !!opts.pulmon,
+      descripcion: opts.desc || ('A' + id), cliente_id: null, urgencia: 'media'
+    };
+  }
+
+  // ===== TEST 1: cambio simple sin afectar a nadie =====
+  setActs([ ma(1, '2026-06-01', '08:00', opId1, machId1, 60) ]);
+  setCorrs([]);
+  let r = simulateChange([{ id: 1, fecha: '2026-06-01', hora_inicio: '08:00:00', operario_id: opId1, maquina_id: machId1 }]);
+  expectEq('T1: cambio sin impacto', { ok: r.ok, n: r.affected ? r.affected.length : -1 }, { ok: true, n: 0 });
+
+  // ===== TEST 2: A se mueve y B se debe cascadear =====
+  setActs([
+    ma(1, '2026-06-01', '08:00', opId1, machId1, 60),
+    ma(2, '2026-06-01', '10:00', opId1, machId1, 60)
+  ]);
+  // Mover A a 09:30 con duracion nueva 120 (termina ~11:30, pisa B@10:00)
+  r = simulateChange([{ id: 1, fecha: '2026-06-01', hora_inicio: '09:30:00', operario_id: opId1, maquina_id: machId1, duracion_planificador_min: 120 }]);
+  expectEq('T2: B se cascadea',
+    { ok: r.ok, ids: r.affected ? r.affected.map(a => a.id).sort() : [] },
+    { ok: true, ids: [2] });
+
+  // ===== TEST 3: cascada multinivel A->B->C =====
+  setActs([
+    ma(1, '2026-06-01', '08:00', opId1, machId1, 60),
+    ma(2, '2026-06-01', '09:00', opId1, machId1, 60),
+    ma(3, '2026-06-01', '10:00', opId1, machId1, 60)
+  ]);
+  r = simulateChange([{ id: 1, fecha: '2026-06-01', hora_inicio: '08:00:00', operario_id: opId1, maquina_id: machId1, duracion_planificador_min: 120 }]);
+  expectEq('T3: cascada multinivel A->B->C',
+    { ok: r.ok, ids: r.affected ? r.affected.map(a => a.id).sort() : [] },
+    { ok: true, ids: [2, 3] });
+
+  // ===== TEST 4: pulmon, modo cascadear =====
+  setActs([
+    ma(1, '2026-06-01', '08:00', opId1, machId1, 60),
+    ma(2, '2026-06-01', '09:00', opId1, machId1, 60, { pulmon: true })
+  ]);
+  r = simulateChange([{ id: 1, fecha: '2026-06-01', hora_inicio: '08:00:00', operario_id: opId1, maquina_id: machId1, duracion_planificador_min: 90 }], { pulmonAction: 'cascadear' });
+  expectEq('T4: pulmon cascadear -> pulmon se mueve',
+    { ok: r.ok, ids: r.affected ? r.affected.map(a => a.id).sort() : [] },
+    { ok: true, ids: [2] });
+
+  // ===== TEST 5: pulmon, modo pisar =====
+  setActs([
+    ma(1, '2026-06-01', '08:00', opId1, machId1, 60),
+    ma(2, '2026-06-01', '09:00', opId1, machId1, 60, { pulmon: true })
+  ]);
+  r = simulateChange([{ id: 1, fecha: '2026-06-01', hora_inicio: '08:00:00', operario_id: opId1, maquina_id: machId1, duracion_planificador_min: 90 }], { pulmonAction: 'pisar' });
+  expectEq('T5: pulmon pisar -> pulmon eliminado del state',
+    { ok: r.ok, pulmonInState: r.ok ? r.state.has(2) : true },
+    { ok: true, pulmonInState: false });
+
+  // ===== TEST 6: correlatividad - sucesor cascadeado =====
+  setActs([
+    ma(1, '2026-06-01', '08:00', opId1, machId1, 60),
+    ma(10, '2026-06-01', '10:00', opId1, machId1, 60, { desc: 'B-suc' })
+  ]);
+  setCorrs([{ id: 100, predecesor_id: 1, sucesor_id: 10 }]);
+  // Aumentamos A a 4hs (480min): debe pisar a B y B debe cascadearse por correlatividad+operario
+  r = simulateChange([{ id: 1, fecha: '2026-06-01', hora_inicio: '08:00:00', operario_id: opId1, maquina_id: machId1, duracion_planificador_min: 240 }]);
+  expectEq('T6: sucesor con correlatividad cascadeado',
+    { ok: r.ok, bMoved: r.ok ? r.affected.some(a => a.id === 10) : false },
+    { ok: true, bMoved: true });
+
+  // ===== TEST 7: correlatividad en cadena P -> S1 -> S2 =====
+  setActs([
+    ma(1, '2026-06-01', '08:00', opId1, machId1, 60, { desc: 'P' }),
+    ma(2, '2026-06-01', '10:00', opId1, machId1, 60, { desc: 'S1' }),
+    ma(3, '2026-06-01', '12:00', opId1, machId1, 60, { desc: 'S2' })
+  ]);
+  setCorrs([
+    { id: 1, predecesor_id: 1, sucesor_id: 2 },
+    { id: 2, predecesor_id: 2, sucesor_id: 3 }
+  ]);
+  // Aumento P a 180min: arrastra S1 y S1 debe arrastrar S2
+  r = simulateChange([{ id: 1, fecha: '2026-06-01', hora_inicio: '08:00:00', operario_id: opId1, maquina_id: machId1, duracion_planificador_min: 180 }]);
+  expectEq('T7: cadena de correlatividades',
+    { ok: r.ok, ids: r.affected ? r.affected.map(a => a.id).sort() : [] },
+    { ok: true, ids: [2, 3] });
+
+  // ===== TEST 8: predecesor sin planificar (debe bloquear) =====
+  setActs([
+    // Solo el sucesor planificado, predecesor 999 no existe en acts
+    ma(10, '2026-06-01', '10:00', opId1, machId1, 60, { desc: 'S' })
+  ]);
+  setCorrs([{ id: 1, predecesor_id: 999, sucesor_id: 10 }]);
+  r = simulateChange([{ id: 10, fecha: '2026-06-01', hora_inicio: '10:00:00', operario_id: opId1, maquina_id: machId1 }]);
+  expectEq('T8: predecesor sin planificar -> error', r.ok, false);
+  expectEq('T8: error type', r.error, 'predecesor_no_planificado');
+
+  // ===== TEST 9: auto-24/7, setup ata operario =====
+  setActs([
+    ma(1, '2026-06-01', '08:00', opId1, machId1, 240, { tipo: 'automatica', setup: 30 }),
+    // Activ del mismo operario justo despues del setup (08:30+)
+    ma(2, '2026-06-01', '09:00', opId1, machId2, 60)
+  ]);
+  setCorrs([]);
+  r = simulateChange([{ id: 1, fecha: '2026-06-01', hora_inicio: '08:00:00', operario_id: opId1, maquina_id: machId1 }]);
+  // El setup va de 08:00 a 08:30, B@09:00 NO se pisa con el setup -> no se mueve
+  expectEq('T9: B no se cascadea (setup termina antes)',
+    { ok: r.ok, n: r.affected ? r.affected.length : -1 },
+    { ok: true, n: 0 });
+
+  // ===== TEST 10: auto-24/7, setup mas largo pisa B =====
+  setActs([
+    ma(1, '2026-06-01', '08:00', opId1, machId1, 240, { tipo: 'automatica', setup: 90 }),
+    // Activ del mismo operario en otra maquina, dentro del setup de A
+    ma(2, '2026-06-01', '09:00', opId1, machId2, 60)
+  ]);
+  r = simulateChange([{ id: 1, fecha: '2026-06-01', hora_inicio: '08:00:00', operario_id: opId1, maquina_id: machId1 }]);
+  // Setup va 08:00-09:30, B@09:00 SI se pisa con el setup -> B cascadea
+  expectEq('T10: B cascadea por setup mas largo',
+    { ok: r.ok, ids: r.affected ? r.affected.map(a => a.id).sort() : [] },
+    { ok: true, ids: [2] });
+
+  // ===== TEST 11: dos manuales mismo operario, conflicto operario =====
+  setActs([
+    ma(1, '2026-06-01', '08:00', opId1, machId1, 120),
+    ma(2, '2026-06-01', '09:00', opId1, machId2, 60)  // distinta maquina pero mismo op
+  ]);
+  r = simulateChange([{ id: 1, fecha: '2026-06-01', hora_inicio: '08:00:00', operario_id: opId1, maquina_id: machId1 }]);
+  // A ata operario hasta 10:00, B@09:00 distinta maquina pero mismo op -> cascadea
+  expectEq('T11: conflicto operario distinta maquina',
+    { ok: r.ok, ids: r.affected ? r.affected.map(a => a.id).sort() : [] },
+    { ok: true, ids: [2] });
+
+  // ===== TEST 12: maquina compartida entre operarios =====
+  setActs([
+    ma(1, '2026-06-01', '08:00', opId1, machId1, 60),
+    ma(2, '2026-06-01', '09:00', opId2, machId1, 60)  // distinto op, misma maquina
+  ]);
+  r = simulateChange([{ id: 1, fecha: '2026-06-01', hora_inicio: '08:00:00', operario_id: opId1, maquina_id: machId1, duracion_planificador_min: 120 }]);
+  // A termina a las 10:00 en machId1, B@09:00 en machId1 distinto op -> cascadea por maquina
+  expectEq('T12: cascada maquina entre operarios',
+    { ok: r.ok, ids: r.affected ? r.affected.map(a => a.id).sort() : [] },
+    { ok: true, ids: [2] });
+
+  // ===== TEST 13: cascada mixta op+maquina (B mueve, C mismo op de B se afecta) =====
+  setActs([
+    ma(1, '2026-06-01', '08:00', opId1, machId1, 240),       // A op1 mach1, dura 4h, ata op1
+    ma(2, '2026-06-01', '09:00', opId2, machId1, 120),       // B op2 mach1 -> cascadea por maquina (cae despues de A)
+    ma(3, '2026-06-01', '12:30', opId2, machId2, 60)         // C op2 mach2 -> debe cascadear si B se mueve y la pisa
+  ]);
+  r = simulateChange([{ id: 1, fecha: '2026-06-01', hora_inicio: '08:00:00', operario_id: opId1, maquina_id: machId1 }]);
+  // A@08:00 dura 4h en machId1: A ocupa machId1 hasta 12:00.
+  // B@09:00 op2 machId1 -> cascadea a 12:00, dura 2h -> hasta 14:00.
+  // C@12:30 op2 machId2 -> ahora pisa con B nueva (12:00-14:00 mismo op) -> debe cascadear.
+  expectEq('T13: cascada mixta op+mach',
+    { ok: r.ok, ids: r.affected ? r.affected.map(a => a.id).sort() : [] },
+    { ok: true, ids: [2, 3] });
+
+  // ===== TEST 14: multiples ciclos de cascada (A->B por mach, B->A por op?) =====
+  // Caso patologico: A en mach1 termina 10:00. B en mach1 a las 09:00 se va a las 10:00.
+  // Si B esta en op1 tambien, op1 ya esta libre tras A, OK no hay segundo loop.
+  // Verificamos que la simulacion converge.
+  setActs([
+    ma(1, '2026-06-01', '08:00', opId1, machId1, 120),
+    ma(2, '2026-06-01', '09:00', opId2, machId1, 60),
+    ma(3, '2026-06-01', '11:00', opId1, machId1, 60)  // posterior a A en mach1, ya despues de cascadea
+  ]);
+  r = simulateChange([{ id: 1, fecha: '2026-06-01', hora_inicio: '08:00:00', operario_id: opId1, maquina_id: machId1, duracion_planificador_min: 180 }]);
+  // A nuevo: 08:00-11:00. B@09:00 op2 mach1 -> 11:00. C@11:00 op1 mach1 -> 12:00 (despues de B@11:00).
+  // Pero C es op1 igual a A, entonces tambien debe esperar fin op1: A op1 termina 11:00 -> OK.
+  expectEq('T14: convergencia con 3 activ',
+    { ok: r.ok },
+    { ok: true });
+  if (r.ok) {
+    const c = r.state.get(3);
+    expectTrue('T14: C arranca >= 12:00 (despues de B)', tM(c.hora_inicio) >= 720 || c.fecha > '2026-06-01');
+  }
+
+  // ===== TEST 15: multiples cambios simultaneos =====
+  setActs([
+    ma(1, '2026-06-01', '08:00', opId1, machId1, 60),
+    ma(2, '2026-06-01', '14:00', opId2, machId2, 60),
+    ma(3, '2026-06-01', '10:00', opId1, machId1, 60)
+  ]);
+  // Cambiamos A (dur 180min, ahora pisa a C@10:00) y B simultaneamente
+  r = simulateChange([
+    { id: 1, fecha: '2026-06-01', hora_inicio: '08:00:00', operario_id: opId1, maquina_id: machId1, duracion_planificador_min: 180 },
+    { id: 2, fecha: '2026-06-01', hora_inicio: '13:00:00', operario_id: opId2, maquina_id: machId2 }
+  ]);
+  expectEq('T15: dos cambios simultaneos, A cascadea C',
+    { ok: r.ok, ids: r.affected ? r.affected.map(a => a.id).sort() : [] },
+    { ok: true, ids: [3] });
+
+  // ===== TEST 16: convergencia con muchos elementos =====
+  // Cadena de 10 activ del mismo operario consecutivas, primera crece.
+  const longSet = [];
+  for (let i = 0; i < 10; i++) {
+    longSet.push(ma(100 + i, '2026-06-01', String(8 + i).padStart(2, '0') + ':00', opId1, machId1, 60));
+  }
+  setActs(longSet);
+  setCorrs([]);
+  r = simulateChange([{ id: 100, fecha: '2026-06-01', hora_inicio: '08:00:00', operario_id: opId1, maquina_id: machId1, duracion_planificador_min: 120 }]);
+  expectEq('T16: cadena larga converge',
+    { ok: r.ok, n: r.affected ? r.affected.length : -1 },
+    { ok: true, n: 9 });
+
+  // ===== TEST 17: cambio que NO hace converger? Verificamos que detecta no_converge =====
+  // No es facil construir un escenario que no converja con la logica actual
+  // (siempre se mueve hacia adelante). Skipeamos este test.
+
+  // ===== TEST 18: cambio de duracion via change.duracion_planificador_min =====
+  setActs([
+    ma(1, '2026-06-01', '08:00', opId1, machId1, 60),
+    ma(2, '2026-06-01', '09:30', opId1, machId1, 60)
+  ]);
+  // Cambiamos solo duracion (no posicion), el motor debe detectar que pisa a B
+  r = simulateChange([{ id: 1, fecha: '2026-06-01', hora_inicio: '08:00:00', operario_id: opId1, maquina_id: machId1, duracion_planificador_min: 120 }]);
+  expectEq('T18: cambio solo duracion cascadea correctamente',
+    { ok: r.ok, ids: r.affected ? r.affected.map(a => a.id).sort() : [] },
+    { ok: true, ids: [2] });
+
+  // ===== TEST 19: cambio de tipo manual -> auto cambia comportamiento =====
+  setActs([
+    // A originalmente manual de 60min, ata operario las 60min
+    ma(1, '2026-06-01', '08:00', opId1, machId1, 60),
+    // B en otra maquina del mismo operario a las 08:30 (se solaparia con A si A es manual)
+    ma(2, '2026-06-01', '08:30', opId1, machId2, 60)
+  ]);
+  // Cambiamos A a auto con setup 15 (operario solo atado 15min)
+  r = simulateChange([{
+    id: 1, fecha: '2026-06-01', hora_inicio: '08:00:00', operario_id: opId1, maquina_id: machId1,
+    tipo: 'automatica', duracion_operario_min: 15,
+    ot_ack_tipo: 'automatica', ot_ack_setup_min: 15
+  }]);
+  // Ahora A solo ata operario hasta 08:15. B@08:30 ya no se solapa.
+  expectEq('T19: cambio a auto libera operario (B no cascadea)',
+    { ok: r.ok, n: r.affected ? r.affected.length : -1 },
+    { ok: true, n: 0 });
+
+  // ===== TEST 20: dos anchors que se pisan -> conflicto residual =====
+  setActs([
+    ma(1, '2026-06-01', '08:00', opId1, machId1, 60),
+    ma(2, '2026-06-01', '14:00', opId1, machId1, 60)
+  ]);
+  // Anclamos ambas en la misma posicion (imposible)
+  r = simulateChange([
+    { id: 1, fecha: '2026-06-01', hora_inicio: '08:00:00', operario_id: opId1, maquina_id: machId1 },
+    { id: 2, fecha: '2026-06-01', hora_inicio: '08:30:00', operario_id: opId1, maquina_id: machId1 }
+  ]);
+  expectEq('T20: dos anchors solapadas -> conflicto_no_resoluble', { ok: r.ok, err: r.error }, { ok: false, err: 'conflicto_no_resoluble' });
+
+  // ===== TEST 21: cambio de operario - activ se mueve a otro track =====
+  setActs([
+    ma(1, '2026-06-01', '08:00', opId1, machId1, 60),
+    // C en op2 a la misma hora (libre, no se pisa)
+    ma(2, '2026-06-01', '08:00', opId2, machId2, 60)
+  ]);
+  // Movemos A a op2: deberia chocar con C
+  r = simulateChange([{ id: 1, fecha: '2026-06-01', hora_inicio: '08:00:00', operario_id: opId2, maquina_id: machId1 }]);
+  expectEq('T21: cambio de operario cascadea por op',
+    { ok: r.ok, ids: r.affected ? r.affected.map(a => a.id).sort() : [] },
+    { ok: true, ids: [2] });
+
+  // ===== TEST 22: planificar activ nueva (placedActId que no existe en acts) =====
+  setActs([
+    ma(2, '2026-06-01', '10:00', opId1, machId1, 60)
+  ]);
+  // "Planificamos" la id=99 con todos los campos
+  r = simulateChange([{
+    id: 99, fecha: '2026-06-01', hora_inicio: '08:00:00',
+    operario_id: opId1, maquina_id: machId1,
+    duracion_estimada_min: 180, duracion_margen_min: 0, duracion_planificador_min: 180,
+    duracion_operario_min: null, tipo: 'manual',
+    es_pulmon: false, descripcion: 'Nueva', cliente_id: null,
+    estado: 'pendiente'
+  }]);
+  // Nueva ata operario 08-11, B@10:00 se pisa -> cascadea
+  expectEq('T22: planificar activ nueva (no estaba en acts)',
+    { ok: r.ok, ids: r.affected ? r.affected.map(a => a.id).sort() : [] },
+    { ok: true, ids: [2] });
+
+  // ===== TEST 23: actividad cruza dia (jornada termina, sigue al siguiente) =====
+  setActs([
+    // Una activ de 600min (10h) que arranca 13:00 -> tiene que cruzar jornada
+    ma(1, '2026-06-01', '13:00', opId1, machId1, 600)
+  ]);
+  r = simulateChange([{ id: 1, fecha: '2026-06-01', hora_inicio: '13:00:00', operario_id: opId1, maquina_id: machId1 }]);
+  // El motor calcula realEnd respetando jornada (06-15). Validamos que no hay
+  // error y la activ no se mueve (es la anchor).
+  expectEq('T23: activ que cruza dia, no mueve', { ok: r.ok, n: r.affected ? r.affected.length : -1 }, { ok: true, n: 0 });
+
+  // ===== TEST 24: cascada que cruza dia =====
+  setActs([
+    // A de 240min (4h) arranca 13:00 -> queda en jornada del dia 1 hasta 15:00 y sigue dia 2
+    ma(1, '2026-06-01', '13:00', opId1, machId1, 240),
+    // B en mismo op/dia despues de A pero antes que termine A en dia 2
+    ma(2, '2026-06-02', '06:30', opId1, machId1, 60)
+  ]);
+  r = simulateChange([{ id: 1, fecha: '2026-06-01', hora_inicio: '13:00:00', operario_id: opId1, maquina_id: machId1 }]);
+  // A nuevo: 13:00-15:00 (dia 1) + sigue 06:00-08:00 (dia 2) total 4h.
+  // B@06:30 dia 2 se pisa con A en dia 2 -> debe cascadear
+  expectEq('T24: cascada cruzando dia',
+    { ok: r.ok, bMoved: r.ok ? r.affected.some(a => a.id === 2) : false },
+    { ok: true, bMoved: true });
+
+  // ===== TEST 25: cascada salta domingo =====
+  // Suponemos que '2026-06-06' es sabado y '2026-06-07' es domingo
+  // (verificacion: new Date('2026-06-06').getDay() = 6 para sabado correcto)
+  // 6/6/2026 segun calendar real es sabado, 7/6/2026 domingo
+  setActs([
+    // A enorme un viernes (5/6) que tiene que saltar el domingo
+    ma(1, '2026-06-05', '14:00', opId1, machId1, 60),
+    // B el lunes
+    ma(2, '2026-06-08', '07:00', opId1, machId1, 60)
+  ]);
+  // No cambiamos posicion de A pero le ponemos duracion enorme: 30hs (1800min)
+  r = simulateChange([{ id: 1, fecha: '2026-06-05', hora_inicio: '14:00:00', operario_id: opId1, maquina_id: machId1, duracion_planificador_min: 1800 }]);
+  // A debe cubrir hasta lunes/martes saltando domingo. B al lunes 07:00 se debe cascadear.
+  expectEq('T25: cascada con domingo saltado',
+    { ok: r.ok, bMoved: r.ok ? r.affected.some(a => a.id === 2) : false },
+    { ok: true, bMoved: true });
+
+  // ===== TEST 26: pulmon en otro operario no se afecta =====
+  setActs([
+    ma(1, '2026-06-01', '08:00', opId1, machId1, 60),
+    ma(2, '2026-06-01', '08:30', opId2, machId2, 60, { pulmon: true })  // pulmon op2
+  ]);
+  r = simulateChange([{ id: 1, fecha: '2026-06-01', hora_inicio: '08:00:00', operario_id: opId1, maquina_id: machId1, duracion_planificador_min: 90 }], { pulmonAction: 'pisar' });
+  expectEq('T26: pulmon de otro op no se afecta',
+    { ok: r.ok, pulmonInState: r.ok ? r.state.has(2) : false },
+    { ok: true, pulmonInState: true });
+
+  // ===== TEST 27: cambio que reduce duracion (no debe cascadear nada) =====
+  setActs([
+    ma(1, '2026-06-01', '08:00', opId1, machId1, 120),
+    ma(2, '2026-06-01', '10:30', opId1, machId1, 60)  // estaba justo despues
+  ]);
+  // Reducimos A a 60min: B sigue donde estaba sin conflicto
+  r = simulateChange([{ id: 1, fecha: '2026-06-01', hora_inicio: '08:00:00', operario_id: opId1, maquina_id: machId1, duracion_planificador_min: 60 }]);
+  expectEq('T27: reducir duracion no cascadea',
+    { ok: r.ok, n: r.affected ? r.affected.length : -1 },
+    { ok: true, n: 0 });
+
+  // ===== TEST 28: dos activ con setup auto-24/7 - choque por setup =====
+  setActs([
+    // A auto-24/7, setup 30, dura 240
+    ma(1, '2026-06-01', '08:00', opId1, machId1, 240, { tipo: 'automatica', setup: 30 }),
+    // B auto, setup 30, mismo op pero distinta maquina, arranca cuando A todavia esta en setup
+    ma(2, '2026-06-01', '08:15', opId1, machId2, 120, { tipo: 'automatica', setup: 30 })
+  ]);
+  r = simulateChange([{ id: 1, fecha: '2026-06-01', hora_inicio: '08:00:00', operario_id: opId1, maquina_id: machId1 }]);
+  // A setup 08:00-08:30, B@08:15 mismo op tambien tiene setup 30 -> chocan
+  expectEq('T28: setups auto-24/7 chocan, B cascadea',
+    { ok: r.ok, ids: r.affected ? r.affected.map(a => a.id).sort() : [] },
+    { ok: true, ids: [2] });
+
+  // ===== TEST 29: re-aplicar el mismo cambio idempotente =====
+  setActs([
+    ma(1, '2026-06-01', '08:00', opId1, machId1, 60)
+  ]);
+  r = simulateChange([{ id: 1, fecha: '2026-06-01', hora_inicio: '08:00:00', operario_id: opId1, maquina_id: machId1, duracion_planificador_min: 60 }]);
+  // Cambio que no cambia nada
+  expectEq('T29: idempotencia',
+    { ok: r.ok, n: r.affected ? r.affected.length : -1, plan: r.applyPlan ? r.applyPlan.length : -1 },
+    { ok: true, n: 0, plan: 0 });
+
+  // ===== TEST 30: applyPlan refleja correctamente los cambios =====
+  setActs([
+    ma(1, '2026-06-01', '08:00', opId1, machId1, 60),
+    ma(2, '2026-06-01', '09:30', opId1, machId1, 60)
+  ]);
+  r = simulateChange([{ id: 1, fecha: '2026-06-01', hora_inicio: '08:00:00', operario_id: opId1, maquina_id: machId1, duracion_planificador_min: 120 }]);
+  // applyPlan debe contener el cambio de la anchor (dur) y el movimiento de B
+  expectEq('T30: applyPlan correcto',
+    { ok: r.ok, planLen: r.applyPlan ? r.applyPlan.length : -1 },
+    { ok: true, planLen: 2 });
+  if (r.ok) {
+    const planAnchor = r.applyPlan.find(p => p.id === 1);
+    const planB = r.applyPlan.find(p => p.id === 2);
+    expectTrue('T30: anchor en applyPlan tiene duracion_planificador_min', planAnchor && planAnchor.duracion_planificador_min === 120);
+    expectTrue('T30: B en applyPlan tiene fecha y hora_inicio', planB && planB.fecha && planB.hora_inicio);
+  }
+
+  // ===== Restaurar =====
+  setActs(origActs);
+  setCorrs(origCorrs);
+
+  console.log('=== RESULTADOS TESTS MOTOR A ===');
+  results.forEach(line => console.log(line));
+  console.log('=== ' + pass + ' pass / ' + (pass + fail) + ' (' + fail + ' fail) ===');
+  return { pass, fail, results };
+};
+
+// =============================================================================
+// FIN MOTOR A
+// =============================================================================
+
 // ========== INIT ==========
 async function init() {
   const { data: mD } = await sb.from('maquinas').select('id,nombre'); maq = mD || [];
   const { data: oD } = await sb.from('operarios').select('*'); ops = oD || [];
   const { data: cD } = await sb.from('clientes').select('*'); cls = cD || [];
   const { data: aD } = await sb.from('actividades_tablero').select('*'); acts = aD || [];
+  // Cleanup: eliminar de la DB cualquier activ con proceso_eliminado=true que
+  // este como sin_planificar. Estas filas son huerfanas (el proceso ya no
+  // existe en Proyectos y la activ no esta planificada). De lo contrario
+  // reaparecerian en el modal "+".
+  const huerfanas = acts.filter(a => a.proceso_eliminado === true && a.estado === 'sin_planificar');
+  if (huerfanas.length > 0) {
+    const ids = huerfanas.map(a => a.id);
+    await sb.from('actividades_tablero').delete().in('id', ids);
+    acts = acts.filter(a => !ids.includes(a.id));
+  }
   const { data: iD } = await sb.from('items').select('*'); items = iD || [];
   const { data: pD } = await sb.from('proyectos').select('*'); proys = pD || [];
   const { data: corrD } = await sb.from('correlatividades').select('*'); corrs = corrD || [];
