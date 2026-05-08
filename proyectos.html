@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v34</title>
+<title>Velasco App 2.0 — Proyectos v35</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -2868,12 +2868,11 @@ async function copyProject(projectId) {
     console.log('[copyProject] Procesos a copiar para item', oi.id, ':', origProcs.length);
 
     for (const op of origProcs) {
-      // Construir el payload del nuevo proceso. Solo incluimos campos que
-      // sabemos que existen y son seguros. Si Supabase rechaza alguno,
-      // capturamos el error y lo reportamos.
+      // Construir el payload del nuevo proceso. NO incluir proyecto_id:
+      // la tabla actividades_tablero NO tiene esa columna. La relacion con
+      // el proyecto es indirecta via item_id -> items.proyecto_id.
       const payload = {
         item_id: newItem.id,
-        proyecto_id: newProj.id,
         descripcion: op.descripcion,
         proceso: op.proceso,
         orden: op.orden,
