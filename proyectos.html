@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v31</title>
+<title>Velasco App 2.0 — Proyectos v32</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -141,11 +141,12 @@ const ADV_FILTERS_STORAGE_KEY = 'velasco_advFilters_v1';
 const ADV_FILTERS_PANEL_OPEN_KEY = 'velasco_advFiltersPanelOpen_v1';
 const DEFAULT_ADV_FILTERS = {
   clientes: [],
+  incluirClienteFinal: true,  // Si true, busca tambien en cliente_final (texto libre)
   proyectoNro: '',
   pedidoNro: '',
   descProyecto: '',
   descItem: '',
-  estadoItem: '',         // solo aplica en vista 'items'
+  estadoItem: '',
   producto: '',
   fechaPreset: 'todos',
   fechaDesde: null,
@@ -334,10 +335,26 @@ function resolveDateRange(preset, customDesde, customHasta) {
 function applyAdvFilters(projs) {
   const f = advFilters;
   let out = projs;
-  // Cliente: OR entre IDs seleccionados
+  // Cliente: OR entre IDs seleccionados. Si incluirClienteFinal, ademas
+  // matchea cualquier proyecto cuyo `cliente_final` contenga (case-insensitive)
+  // el nombre del cliente seleccionado. Esto permite encontrar proyectos donde
+  // el cliente facturable sea uno y el cliente final otro.
   if (f.clientes && f.clientes.length > 0) {
     const setIds = new Set(f.clientes.map(id => parseInt(id)));
-    out = out.filter(p => setIds.has(p.cliente_id));
+    if (f.incluirClienteFinal) {
+      const nombres = (f.clientes || []).map(id => {
+        const c = clientes.find(x => x.id === parseInt(id));
+        return c ? (c.nombre || '').toLowerCase() : null;
+      }).filter(n => n);
+      out = out.filter(p => {
+        if (setIds.has(p.cliente_id)) return true;
+        const cf = (p.cliente_final || '').toLowerCase();
+        if (!cf) return false;
+        return nombres.some(n => cf.includes(n));
+      });
+    } else {
+      out = out.filter(p => setIds.has(p.cliente_id));
+    }
   }
   // Nro de proyecto (id interno) - busqueda exacta
   if (f.proyectoNro && f.proyectoNro.trim() !== '') {
@@ -857,6 +874,13 @@ function renderAdvFiltersPanelHtml() {
   h += '<div id="adv-cliente-suggest" style="display:none;position:absolute;top:100%;left:0;right:0;background:#fff;border:1px solid #C8C6BE;border-top:none;border-radius:0 0 5px 5px;max-height:200px;overflow-y:auto;z-index:20;margin-top:0;box-shadow:0 4px 8px rgba(0,0,0,0.08)"></div>';
   h += '</div>';
 
+  // Checkbox: incluir clientes finales en el filtro
+  h += '<div></div>';
+  h += '<div><label style="display:inline-flex;align-items:center;gap:6px;font-size:11px;color:#5F5E5A;cursor:pointer;font-weight:500">';
+  h += '<input type="checkbox" id="adv-incluir-cliente-final"' + (f.incluirClienteFinal ? ' checked' : '') + ' onchange="advToggleIncluirClienteFinal()" style="cursor:pointer">';
+  h += '<span>Incluir tambien proyectos donde el cliente seleccionado sea el <i>cliente final</i></span>';
+  h += '</label></div>';
+
   // Nro de Proyecto
   h += '<div style="font-weight:600;color:#5F5E5A">Nº Proyecto:</div>';
   h += '<div style="position:relative">';
@@ -989,6 +1013,13 @@ function advEstadoItemChange() {
   advApply();
 }
 
+function advToggleIncluirClienteFinal() {
+  const cb = document.getElementById('adv-incluir-cliente-final');
+  if (!cb) return;
+  advFiltersDraft.incluirClienteFinal = cb.checked;
+  advApply();
+}
+
 function advClienteOutsideClick(e) {
   const sug = document.getElementById('adv-cliente-suggest');
   const inp = document.getElementById('adv-cliente-input');
@@ -1071,18 +1102,21 @@ function advFechaRangeChange() {
 }
 function advClearAll() {
   advFiltersDraft = JSON.parse(JSON.stringify(DEFAULT_ADV_FILTERS));
-  advApply();
+  advApply(true);  // skipReadInputs: no pisar el draft con los valores viejos del DOM
 }
-function advApply() {
-  // Antes de aplicar, leer valores de los inputs por si el usuario tipeo y no confirmo cada uno
-  const pn = document.getElementById('adv-proyecto-nro');
-  const ped = document.getElementById('adv-pedido-nro');
-  const dp = document.getElementById('adv-desc-proyecto');
-  const di = document.getElementById('adv-desc-item');
-  if (pn) advFiltersDraft.proyectoNro = pn.value;
-  if (ped) advFiltersDraft.pedidoNro = ped.value;
-  if (dp) advFiltersDraft.descProyecto = dp.value;
-  if (di) advFiltersDraft.descItem = di.value;
+function advApply(skipReadInputs) {
+  // Si no se pidio skipReadInputs, leer los valores de los inputs por si el
+  // usuario tipeo algo sin confirmar. (Cuando viene de "Limpiar todo", no.)
+  if (!skipReadInputs) {
+    const pn = document.getElementById('adv-proyecto-nro');
+    const ped = document.getElementById('adv-pedido-nro');
+    const dp = document.getElementById('adv-desc-proyecto');
+    const di = document.getElementById('adv-desc-item');
+    if (pn) advFiltersDraft.proyectoNro = pn.value;
+    if (ped) advFiltersDraft.pedidoNro = ped.value;
+    if (dp) advFiltersDraft.descProyecto = dp.value;
+    if (di) advFiltersDraft.descItem = di.value;
+  }
   advFilters = JSON.parse(JSON.stringify(advFiltersDraft));
   saveAdvFilters(advFilters);
   render();
