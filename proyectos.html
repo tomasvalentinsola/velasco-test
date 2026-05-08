@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v33</title>
+<title>Velasco App 2.0 — Proyectos v34</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -885,32 +885,32 @@ function renderAdvFiltersPanelHtml() {
   h += '<span>Incluir tambien proyectos donde el cliente seleccionado sea el <i>cliente final</i></span>';
   h += '</label></div>';
 
-  // Nro de Proyecto
+  // Fila combinada: Nro de Proyecto + Desc. Proyecto
   h += '<div style="font-weight:600;color:#5F5E5A">Nº Proyecto:</div>';
+  h += '<div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">';
   h += '<div style="position:relative">';
   h += '<input type="text" id="adv-proyecto-nro" value="' + escapeHtml(f.proyectoNro || '') + '" placeholder="Ej. 103" style="width:140px;padding:5px 22px 5px 8px;border:1px solid #C8C6BE;border-radius:5px;font-size:12px">';
   if (f.proyectoNro) h += '<button onclick="advClearField(\'proyectoNro\')" style="position:absolute;left:120px;top:6px;background:none;border:none;cursor:pointer;font-size:12px;color:#888;padding:0 3px">×</button>';
   h += '</div>';
+  h += '<div style="font-weight:600;color:#5F5E5A;margin-left:10px">Desc. Proy.:</div>';
+  h += '<div style="position:relative;flex:1;min-width:200px">';
+  h += '<input type="text" id="adv-desc-proyecto" value="' + escapeHtml(f.descProyecto || '') + '" placeholder="Ej. eje" style="width:100%;padding:5px 22px 5px 8px;border:1px solid #C8C6BE;border-radius:5px;font-size:12px;box-sizing:border-box">';
+  if (f.descProyecto) h += '<button onclick="advClearField(\'descProyecto\')" style="position:absolute;right:6px;top:6px;background:none;border:none;cursor:pointer;font-size:12px;color:#888;padding:0 3px">×</button>';
+  h += '</div>';
+  h += '</div>';
 
-  // Nro de Pedido
+  // Fila combinada: Nro de Pedido + Desc. Item
   h += '<div style="font-weight:600;color:#5F5E5A">Nº Pedido:</div>';
+  h += '<div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">';
   h += '<div style="position:relative">';
   h += '<input type="text" id="adv-pedido-nro" value="' + escapeHtml(f.pedidoNro || '') + '" placeholder="Ej. 4137" style="width:140px;padding:5px 22px 5px 8px;border:1px solid #C8C6BE;border-radius:5px;font-size:12px">';
   if (f.pedidoNro) h += '<button onclick="advClearField(\'pedidoNro\')" style="position:absolute;left:120px;top:6px;background:none;border:none;cursor:pointer;font-size:12px;color:#888;padding:0 3px">×</button>';
   h += '</div>';
-
-  // Descripcion del proyecto (substring case-insensitive)
-  h += '<div style="font-weight:600;color:#5F5E5A">Desc. Proyecto:</div>';
-  h += '<div style="position:relative">';
-  h += '<input type="text" id="adv-desc-proyecto" value="' + escapeHtml(f.descProyecto || '') + '" placeholder="Ej. eje" style="width:240px;padding:5px 22px 5px 8px;border:1px solid #C8C6BE;border-radius:5px;font-size:12px">';
-  if (f.descProyecto) h += '<button onclick="advClearField(\'descProyecto\')" style="position:absolute;left:220px;top:6px;background:none;border:none;cursor:pointer;font-size:12px;color:#888;padding:0 3px">×</button>';
+  h += '<div style="font-weight:600;color:#5F5E5A;margin-left:10px">Desc. Item:</div>';
+  h += '<div style="position:relative;flex:1;min-width:200px">';
+  h += '<input type="text" id="adv-desc-item" value="' + escapeHtml(f.descItem || '') + '" placeholder="Ej. eje" style="width:100%;padding:5px 22px 5px 8px;border:1px solid #C8C6BE;border-radius:5px;font-size:12px;box-sizing:border-box">';
+  if (f.descItem) h += '<button onclick="advClearField(\'descItem\')" style="position:absolute;right:6px;top:6px;background:none;border:none;cursor:pointer;font-size:12px;color:#888;padding:0 3px">×</button>';
   h += '</div>';
-
-  // Descripcion del item (substring case-insensitive)
-  h += '<div style="font-weight:600;color:#5F5E5A">Desc. Item:</div>';
-  h += '<div style="position:relative">';
-  h += '<input type="text" id="adv-desc-item" value="' + escapeHtml(f.descItem || '') + '" placeholder="Ej. eje" style="width:240px;padding:5px 22px 5px 8px;border:1px solid #C8C6BE;border-radius:5px;font-size:12px">';
-  if (f.descItem) h += '<button onclick="advClearField(\'descItem\')" style="position:absolute;left:220px;top:6px;background:none;border:none;cursor:pointer;font-size:12px;color:#888;padding:0 3px">×</button>';
   h += '</div>';
 
   // Estado del item: solo aplica en vista de items
@@ -1223,6 +1223,10 @@ function renderNewProjectForm() {
     h += '<option value="' + st + '"' + (st === 'Proyectando' ? ' selected' : '') + '>' + st + '</option>';
   });
   h += '</select></div></div>';
+  // Cliente final justo debajo de Cliente, antes que el resto del form
+  h += '<div class="ef"><div class="ef-l">Cliente final (opcional)</div>';
+  h += '<input type="text" class="ef-i" id="f-clifinal" placeholder="Ej. GDLP">';
+  h += '<div class="ef-help">Para casos como stock interno donde el destinatario real es otro.</div></div>';
   h += '<div class="ef" id="ef-pedido" style="display:none"><div class="ef-l">Numero de pedido <span style="color:#A32D2D">*</span></div>';
   h += '<input type="text" class="ef-i" id="f-pedido" placeholder="Ej. 4130 (de TacticaSoft)">';
   h += '<div class="ef-help">Solo para proyectos confirmados. Si no lo tenes ahora, podes dejarlo vacio y aparecera una advertencia.</div>';
@@ -1240,9 +1244,6 @@ function renderNewProjectForm() {
   h += '<input type="date" class="ef-i" id="f-fechaing" value="' + new Date().toISOString().substring(0, 10) + '"></div>';
   h += '<div class="ef" style="flex:1"><div class="ef-l">Fecha de entrega <span style="color:#A32D2D">*</span></div>';
   h += '<input type="date" class="ef-i" id="f-fechaentrega" value=""><div class="ef-help">Fecha comprometida al cliente.</div></div></div>';
-  h += '<div class="ef"><div class="ef-l">Cliente final (opcional)</div>';
-  h += '<input type="text" class="ef-i" id="f-clifinal" placeholder="Ej. GDLP">';
-  h += '<div class="ef-help">Para casos como stock interno donde el destinatario real es otro.</div></div>';
   h += '</div></div>';
   h += '<div class="section-t" style="margin-top:24px">Primer item del proyecto <span style="font-size:11px;color:#A32D2D;font-weight:500">* obligatorio</span></div>';
   h += '<div style="background:#FAFAF7;border:1px solid #E8E6DF;border-radius:6px;padding:14px">';
@@ -1373,9 +1374,9 @@ function renderProjectDetail() {
   h += '<div class="form-t" style="display:flex;align-items:center;justify-content:space-between;gap:8px">';
   h += '<span style="display:flex;align-items:center;gap:10px"><span>' + escapeHtml(proj.descripcion || '(sin descripcion)') + '</span>' + stBadge + '</span>';
   h += '<div style="display:flex;gap:6px;flex-wrap:wrap">';
-  h += '<button class="b" onclick="copyProjectForMail(' + proj.id + ')" title="Copia el proyecto formateado para pegar en el mail estandarizado">📋 Copiar para mail</button>';
-  h += '<button class="b" onclick="copyProject(' + proj.id + ')" title="Crea un proyecto nuevo con todos estos datos">📑 Copiar proyecto</button>';
-  h += '<button class="b" onclick="showProjectStateModal(' + proj.id + ')">Cambiar estado</button>';
+  h += '<button class="b" onclick="copyProjectForMail(' + proj.id + ')" title="Copia el proyecto formateado para pegar en el mail estandarizado">✉ Copiar para mail</button>';
+  h += '<button class="b" onclick="copyProject(' + proj.id + ')" title="Crea un proyecto nuevo con todos estos datos">📑 Duplicar proyecto</button>';
+  h += '<button class="b b-p" onclick="showProjectStateModal(' + proj.id + ')">Cambiar estado</button>';
   h += '</div></div>';
 
   if (needsPedidoWarn) {
@@ -1402,6 +1403,10 @@ function renderProjectDetail() {
   h += '<input type="date" class="ef-i" id="f-fechaentrega" value="' + (proj.fecha_entrega || '') + '"></div></div>';
   h += '<div class="ef"><div class="ef-l">Cliente final (opcional)</div>';
   h += '<input type="text" class="ef-i" id="f-clifinal" value="' + escapeHtml(proj.cliente_final || '') + '" placeholder="Solo si el destinatario real es otro"></div>';
+  // Observaciones que se incluyen en "Copiar para mail" - campo libre
+  h += '<div class="ef"><div class="ef-l">Observaciones para mail estandarizado</div>';
+  h += '<textarea class="ef-i" id="f-obs-mail" rows="3" placeholder="Texto opcional que aparecera en la fila Observaciones del mail">' + escapeHtml(proj.observaciones_mail || '') + '</textarea>';
+  h += '<div class="ef-help">Estas observaciones se incluyen al usar el boton Copiar para mail.</div></div>';
   if (proj.estado === 'Anulado' && proj.observaciones_anulacion) {
     h += '<div class="ef"><div class="ef-l">Observaciones de anulacion</div>';
     h += '<textarea class="ef-i" rows="2" disabled style="background:#FEF0F0;color:#A32D2D">' + escapeHtml(proj.observaciones_anulacion) + '</textarea></div>';
@@ -1478,6 +1483,7 @@ async function saveProjectMeta() {
   const fechaIngreso = document.getElementById('f-fechaing').value || null;
   const fechaEntrega = document.getElementById('f-fechaentrega').value || null;
   const clienteFinal = document.getElementById('f-clifinal').value.trim() || null;
+  const obsMail = document.getElementById('f-obs-mail') ? document.getElementById('f-obs-mail').value.trim() || null : null;
   const pedidoNro = document.getElementById('f-pedido').value.trim() || null;
   if (!descripcion) { toast('Descripcion requerida', true); return; }
   // Check unique pedido_nro
@@ -1488,7 +1494,8 @@ async function saveProjectMeta() {
   await sb.from('proyectos').update({
     descripcion, urgencia, foto_url: foto, fecha_ingreso: fechaIngreso,
     fecha_entrega: fechaEntrega,
-    cliente_final: clienteFinal, pedido_nro: pedidoNro
+    cliente_final: clienteFinal, pedido_nro: pedidoNro,
+    observaciones_mail: obsMail
   }).eq('id', proj.id);
   // Propagate to items + activities (cliente_id, pedido_nro)
   await sb.from('items').update({ pedido_nro: pedidoNro }).eq('proyecto_id', proj.id);
@@ -1989,7 +1996,7 @@ function showProcesoForm(procesoId) {
 
   h += '<div class="ef"><div class="ef-l">Proceso <span style="color:#A32D2D">*</span></div>';
   h += '<select class="ef-i" id="p-proceso" onchange="onProcesoChange()">';
-  const procStandard = ['Agujereado','Armado','Compra','Control','Corte','Desarme y limpieza','Despacho/Cierre','Electroerosion','Fresado','Mantenimiento','Plegado','Rectificado a Piedra','Relevamiento','Soldadura','Torneado','Tratamiento térmico'];
+  const procStandard = ['Agujereado','Armado','Compra','Control','Corte','Desarme y limpieza','Despacho/Cierre','Electroerosion','Fresado','Mantenimiento','Plegado','Rectificado a piedra','Relevamiento','Soldadura','Torneado','Tratamiento térmico'];
   // Si es proceso existente, tomamos su valor. Si es nuevo, queda vacio para
   // forzar al responsable a elegir explicitamente (default no debe ser Torneado).
   const currentProc = proceso ? (proceso.proceso || proceso.descripcion) : '';
@@ -2640,6 +2647,15 @@ async function copyProjectForMail(projectId) {
   };
   const sect = txt => '<p style="margin:0 0 4px 0"><b><u>' + escapeHtml(txt) + '</u></b></p>';
   const line = (lbl, val, valStyle) => '<p style="margin:0"><b>' + escapeHtml(lbl) + ':</b>' + (val ? ' ' + (valStyle ? '<span style="' + valStyle + '">' + escapeHtml(val) + '</span>' : escapeHtml(val)) : '') + '</p>';
+  // Trunca un texto a N caracteres SIN sufijo (segun pedido). Si excede, corta seco.
+  const trunc20 = s => {
+    if (!s) return '';
+    if (s.length <= 20) return s;
+    return s.substring(0, 20);
+  };
+  // Cotizar: "Si" si el proyecto esta en estado Proyectando o Presupuestar.
+  // Para los demas estados, "No". Esto se puede modificar a mano en el mail.
+  const cotizarVal = (proj.estado === 'Proyectando' || proj.estado === 'Presupuestar') ? 'Si' : 'No';
 
   // Construir HTML
   let html = '<div style="font-family:Arial,sans-serif;font-size:13px;color:#000;line-height:1.45">';
@@ -2648,20 +2664,27 @@ async function copyProjectForMail(projectId) {
   html += line('Cliente', cli ? cli.nombre : '');
   html += line('Nombre de Contacto', '');
   html += line('Descripción', proj.descripcion || '');
-  // Cantidad: si hay un solo item lo ponemos. Si hay varios queda en blanco
-  // y se ve cantidad por item en Procesos aproximados.
   if (projItems.length === 1) {
     html += line('Cantidad', String(projItems[0].cantidad || ''));
   } else {
     html += line('Cantidad', '');
   }
-  html += line('Cotizar', 'No');
-  html += line('Fecha de Cotización', '-');
+  html += line('Cotizar', cotizarVal);
+  // Fecha de cotizacion: siempre vacia, la completa Oficina Tecnica a mano
+  html += line('Fecha de Cotización', '');
   html += line('Cargar Pedido', 'Si');
   // Fecha de entrega en rojo
   html += line('Fecha de Entrega', fmt(proj.fecha_entrega), 'color:#A32D2D;font-weight:600');
   html += line('Teléfono o mail de Contacto (si se cree relevante)', '');
-  html += line('Observaciones', '');
+  // Observaciones desde el campo nuevo observaciones_mail
+  if (proj.observaciones_mail && proj.observaciones_mail.trim()) {
+    html += '<p style="margin:0"><b>Observaciones:</b></p>';
+    // Convertir saltos de linea en <br>
+    const obsHtml = escapeHtml(proj.observaciones_mail).replace(/\n/g, '<br>');
+    html += '<p style="margin:0">' + obsHtml + '</p>';
+  } else {
+    html += line('Observaciones', '');
+  }
   html += '<p style="margin:10px 0 0 0">&nbsp;</p>';
 
   // Procesos aproximados
@@ -2676,9 +2699,13 @@ async function copyProjectForMail(projectId) {
     if (procs.length > 0) {
       html += '<ul style="margin:2px 0 4px 0;padding-left:24px">';
       procs.forEach(p => {
+        // Formato simple: "Proceso - descripcion truncada a 20 chars"
+        // Sin deteccion de duplicados ni "...". Si la desc es vacia,
+        // solo se muestra el nombre del proceso.
         const procName = p.proceso || '';
         const procDesc = p.descripcion || '';
-        const txt = procDesc ? procName + ' — ' + procDesc : procName;
+        const descTrunc = trunc20(procDesc);
+        const txt = descTrunc ? procName + ' - ' + descTrunc : procName;
         html += '<li>' + escapeHtml(txt) + '</li>';
       });
       html += '</ul>';
@@ -2703,21 +2730,26 @@ async function copyProjectForMail(projectId) {
   }
   html += '</div>';
 
-  // Texto plano de fallback (cuando se pega en un editor que no admite HTML)
+  // Texto plano fallback
   let plain = 'Información General\n';
   plain += 'Cliente: ' + (cli ? cli.nombre : '') + '\n';
   plain += 'Descripción: ' + (proj.descripcion || '') + '\n';
-  plain += 'Fecha de Entrega: ' + fmt(proj.fecha_entrega) + '\n\n';
-  plain += 'Procesos aproximados:\n';
-  projItems.forEach((it, idx) => {
+  plain += 'Cotizar: ' + cotizarVal + '\n';
+  plain += 'Fecha de Entrega: ' + fmt(proj.fecha_entrega) + '\n';
+  if (proj.observaciones_mail && proj.observaciones_mail.trim()) {
+    plain += 'Observaciones:\n' + proj.observaciones_mail + '\n';
+  }
+  plain += '\nProcesos aproximados:\n';
+  projItems.forEach((it) => {
     const procs = actividades.filter(a => a.item_id === it.id && !a.proceso_eliminado).sort((a, b) => (a.orden || 999999) - (b.orden || 999999));
     plain += '* ' + (it.descripcion || '').toUpperCase() + (it.cantidad ? ' (Cant.: ' + it.cantidad + ')' : '') + '\n';
     procs.forEach(p => {
-      plain += '   * ' + (p.proceso || '') + (p.descripcion ? ' — ' + p.descripcion : '') + '\n';
+      const descTrunc = trunc20(p.descripcion || '');
+      plain += '   * ' + (p.proceso || '') + (descTrunc ? ' - ' + descTrunc : '') + '\n';
     });
   });
 
-  // Copiar al portapapeles como text/html + text/plain
+  // Copiar al clipboard
   try {
     if (navigator.clipboard && window.ClipboardItem) {
       const item = new ClipboardItem({
@@ -2727,13 +2759,12 @@ async function copyProjectForMail(projectId) {
       await navigator.clipboard.write([item]);
       toast('Texto copiado. Pegalo en Gmail con Ctrl+V.');
     } else {
-      // Fallback: solo texto plano
       await navigator.clipboard.writeText(plain);
-      toast('Texto copiado (sin formato). Pegalo en Gmail con Ctrl+V.');
+      toast('Texto copiado (sin formato).');
     }
   } catch (e) {
     console.error('Error al copiar:', e);
-    toast('No se pudo copiar al portapapeles. Probalo en otro navegador.', true);
+    toast('No se pudo copiar al portapapeles.', true);
   }
 }
 
@@ -2782,7 +2813,11 @@ async function copyImageToClipboard(url) {
 async function copyProject(projectId) {
   const proj = getProject(projectId);
   if (!proj) { toast('Proyecto no encontrado', true); return; }
-  if (!confirm('¿Crear una copia del proyecto "' + (proj.descripcion || '') + '"? Va a abrir el proyecto nuevo para editar.')) return;
+  if (!confirm('¿Duplicar el proyecto "' + (proj.descripcion || '') + '"? Va a abrir el proyecto nuevo para editar.')) return;
+
+  // Contadores para reportar al final
+  let itemsCopied = 0, itemsFailed = 0, procsCopied = 0, procsFailed = 0;
+  const errors = [];
 
   // 1. Crear el proyecto nuevo
   const { data: newProj, error: errProj } = await sb.from('proyectos').insert({
@@ -2794,16 +2829,19 @@ async function copyProject(projectId) {
     fecha_ingreso: new Date().toISOString().substring(0, 10),
     fecha_entrega: null,
     cliente_final: proj.cliente_final,
-    estado: 'Proyectando'
+    estado: 'Proyectando',
+    observaciones_mail: proj.observaciones_mail || null
   }).select().single();
   if (errProj || !newProj) {
-    console.error(errProj);
-    toast('Error al crear copia del proyecto', true);
+    console.error('[copyProject] Error creando proyecto nuevo:', errProj);
+    toast('Error al crear copia del proyecto: ' + (errProj ? errProj.message : 'sin datos'), true);
     return;
   }
 
-  // 2. Copiar items (uno por uno para mantener ids correctos)
+  // 2. Copiar items
   const origItems = items.filter(i => i.proyecto_id === projectId);
+  console.log('[copyProject] Items originales encontrados:', origItems.length);
+
   for (const oi of origItems) {
     const { data: newItem, error: errItem } = await sb.from('items').insert({
       proyecto_id: newProj.id,
@@ -2816,22 +2854,31 @@ async function copyProject(projectId) {
       estado: 'Espera MP'
     }).select().single();
     if (errItem || !newItem) {
-      console.error(errItem);
+      console.error('[copyProject] Error creando item:', errItem, 'item original:', oi);
+      itemsFailed++;
+      errors.push('Item "' + (oi.descripcion || '?') + '": ' + (errItem ? errItem.message : 'sin datos'));
       continue;
     }
-    // 3. Copiar procesos (actividades) del item. Se reinician los campos
-    // de planificacion: la copia arranca como "sin_planificar".
+    itemsCopied++;
+
+    // 3. Copiar procesos del item. Filtramos directamente por item_id en
+    // el array global actividades.
     const origProcs = actividades.filter(a => a.item_id === oi.id && !a.proceso_eliminado)
       .sort((a, b) => (a.orden || 999999) - (b.orden || 999999));
+    console.log('[copyProject] Procesos a copiar para item', oi.id, ':', origProcs.length);
+
     for (const op of origProcs) {
-      await sb.from('actividades_tablero').insert({
+      // Construir el payload del nuevo proceso. Solo incluimos campos que
+      // sabemos que existen y son seguros. Si Supabase rechaza alguno,
+      // capturamos el error y lo reportamos.
+      const payload = {
         item_id: newItem.id,
         proyecto_id: newProj.id,
         descripcion: op.descripcion,
         proceso: op.proceso,
         orden: op.orden,
         duracion_estimada_min: op.duracion_estimada_min,
-        duracion_margen_min: op.duracion_margen_min,
+        duracion_margen_min: op.duracion_margen_min || 0,
         duracion_operario_min: op.duracion_operario_min,
         duracion_planificador_min: op.duracion_planificador_min,
         tipo: op.tipo,
@@ -2844,20 +2891,37 @@ async function copyProject(projectId) {
         cliente_id: proj.cliente_id,
         pedido_nro: null,
         urgencia: proj.urgencia,
-        // La copia arranca SIN planificar
         estado: 'sin_planificar',
         estado_proceso: 'Planificación Pendiente',
         fecha: '1900-01-01',
         hora_inicio: null,
         maquina_id: null,
-        operario_id: op.operario_ideal_id,
+        operario_id: op.operario_ideal_id || null,
         es_pulmon: false,
         proceso_eliminado: false
-      });
+      };
+      const { error: errProc } = await sb.from('actividades_tablero').insert(payload);
+      if (errProc) {
+        console.error('[copyProject] Error insertando proceso:', errProc, 'payload:', payload);
+        procsFailed++;
+        errors.push('Proceso "' + (op.proceso || '?') + '" en item "' + (oi.descripcion || '?') + '": ' + errProc.message);
+      } else {
+        procsCopied++;
+      }
     }
   }
 
-  toast('Proyecto copiado. Editando el nuevo.');
+  // Reportar resultado al usuario
+  console.log('[copyProject] Resultado:', { itemsCopied, itemsFailed, procsCopied, procsFailed });
+  if (procsFailed > 0 || itemsFailed > 0) {
+    const detail = errors.slice(0, 3).join('\n');
+    alert('Duplicacion parcial:\n' +
+      '- Items copiados: ' + itemsCopied + (itemsFailed ? ' (fallaron ' + itemsFailed + ')' : '') + '\n' +
+      '- Procesos copiados: ' + procsCopied + (procsFailed ? ' (fallaron ' + procsFailed + ')' : '') + '\n\n' +
+      'Errores:\n' + detail + '\n\nVer la consola del navegador (F12) para mas detalle.');
+  } else {
+    toast('Proyecto duplicado. ' + procsCopied + ' procesos copiados.');
+  }
   await loadAll();
   navigate({ view: 'project', projectId: newProj.id });
 }
