@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v36</title>
+<title>Velasco App 2.0 — Proyectos v37</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -46,6 +46,17 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .ef{margin-bottom:12px}
 .ef-l{font-size:11px;color:#5F5E5A;margin-bottom:4px;font-weight:500}
 .ef-i{width:100%;padding:7px 10px;border:1px solid #C8C6BE;border-radius:5px;font-size:13px;background:#fff;font-family:inherit}
+/* Editor de texto rico (Detalle de tareas / Observaciones para mail) */
+.rich-wrap{border:1px solid #C8C6BE;border-radius:5px;background:#fff;overflow:hidden}
+.rich-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:2px;padding:4px 6px;background:#F5F3EC;border-bottom:1px solid #C8C6BE}
+.rich-btn{background:#fff;border:1px solid #C8C6BE;border-radius:3px;padding:2px 6px;font-size:11px;cursor:pointer;line-height:1;color:#333;font-family:inherit}
+.rich-btn:hover{background:#E8E6DF}
+.rich-btn:active{background:#C8C6BE}
+.rich-btn.rich-color{width:18px;height:18px;padding:0;border-radius:50%;border:1px solid #888}
+.rich-sep{width:1px;height:18px;background:#C8C6BE;margin:0 4px}
+.rich-content{min-height:60px;padding:8px 10px;font-size:13px;font-family:inherit;outline:none;line-height:1.4}
+.rich-content:empty:before{content:attr(data-placeholder);color:#999;pointer-events:none}
+.rich-content:focus{background:#FAFCFF}
 .ef-i:focus{outline:none;border-color:#378ADD;box-shadow:0 0 0 2px rgba(55,138,221,.15)}
 .ef-i:disabled{background:#F5F3EC;color:#5F5E5A}
 .ef-help{font-size:10px;color:#888780;margin-top:3px}
@@ -496,6 +507,150 @@ function mN(id){const m=maquinas.find(x=>x.id===id);return m?m.nombre:'?'}
 function opN(id){const o=operarios.find(x=>x.id===id);return o?o.nombre:'?'}
 function escapeHtml(s){if(s===null||s===undefined)return'';return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c])}
 function validCuit(s){return /^\d{11}$/.test(s)}
+
+// =============================================================================
+// EDITOR DE TEXTO RICO (minimal, sin libreria externa)
+// =============================================================================
+// Se aplica a "Detalle de tareas" del proceso y "Observaciones para mail" del
+// proyecto. Estructura:
+//   <div class="rich-wrap">
+//     <div class="rich-toolbar">[B][I][U][color][tamano][limpiar]</div>
+//     <div class="rich-content" contenteditable="true" data-rich-id="X">...</div>
+//   </div>
+// Tamanos en em (relativos) para que el auto-shrink de la OT siga funcionando
+// proporcionalmente sin agrandar verticalmente la hoja.
+//
+// IDs:
+//   - El contenedor exterior se identifica por data-rich-id
+//   - readRichEditor(id) devuelve el HTML sanitizado, listo para guardar.
+//
+// Sanitizacion: al pegar (paste) limpiamos el HTML para que solo queden tags
+// permitidos (b/i/u/span con style permitidos). Esto evita HTML sucio de Word.
+function renderRichEditor(id, initialHtml, placeholder) {
+  // El HTML inicial puede venir vacio o como texto plano (proyectos viejos);
+  // lo metemos tal cual ya que el contenteditable acepta ambos.
+  const safeInit = sanitizeRichHtml(initialHtml || '');
+  let h = '<div class="rich-wrap" data-rich-id="' + id + '">';
+  h += '<div class="rich-toolbar" onmousedown="event.preventDefault()">';  // preventDefault evita perder seleccion al clickear
+  h += '<button type="button" class="rich-btn" onclick="richExec(\'' + id + '\',\'bold\')" title="Negrita"><b>B</b></button>';
+  h += '<button type="button" class="rich-btn" onclick="richExec(\'' + id + '\',\'italic\')" title="Italica"><i>I</i></button>';
+  h += '<button type="button" class="rich-btn" onclick="richExec(\'' + id + '\',\'underline\')" title="Subrayado"><u>U</u></button>';
+  // Color picker (6 colores fijos)
+  h += '<span class="rich-sep"></span>';
+  const colors = ['#000000', '#A32D2D', '#1B7340', '#0C447C', '#854F0B', '#666666'];
+  colors.forEach(c => {
+    h += '<button type="button" class="rich-btn rich-color" style="background:' + c + '" onclick="richExec(\'' + id + '\',\'foreColor\',\'' + c + '\')" title="Color"></button>';
+  });
+  // Tamanos (em relativos)
+  h += '<span class="rich-sep"></span>';
+  h += '<button type="button" class="rich-btn" onclick="richSize(\'' + id + '\',\'1em\')" title="Chico (default)">A<sub style="font-size:9px">−</sub></button>';
+  h += '<button type="button" class="rich-btn" onclick="richSize(\'' + id + '\',\'1.15em\')" title="Mediano">A</button>';
+  h += '<button type="button" class="rich-btn" onclick="richSize(\'' + id + '\',\'1.35em\')" title="Grande" style="font-size:14px">A<sup style="font-size:9px">+</sup></button>';
+  // Limpiar formato
+  h += '<span class="rich-sep"></span>';
+  h += '<button type="button" class="rich-btn" onclick="richExec(\'' + id + '\',\'removeFormat\')" title="Limpiar formato">⌫</button>';
+  h += '</div>';
+  // Editor en si
+  h += '<div class="rich-content" contenteditable="true" data-rich-content="' + id + '" data-placeholder="' + escapeHtml(placeholder || '') + '" onpaste="richPaste(event)">' + safeInit + '</div>';
+  h += '</div>';
+  return h;
+}
+
+function richExec(id, cmd, value) {
+  const el = document.querySelector('[data-rich-content="' + id + '"]');
+  if (!el) return;
+  el.focus();
+  document.execCommand(cmd, false, value || null);
+}
+
+function richSize(id, sizeEm) {
+  const el = document.querySelector('[data-rich-content="' + id + '"]');
+  if (!el) return;
+  el.focus();
+  const sel = window.getSelection();
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) {
+    // Sin seleccion, no hace nada (no aplicar a todo el editor por accidente)
+    return;
+  }
+  // Wrapping con span y font-size en em
+  const range = sel.getRangeAt(0);
+  const span = document.createElement('span');
+  span.style.fontSize = sizeEm;
+  try {
+    range.surroundContents(span);
+  } catch (e) {
+    // Si la seleccion cruza limites, usamos extractContents como fallback
+    span.appendChild(range.extractContents());
+    range.insertNode(span);
+  }
+  sel.removeAllRanges();
+}
+
+// Al pegar, sanitizamos el HTML (saca tags peligrosos y atributos dudosos).
+function richPaste(e) {
+  e.preventDefault();
+  const html = (e.clipboardData || window.clipboardData).getData('text/html');
+  const text = (e.clipboardData || window.clipboardData).getData('text/plain');
+  const cleaned = html ? sanitizeRichHtml(html) : escapeHtml(text || '').replace(/\n/g, '<br>');
+  document.execCommand('insertHTML', false, cleaned);
+}
+
+// Sanitizador de HTML para el editor: solo deja tags y atributos seguros.
+// Permite: b, strong, i, em, u, br, span (con style limitado: font-size,
+// color, font-weight, font-style, text-decoration), p, div, ul, ol, li.
+function sanitizeRichHtml(html) {
+  if (!html) return '';
+  // Crear contenedor temporal y dejar que el browser parsee
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html;
+  // Recorrer y limpiar
+  const allowed = new Set(['B', 'STRONG', 'I', 'EM', 'U', 'BR', 'SPAN', 'P', 'DIV', 'UL', 'OL', 'LI', 'FONT']);
+  const allowedStyles = new Set(['font-size', 'color', 'font-weight', 'font-style', 'text-decoration']);
+  function clean(node) {
+    if (node.nodeType === 3) return; // texto
+    if (node.nodeType !== 1) { node.remove(); return; }
+    if (!allowed.has(node.tagName)) {
+      // Tag no permitido: reemplazar por su contenido textual
+      const parent = node.parentNode;
+      while (node.firstChild) parent.insertBefore(node.firstChild, node);
+      node.remove();
+      return;
+    }
+    // Limpiar atributos
+    [...node.attributes].forEach(attr => {
+      if (attr.name === 'style') {
+        // Mantener solo las propiedades de la lista permitida
+        const newStyle = [];
+        attr.value.split(';').forEach(decl => {
+          const [k, v] = decl.split(':').map(s => (s || '').trim());
+          if (!k || !v) return;
+          if (allowedStyles.has(k.toLowerCase())) newStyle.push(k + ':' + v);
+        });
+        if (newStyle.length > 0) node.setAttribute('style', newStyle.join(';'));
+        else node.removeAttribute('style');
+      } else if (attr.name !== 'color' && attr.name !== 'face' && attr.name !== 'size') {
+        // Borrar todos los demas atributos (incluso onclick, href, etc.)
+        node.removeAttribute(attr.name);
+      }
+    });
+    // Recursion
+    [...node.childNodes].forEach(clean);
+  }
+  [...tmp.childNodes].forEach(clean);
+  return tmp.innerHTML;
+}
+
+function readRichEditor(id) {
+  const el = document.querySelector('[data-rich-content="' + id + '"]');
+  if (!el) return null;
+  // Sanitizamos al guardar (defensa en profundidad)
+  const html = sanitizeRichHtml(el.innerHTML || '');
+  // Si solo tiene un <br> o <p><br></p>, considerar vacio
+  const txt = el.textContent || '';
+  if (!txt.trim() && !/<img|<br/i.test(html)) return null;
+  return html;
+}
+
 
 // Returns all proyectos with their items attached as ".items".
 function getProjects() {
@@ -1374,7 +1529,7 @@ function renderProjectDetail() {
   h += '<div class="form-t" style="display:flex;align-items:center;justify-content:space-between;gap:8px">';
   h += '<span style="display:flex;align-items:center;gap:10px"><span>' + escapeHtml(proj.descripcion || '(sin descripcion)') + '</span>' + stBadge + '</span>';
   h += '<div style="display:flex;gap:6px;flex-wrap:wrap">';
-  h += '<button class="b" onclick="copyProjectForMail(' + proj.id + ')" title="Copia el proyecto formateado para pegar en el mail estandarizado">✉ Copiar para mail</button>';
+  h += '<button class="b" onclick="copyProjectForMail(' + proj.id + ')" title="Copia el proyecto formateado para pegar en el mail estandarizado">✉ Copiar mail</button>';
   h += '<button class="b" onclick="copyProject(' + proj.id + ')" title="Crea un proyecto nuevo con todos estos datos">📑 Duplicar proyecto</button>';
   h += '<button class="b b-p" onclick="showProjectStateModal(' + proj.id + ')">Cambiar estado</button>';
   h += '</div></div>';
@@ -1387,7 +1542,21 @@ function renderProjectDetail() {
   h += '<div style="flex-shrink:0"><div class="ef-l">Foto del proyecto</div>' + buildPhotoWrapHtml(proj.foto_url, 'proj') + '</div>';
   h += '<div style="flex:1">';
   h += '<div class="row">';
-  h += '<div class="ef" style="flex:2"><div class="ef-l">Cliente</div><input type="text" class="ef-i" value="' + escapeHtml(clN(proj.cliente_id)) + '" disabled></div>';
+  // Cliente: editable salvo si el proyecto esta Confirmado/Cerrado/Anulado.
+  // Para Proyectando, Presupuestar y Perdido se permite cambiar (ej. tras
+  // duplicar un proyecto donde el cliente real es otro).
+  const clienteBloqueado = ['Confirmado', 'Cerrado', 'Anulado'].includes(proj.estado);
+  if (clienteBloqueado) {
+    h += '<div class="ef" style="flex:2"><div class="ef-l">Cliente</div><input type="text" class="ef-i" value="' + escapeHtml(clN(proj.cliente_id)) + '" disabled title="No se puede cambiar mientras el proyecto este en ' + proj.estado + '"></div>';
+  } else {
+    // Combo buscable (mismo patron que en el form de creacion)
+    h += '<div class="ef" style="flex:2"><div class="ef-l">Cliente</div>';
+    h += '<div class="combo-wrap" style="position:relative">';
+    h += '<input type="text" class="ef-i" id="f-cliente-search" value="' + escapeHtml(clN(proj.cliente_id)) + '" placeholder="Buscar cliente..." autocomplete="off" oninput="renderClienteCombo()" onfocus="renderClienteCombo()" onblur="setTimeout(closeClienteCombo, 200)">';
+    h += '<input type="hidden" id="f-cliente" value="' + (proj.cliente_id || '') + '">';
+    h += '<div id="f-cliente-list" class="combo-list" style="display:none"></div>';
+    h += '</div></div>';
+  }
   h += '<div class="ef" style="flex:1"><div class="ef-l">Numero de pedido' + (PROJ_STATES_REQUIRE_PEDIDO.has(proj.estado) ? ' <span style="color:#A32D2D">*</span>' : '') + '</div>';
   h += '<input type="text" class="ef-i" id="f-pedido" value="' + escapeHtml(proj.pedido_nro || '') + '" placeholder="Ej. 4130"></div></div>';
   h += '<div class="ef"><div class="ef-l">Descripcion del proyecto</div><input type="text" class="ef-i" id="f-desc" value="' + escapeHtml(proj.descripcion || '') + '"></div>';
@@ -1399,14 +1568,14 @@ function renderProjectDetail() {
   h += '</select></div>';
   h += '<div class="ef" style="flex:1"><div class="ef-l">Fecha de ingreso</div>';
   h += '<input type="date" class="ef-i" id="f-fechaing" value="' + (proj.fecha_ingreso || '') + '"></div>';
-  h += '<div class="ef" style="flex:1"><div class="ef-l">Fecha de entrega</div>';
-  h += '<input type="date" class="ef-i" id="f-fechaentrega" value="' + (proj.fecha_entrega || '') + '"></div></div>';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Fecha de entrega' + (!proj.fecha_entrega ? ' <span style="color:#A32D2D" title="Falta completar">*</span>' : '') + '</div>';
+  h += '<input type="date" class="ef-i" id="f-fechaentrega" value="' + (proj.fecha_entrega || '') + '"' + (!proj.fecha_entrega ? ' style="border-color:#A32D2D;background:#FEF5F5"' : '') + '></div></div>';
   h += '<div class="ef"><div class="ef-l">Cliente final (opcional)</div>';
   h += '<input type="text" class="ef-i" id="f-clifinal" value="' + escapeHtml(proj.cliente_final || '') + '" placeholder="Solo si el destinatario real es otro"></div>';
-  // Observaciones que se incluyen en "Copiar para mail" - campo libre
+  // Observaciones que se incluyen en "Copiar mail" - campo libre con editor rico
   h += '<div class="ef"><div class="ef-l">Observaciones para mail estandarizado</div>';
-  h += '<textarea class="ef-i" id="f-obs-mail" rows="3" placeholder="Texto opcional que aparecera en la fila Observaciones del mail">' + escapeHtml(proj.observaciones_mail || '') + '</textarea>';
-  h += '<div class="ef-help">Estas observaciones se incluyen al usar el boton Copiar para mail.</div></div>';
+  h += renderRichEditor('f-obs-mail', proj.observaciones_mail || '', 'Texto opcional que aparecera en la fila Observaciones del mail');
+  h += '<div class="ef-help">Estas observaciones se incluyen al usar el boton Copiar mail. Podes aplicarles negrita, italica, color y tamanos.</div></div>';
   if (proj.estado === 'Anulado' && proj.observaciones_anulacion) {
     h += '<div class="ef"><div class="ef-l">Observaciones de anulacion</div>';
     h += '<textarea class="ef-i" rows="2" disabled style="background:#FEF0F0;color:#A32D2D">' + escapeHtml(proj.observaciones_anulacion) + '</textarea></div>';
@@ -1483,8 +1652,16 @@ async function saveProjectMeta() {
   const fechaIngreso = document.getElementById('f-fechaing').value || null;
   const fechaEntrega = document.getElementById('f-fechaentrega').value || null;
   const clienteFinal = document.getElementById('f-clifinal').value.trim() || null;
-  const obsMail = document.getElementById('f-obs-mail') ? document.getElementById('f-obs-mail').value.trim() || null : null;
+  // Leer HTML del editor rico (no .value de textarea)
+  const obsMail = readRichEditor('f-obs-mail');
   const pedidoNro = document.getElementById('f-pedido').value.trim() || null;
+  // Cliente_id: solo se lee si el campo no estaba bloqueado (estados Proyectando/Presupuestar/Perdido)
+  const clienteIdEl = document.getElementById('f-cliente');
+  let nuevoClienteId = proj.cliente_id;
+  if (clienteIdEl) {
+    const v = parseInt(clienteIdEl.value);
+    if (!isNaN(v) && v > 0) nuevoClienteId = v;
+  }
   if (!descripcion) { toast('Descripcion requerida', true); return; }
   // Check unique pedido_nro
   if (pedidoNro) {
@@ -1492,16 +1669,19 @@ async function saveProjectMeta() {
     if (dup) { toast('Ya existe un proyecto con el pedido ' + pedidoNro, true); return; }
   }
   await sb.from('proyectos').update({
+    cliente_id: nuevoClienteId,
     descripcion, urgencia, foto_url: foto, fecha_ingreso: fechaIngreso,
     fecha_entrega: fechaEntrega,
     cliente_final: clienteFinal, pedido_nro: pedidoNro,
     observaciones_mail: obsMail
   }).eq('id', proj.id);
-  // Propagate to items + activities (cliente_id, pedido_nro)
-  await sb.from('items').update({ pedido_nro: pedidoNro }).eq('proyecto_id', proj.id);
+  // Propagate cliente_id to items y activities tambien (item.cliente_id se usa
+  // en la portada y en el tablero)
+  await sb.from('items').update({ cliente_id: nuevoClienteId, pedido_nro: pedidoNro }).eq('proyecto_id', proj.id);
   // Propagate to activities of all items
   for (const it of proj.items) {
     await sb.from('actividades_tablero').update({
+      cliente_id: nuevoClienteId,
       pedido_nro: pedidoNro, urgencia, foto_proyecto_url: foto,
       descripcion_proyecto: descripcion, fecha_ingreso: fechaIngreso, cliente_final: clienteFinal
     }).eq('item_id', it.id);
@@ -1663,8 +1843,8 @@ function showItemForm(itemId) {
   h += '<div class="ef" style="flex:1"><div class="ef-l">Presentacion materia prima</div>';
   h += '<input type="text" class="ef-i" id="i-pres" value="' + escapeHtml(item && item.presentacion_mat_prima ? item.presentacion_mat_prima : '') + '" placeholder="Ej. \u00d8290 x 1 1/2 pulg"></div>';
   h += '</div>';
-  h += '<div class="ef"><div class="ef-l">Fecha de fin estipulada</div>';
-  h += '<input type="date" class="ef-i" id="i-fechafin" value="' + (item && item.fecha_fin_estipulada ? item.fecha_fin_estipulada : '') + '" style="max-width:200px">';
+  h += '<div class="ef"><div class="ef-l">Fecha de fin estipulada' + (item && !item.fecha_fin_estipulada ? ' <span style="color:#A32D2D" title="Falta completar">*</span>' : '') + '</div>';
+  h += '<input type="date" class="ef-i" id="i-fechafin" value="' + (item && item.fecha_fin_estipulada ? item.fecha_fin_estipulada : '') + '" style="max-width:200px' + (item && !item.fecha_fin_estipulada ? ';border-color:#A32D2D;background:#FEF5F5' : '') + '">';
   h += '<div class="ef-help">Estimacion de oficina tecnica para cumplir el plazo.</div></div>';
   h += '<div class="ef"><div class="ef-l">Foto del item (opcional)</div>' + buildPhotoWrapHtml(item ? item.foto_url : null, 'item') + '<div class="ef-help">Si la dejas vacia, se usa la del proyecto.</div></div>';
   h += '<div class="actions">';
@@ -1803,7 +1983,11 @@ function renderItemDetail() {
       h += '<b>Duracion estimada:</b> ' + dur + setup + '<br>';
       h += '<b>Maq. ideal:</b> ' + escapeHtml(p.maquina_ideal_id ? mN(p.maquina_ideal_id) : (p.maquina_ideal_nombre ? p.maquina_ideal_nombre + ' (otra)' : '— ninguna —')) + (supMaqs ? ' · <b>Suplentes:</b> ' + escapeHtml(supMaqs) : '') + '<br>';
       h += '<b>Op. ideal:</b> ' + escapeHtml(opN(p.operario_ideal_id)) + (supOps ? ' · <b>Suplentes:</b> ' + escapeHtml(supOps) : '');
-      if (p.descripcion_trabajo) h += '<br><b>Trabajo:</b> ' + escapeHtml(p.descripcion_trabajo);
+      if (p.descripcion_trabajo) {
+        // Render como HTML si trae tags, escapado si es texto plano viejo
+        const trabHtml = /[<>]/.test(p.descripcion_trabajo) ? sanitizeRichHtml(p.descripcion_trabajo) : escapeHtml(p.descripcion_trabajo);
+        h += '<br><b>Trabajo:</b> ' + trabHtml;
+      }
       // Predecesores
       h += '<br><b>Predecesores:</b> ';
       if (myPreds.length === 0) h += '<span style="color:#888780;font-style:italic">ninguno</span> ';
@@ -2085,7 +2269,11 @@ function showProcesoForm(procesoId) {
   h += '<div style="margin-top:18px;padding-top:14px;border-top:1px solid #E8E6DF">';
   h += '<div style="font-size:12px;font-weight:600;color:#5F5E5A;margin-bottom:8px">Para la orden de trabajo (impresion)</div>';
   h += '<div class="ef"><div class="ef-l">Detalle de tareas a realizar</div>';
-  h += '<textarea class="ef-i" id="p-trabajo" rows="3" placeholder="Ej. Tornear segun plano. Consultar dudas con Nicolas." style="font-family:inherit;resize:vertical">' + escapeHtml(proceso && proceso.descripcion_trabajo ? proceso.descripcion_trabajo : '') + '</textarea>';
+  // Editor rico contenteditable (solo este campo y "Observaciones para mail").
+  // Los tamanos son relativos (em) para que el auto-shrink de la OT siga
+  // funcionando proporcionalmente sin agrandar verticalmente la hoja.
+  const trabajoVal = proceso && proceso.descripcion_trabajo ? proceso.descripcion_trabajo : '';
+  h += renderRichEditor('p-trabajo', trabajoVal, 'Ej. Tornear segun plano. Consultar dudas con Nicolas.');
   h += '<div class="ef-help">Texto que va a aparecer en la orden de trabajo impresa para este proceso.</div></div></div>';
 
   h += '<div class="actions">';
@@ -2142,7 +2330,8 @@ async function saveProceso(procesoId) {
 
   const supMaqs = [...chipState.maq];
   const supOps = [...chipState.op];
-  const trabajo = document.getElementById('p-trabajo').value.trim() || null;
+  // Leer HTML del editor rico (en lugar de .value de un textarea)
+  const trabajo = readRichEditor('p-trabajo');
 
   const existing = procesoId ? actividades.find(a => a.id === procesoId) : null;
   const isPlanificada = existing && existing.estado && existing.estado !== 'sin_planificar' && existing.fecha !== '1900-01-01';
@@ -2676,12 +2865,16 @@ async function copyProjectForMail(projectId) {
   // Fecha de entrega en rojo
   html += line('Fecha de Entrega', fmt(proj.fecha_entrega), 'color:#A32D2D;font-weight:600');
   html += line('Teléfono o mail de Contacto (si se cree relevante)', '');
-  // Observaciones desde el campo nuevo observaciones_mail
+  // Observaciones desde el campo nuevo observaciones_mail. Puede venir como
+  // HTML enriquecido (negritas, colores, tamanos) - lo insertamos directo
+  // sanitizando para seguridad. Si es texto plano viejo, los \n se vuelven <br>.
   if (proj.observaciones_mail && proj.observaciones_mail.trim()) {
     html += '<p style="margin:0"><b>Observaciones:</b></p>';
-    // Convertir saltos de linea en <br>
-    const obsHtml = escapeHtml(proj.observaciones_mail).replace(/\n/g, '<br>');
-    html += '<p style="margin:0">' + obsHtml + '</p>';
+    const isHtml = /[<>]/.test(proj.observaciones_mail);
+    const obsHtml = isHtml
+      ? sanitizeRichHtml(proj.observaciones_mail)
+      : escapeHtml(proj.observaciones_mail).replace(/\n/g, '<br>');
+    html += '<div style="margin:0">' + obsHtml + '</div>';
   } else {
     html += line('Observaciones', '');
   }
@@ -2737,7 +2930,10 @@ async function copyProjectForMail(projectId) {
   plain += 'Cotizar: ' + cotizarVal + '\n';
   plain += 'Fecha de Entrega: ' + fmt(proj.fecha_entrega) + '\n';
   if (proj.observaciones_mail && proj.observaciones_mail.trim()) {
-    plain += 'Observaciones:\n' + proj.observaciones_mail + '\n';
+    // Strip HTML para texto plano fallback
+    const tmp = document.createElement('div');
+    tmp.innerHTML = proj.observaciones_mail;
+    plain += 'Observaciones:\n' + (tmp.textContent || tmp.innerText || '') + '\n';
   }
   plain += '\nProcesos aproximados:\n';
   projItems.forEach((it) => {
@@ -2845,6 +3041,7 @@ async function copyProject(projectId) {
   for (const oi of origItems) {
     const { data: newItem, error: errItem } = await sb.from('items').insert({
       proyecto_id: newProj.id,
+      cliente_id: proj.cliente_id,  // heredar el cliente del proyecto (era el bug "Cliente: ?")
       descripcion: oi.descripcion,
       cantidad: oi.cantidad,
       material: oi.material,
@@ -3301,19 +3498,22 @@ function renderOT(p, idx, total, item, meta, clienteDisplay) {
   // Detail block: either checklist (Despacho/Cierre) or freeform text
   // Para Despacho: acciones a la izquierda, checkboxes a la derecha.
   // Para resto: si hay texto, se muestra arriba; sin renglones para no
-  // complicar el layout.
+  // complicar el layout. El "trabajo" puede venir como HTML (editor rico)
+  // o como texto plano de proyectos viejos. Si trae tags, lo usamos como
+  // HTML (sanitizado). Si no, lo escapamos.
+  const trabajoIsHtml = /[<>]/.test(trabajo);
+  const trabajoRendered = trabajoIsHtml ? sanitizeRichHtml(trabajo) : escapeHtml(trabajo).replace(/\n/g, '<br>');
   let detalleBlock;
   if (isDespacho) {
     let items = '';
     DESPACHO_CHECKLIST.forEach(it => {
       items += `<div class="ot-checklist-item"><span class="ot-checklist-text">${escapeHtml(it)}</span><div class="ot-checklist-box"></div></div>`;
     });
-    const trabajoExtra = trabajo ? `<div style="margin-bottom:6px;font-size:11px">${escapeHtml(trabajo)}</div>` : '';
+    const trabajoExtra = trabajo ? `<div style="margin-bottom:6px;font-size:11px">${trabajoRendered}</div>` : '';
     detalleBlock = `<div class="ot-trabajo" style="background-image:none">${trabajoExtra}<div class="ot-checklist">${items}</div></div>`;
   } else {
-    // Sin renglones (pedido del usuario). Texto con auto-shrink si excede.
     if (trabajo) {
-      detalleBlock = `<div class="ot-trabajo ot-trabajo-fit"><div class="ot-trabajo-text fit-content-multi">${escapeHtml(trabajo)}</div></div>`;
+      detalleBlock = `<div class="ot-trabajo ot-trabajo-fit"><div class="ot-trabajo-text fit-content-multi">${trabajoRendered}</div></div>`;
     } else {
       detalleBlock = `<div class="ot-trabajo ot-trabajo-fit"></div>`;
     }
