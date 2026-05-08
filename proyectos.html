@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v35</title>
+<title>Velasco App 2.0 — Proyectos v36</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -2893,7 +2893,7 @@ async function copyProject(projectId) {
         estado: 'sin_planificar',
         estado_proceso: 'Planificación Pendiente',
         fecha: '1900-01-01',
-        hora_inicio: null,
+        hora_inicio: '06:00:00',  // NOT NULL constraint en DB. Default igual al que usa saveProceso.
         maquina_id: null,
         operario_id: op.operario_ideal_id || null,
         es_pulmon: false,
