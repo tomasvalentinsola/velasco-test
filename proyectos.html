@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v46</title>
+<title>Velasco App 2.0 — Proyectos v47</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -3679,9 +3679,22 @@ let matrizSort = (function(){
 function saveMatrizFilters() { try { localStorage.setItem(MATRIZ_FILTERS_KEY, JSON.stringify(matrizFilters)); } catch(e){} }
 function saveMatrizSort() { try { localStorage.setItem(MATRIZ_SORT_KEY, JSON.stringify(matrizSort)); } catch(e){} }
 
-// Estado de despliegue (no persistente)
-let matrizExpandedProds = new Set();
-let matrizExpandedClientes = new Set();
+// Estado de despliegue (no persistente). Usamos un solo Set con claves
+// tipo "cli:N", "sec:N", "eq:N", "con:N", "sub:N", "prod:N", "gen" (para el
+// nodo virtual de Productos Genericos). Asi la vista anidada puede manejar
+// cualquier nivel.
+let matrizExpanded = new Set();
+// Compat con el codigo viejo (vista Productos plana usa esto):
+let matrizExpandedProds = {
+  has: id => matrizExpanded.has('prod:' + id),
+  add: id => matrizExpanded.add('prod:' + id),
+  delete: id => matrizExpanded.delete('prod:' + id)
+};
+let matrizExpandedClientes = {
+  has: id => matrizExpanded.has('cli:' + id),
+  add: id => matrizExpanded.add('cli:' + id),
+  delete: id => matrizExpanded.delete('cli:' + id)
+};
 
 function countActiveMatrizFilters() {
   let n = 0;
@@ -3827,7 +3840,7 @@ function matrizSortByChange() {
 }
 function matrizToggleSortDir() { matrizSort.dir = matrizSort.dir === 'asc' ? 'desc' : 'asc'; saveMatrizSort(); render(); }
 function matrizToggleViewMode() {
-  const cur = nav.matrizView || 'productos';
+  const cur = nav.matrizView || 'clientes';
   navigate({ view: 'recursos', tab: 'matriz', matrizView: cur === 'productos' ? 'clientes' : 'productos' });
 }
 function matrizToggleExpandProd(id) {
@@ -4039,13 +4052,13 @@ function _matrizRerenderList() {
 
 // Render principal de la pestaña matriz
 function renderMatrizTab() {
-  const matrizView = nav.matrizView || 'productos';
+  const matrizView = nav.matrizView || 'clientes';
   const activeCount = countActiveMatrizFilters();
 
   // Header con toggle [Productos] [Clientes] + boton "+ Nuevo producto"
   let h = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:10px;flex-wrap:wrap">';
   h += '<div style="display:flex;border:1px solid #C8C6BE;border-radius:5px;overflow:hidden">';
-  ['productos', 'clientes'].forEach(v => {
+  ['clientes', 'productos'].forEach(v => {
     const active = matrizView === v;
     const lbl = v === 'productos' ? 'Productos' : 'Clientes';
     const style = active
@@ -4194,7 +4207,7 @@ function _matrizFilterBreadcrumbHtml() {
 }
 
 function _matrizListHtml() {
-  const matrizView = nav.matrizView || 'productos';
+  const matrizView = nav.matrizView || 'clientes';
   if (matrizView === 'productos') {
     return _matrizListProductosHtml();
   } else {
@@ -4277,69 +4290,433 @@ function _matrizProductoCardHtml(p) {
 }
 
 // Vista clientes: lista de clientes con productos desplegables
+// =============================================================================
+// VISTA CLIENTES - render anidado completo
+// =============================================================================
+// Niveles: Cliente -> Sectores -> Equipos -> Conjuntos -> Subconjuntos ->
+// Productos -> Procesos.
+//
+// En cada nivel anidado el orden es: hijos directos del nivel actual primero
+// (conjuntos, subconjuntos), despues los productos que estan ubicados
+// directamente en este nivel (sin descender mas).
+//
+// Aplica los filtros activos. Un nivel se muestra solo si contiene al menos
+// un producto que pase los filtros.
+//
+// Toggle generico de expansion: claves "cli:N", "sec:N", "eq:N", "con:N",
+// "sub:N", "prod:N" (para los procesos del producto).
+// =============================================================================
+
+function matrizToggleExpand(key) {
+  if (matrizExpanded.has(key)) matrizExpanded.delete(key);
+  else matrizExpanded.add(key);
+  // Re-renderizar solo la lista (no la barra) para no perder foco de inputs
+  _matrizRerenderList();
+}
+
+// Wrappers retrocompatibles
+function matrizToggleExpandProd(id) { matrizToggleExpand('prod:' + id); }
+function matrizToggleExpandCliente(idOrGen) { matrizToggleExpand('cli:' + idOrGen); }
+
+// Helpers de jerarquia: dado un nivel y un padre, devuelve sus hijos.
+// Cada uno aplica los filtros (chips activos) si corresponde.
+function _matrizSectoresDelCliente(cliId) {
+  const sectIds = (matrizFilters.sectorIds || []).map(x => parseInt(x));
+  let secs = sectores.filter(s => s.cliente_id === cliId);
+  // Si hay filtro de sectores, recortar a esos
+  if (sectIds.length > 0) secs = secs.filter(s => sectIds.includes(s.id));
+  return secs.sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+}
+function _matrizEquiposDelSector(secId) {
+  const eqIds = (matrizFilters.equipoIds || []).map(x => parseInt(x));
+  let eqs = equipos.filter(e => e.sector_id === secId);
+  if (eqIds.length > 0) eqs = eqs.filter(e => eqIds.includes(e.id));
+  return eqs.sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+}
+function _matrizConjuntosDelEquipo(eqId, cliId) {
+  const conIds = (matrizFilters.conjuntoIds || []).map(x => parseInt(x));
+  // Conjuntos vinculados al equipo via conjuntos_equipos
+  const linkedConIds = new Set(conjuntosEquipos.filter(ce => ce.equipo_id === eqId).map(ce => ce.conjunto_id));
+  let cons = conjuntos.filter(c => linkedConIds.has(c.id));
+  // Tambien verificamos cliente (defensivo, deberia coincidir)
+  cons = cons.filter(c => c.cliente_id === cliId);
+  if (conIds.length > 0) cons = cons.filter(c => conIds.includes(c.id));
+  return cons.sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+}
+function _matrizSubconjuntosDelConjunto(conId, cliId) {
+  const subIds = (matrizFilters.subconjuntoIds || []).map(x => parseInt(x));
+  const linkedSubIds = new Set(subconjuntosConjuntos.filter(sc => sc.conjunto_id === conId).map(sc => sc.subconjunto_id));
+  let subs = subconjuntos.filter(s => linkedSubIds.has(s.id));
+  subs = subs.filter(s => s.cliente_id === cliId);
+  if (subIds.length > 0) subs = subs.filter(s => subIds.includes(s.id));
+  return subs.sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+}
+// Productos cuya UBICACION termina exactamente en el nivel dado (no productos
+// que viven mas abajo). Aplica filtros ya activos sobre el producto.
+function _matrizProductosEnNivel(opts) {
+  // opts: {clienteId, sectorId, equipoId, conjuntoId, subconjuntoId} - los que estan
+  // en null indican "vacio en ese nivel" (ej. producto del sector sin equipo).
+  const filteredProds = applyMatrizFilters(productosMatriz);
+  return filteredProds.filter(p => {
+    const ubics = productosMatrizUbicaciones.filter(u => u.producto_id === p.id);
+    if (ubics.length === 0) {
+      // Producto sin ubicacion: solo aparece en el nodo "Genericos sin cliente"
+      return opts.clienteId === undefined && opts.sectorId === undefined;
+    }
+    // Match exacto en al menos una ubicacion
+    return ubics.some(u =>
+      (opts.clienteId === undefined || u.cliente_id === opts.clienteId) &&
+      (opts.sectorId === undefined || u.sector_id === opts.sectorId) &&
+      (opts.equipoId === undefined || u.equipo_id === opts.equipoId) &&
+      (opts.conjuntoId === undefined || u.conjunto_id === opts.conjuntoId) &&
+      (opts.subconjuntoId === undefined || u.subconjunto_id === opts.subconjuntoId)
+    );
+  });
+}
+
+// Cuenta total de productos (que pasen filtros) bajo un cliente, contando
+// producto distintos (no por ubicacion). Para mostrar en el resumen.
+function _matrizCountProdsDelCliente(cliId) {
+  const filtered = applyMatrizFilters(productosMatriz);
+  return filtered.filter(p => {
+    const ubics = productosMatrizUbicaciones.filter(u => u.producto_id === p.id);
+    if (ubics.length === 0) return p.cliente_id === cliId;  // raro, defensivo
+    return ubics.some(u => u.cliente_id === cliId);
+  }).length;
+}
+function _matrizCountProdsDelSector(secId) {
+  const sec = sectores.find(s => s.id === secId);
+  if (!sec) return 0;
+  const filtered = applyMatrizFilters(productosMatriz);
+  return filtered.filter(p => {
+    const ubics = productosMatrizUbicaciones.filter(u => u.producto_id === p.id);
+    return ubics.some(u => u.sector_id === secId);
+  }).length;
+}
+function _matrizCountProdsDelEquipo(eqId) {
+  const filtered = applyMatrizFilters(productosMatriz);
+  return filtered.filter(p => {
+    const ubics = productosMatrizUbicaciones.filter(u => u.producto_id === p.id);
+    return ubics.some(u => u.equipo_id === eqId);
+  }).length;
+}
+function _matrizCountProdsDelConjunto(conId) {
+  const filtered = applyMatrizFilters(productosMatriz);
+  return filtered.filter(p => {
+    const ubics = productosMatrizUbicaciones.filter(u => u.producto_id === p.id);
+    return ubics.some(u => u.conjunto_id === conId);
+  }).length;
+}
+function _matrizCountProdsDelSubconjunto(subId) {
+  const filtered = applyMatrizFilters(productosMatriz);
+  return filtered.filter(p => {
+    const ubics = productosMatrizUbicaciones.filter(u => u.producto_id === p.id);
+    return ubics.some(u => u.subconjunto_id === subId);
+  }).length;
+}
+
+// ---- Render de cada nivel ----
+
+// Render de un nodo expandible generico (cliente, sector, equipo, etc).
+// Args:
+//   key: 'cli:N', 'sec:N', etc.
+//   icon: emoji o caracter para el header
+//   title: titulo principal del header
+//   meta: linea secundaria del header (ej. "8 producto(s)")
+//   color: color del titulo (HEX)
+//   indent: paddingLeft del bloque expandido (px)
+//   childrenHtml: callback que devuelve el HTML interior cuando esta expandido
+function _matrizRenderNode(key, icon, title, meta, color, indent, childrenHtml) {
+  const expanded = matrizExpanded.has(key);
+  let h = '<div style="background:#fff;border:1px solid #C8C6BE;border-radius:6px;margin-bottom:6px;overflow:hidden">';
+  h += '<div style="display:flex;align-items:center;padding:8px 12px;gap:8px;cursor:pointer" onclick="matrizToggleExpand(\'' + key + '\')">';
+  h += '<span style="font-size:13px;color:#5F5E5A;flex:0 0 auto;width:14px">' + (expanded ? '▼' : '▶') + '</span>';
+  if (icon) h += '<span style="font-size:14px;flex:0 0 auto">' + icon + '</span>';
+  h += '<div style="flex:1;min-width:0">';
+  h += '<div style="font-weight:600;color:' + color + ';font-size:13px">' + title + '</div>';
+  if (meta) h += '<div style="font-size:11px;color:#888;margin-top:1px">' + meta + '</div>';
+  h += '</div>';
+  h += '</div>';
+  if (expanded) {
+    h += '<div style="border-top:1px solid #E8E6DF;background:#FAF9F5;padding:8px 8px 8px ' + indent + 'px">';
+    h += childrenHtml();
+    h += '</div>';
+  }
+  h += '</div>';
+  return h;
+}
+
+// Card de un producto (forma reducida, para anidar en jerarquia)
+// Cuando se expande, muestra los procesos.
+function _matrizRenderProductoCardNested(p) {
+  const procs = productosMatrizProcesos.filter(pr => pr.producto_id === p.id)
+    .sort((a, b) => (a.orden || 999999) - (b.orden || 999999));
+  const expanded = matrizExpanded.has('prod:' + p.id);
+  let h = '<div style="background:#fff;border:1px solid #C8C6BE;border-radius:5px;margin-bottom:5px;overflow:hidden">';
+  h += '<div style="display:flex;align-items:center;padding:6px 10px;gap:8px">';
+  // Flecha
+  h += '<button class="b" onclick="matrizToggleExpand(\'prod:' + p.id + '\')" style="background:transparent;border:none;padding:2px;font-size:13px;color:#5F5E5A;cursor:pointer;flex:0 0 auto">' + (expanded ? '▼' : '▶') + '</button>';
+  // Foto
+  if (p.foto_url) {
+    h += '<img src="' + escapeHtml(p.foto_url) + '" style="width:32px;height:32px;object-fit:cover;border-radius:3px;flex:0 0 auto">';
+  } else {
+    h += '<div style="width:32px;height:32px;background:#E8E6DF;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:14px;flex:0 0 auto">📦</div>';
+  }
+  // Body
+  h += '<div style="flex:1;min-width:0">';
+  h += '<div style="font-weight:600;font-size:12px">' + escapeHtml(p.descripcion || '(sin descripción)') + '</div>';
+  const matLbl = p.material_id ? ((materiales.find(m => m.id === p.material_id) || {}).nombre || '') : '';
+  const meta = [p.codigo_cliente, matLbl, procs.length + ' proceso(s)'].filter(Boolean).join(' · ');
+  if (meta) h += '<div style="color:#888;font-size:10px;margin-top:1px">' + escapeHtml(meta) + '</div>';
+  h += '</div>';
+  // Acciones
+  h += '<div class="card-actions" style="flex:0 0 auto">';
+  h += '<button class="b b-icon" onclick="event.stopPropagation();showProductoMatrizForm(' + p.id + ')" style="font-size:10px">Editar</button>';
+  h += '</div></div>';
+  // Procesos cuando expandido
+  if (expanded) {
+    h += '<div style="border-top:1px solid #E8E6DF;background:#FAF9F5;padding:8px 12px">';
+    h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">';
+    h += '<div style="font-size:10px;font-weight:600;color:#5F5E5A">PROCESOS</div>';
+    h += '<button class="b b-p" style="padding:2px 8px;font-size:10px" onclick="event.stopPropagation();showProcesoForm(null, {tipo:\'producto\',parentId:' + p.id + '})">+ Agregar</button>';
+    h += '</div>';
+    if (procs.length === 0) {
+      h += '<div style="font-size:10px;color:#888;font-style:italic;padding:4px 0">Sin procesos.</div>';
+    } else {
+      procs.forEach((pr, idx) => {
+        h += '<div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:11px;border-top:' + (idx > 0 ? '1px solid #E8E6DF' : 'none') + '">';
+        h += '<span style="color:#5F5E5A;flex:0 0 18px">' + (idx + 1) + '.</span>';
+        h += '<span style="font-weight:600;flex:0 0 auto">' + escapeHtml(pr.proceso || '?') + '</span>';
+        const dur = pr.duracion_estimada_min ? (pr.duracion_estimada_min + 'min') : '';
+        const mq = pr.maquina_ideal_id ? mN(pr.maquina_ideal_id) : (pr.maquina_ideal_nombre || '');
+        const op = pr.operario_ideal_id ? opN(pr.operario_ideal_id) : '';
+        const procMeta = [dur, mq, op].filter(Boolean).join(' · ');
+        if (procMeta) h += '<span style="color:#888;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(procMeta) + '</span>';
+        h += '<button class="b b-icon" onclick="event.stopPropagation();showProcesoForm(' + pr.id + ', {tipo:\'producto\',parentId:' + p.id + '})" style="font-size:10px">Editar</button>';
+        h += '<button class="b b-icon b-d" onclick="event.stopPropagation();procCtx={tipo:\'producto\',parentId:' + p.id + '};confirmDeleteProceso(' + pr.id + ')" style="font-size:10px">×</button>';
+        h += '</div>';
+      });
+    }
+    h += '</div>';
+  }
+  h += '</div>';
+  return h;
+}
+
+// Vista clientes anidada
 function _matrizListClientesHtml() {
   if (!productosMatriz || productosMatriz.length === 0) {
     return '<div class="list-empty">No hay productos cargados. Apretá "+ Nuevo producto" para empezar.</div>';
   }
-  // Aplicar filtros (sobre productos) y agrupar por cliente
-  const filtered = applyMatrizFilters(productosMatriz);
-  if (filtered.length === 0) {
+  // Aplicar filtros (sobre productos) para saber que clientes tienen contenido.
+  const filteredProds = applyMatrizFilters(productosMatriz);
+  if (filteredProds.length === 0) {
     return '<div class="list-empty">No hay productos que coincidan con los filtros.</div>';
   }
-  // Agrupar
-  const grupos = {};  // clienteId|'GENERICO' -> array de productos
-  filtered.forEach(p => {
-    const key = p.cliente_id ? String(p.cliente_id) : 'GENERICO';
-    if (!grupos[key]) grupos[key] = [];
-    grupos[key].push(p);
-  });
-  // Ordenar grupos: clientes alfabetico, "Genéricos" al final
-  const keys = Object.keys(grupos).sort((a, b) => {
-    if (a === 'GENERICO') return 1;
-    if (b === 'GENERICO') return -1;
-    const na = clN(parseInt(a));
-    const nb = clN(parseInt(b));
-    return na.localeCompare(nb);
-  });
-  let h = '';
-  keys.forEach(key => {
-    const isGen = key === 'GENERICO';
-    const clienteLbl = isGen ? 'Productos Genéricos' : clN(parseInt(key));
-    const expanded = matrizExpandedClientes.has(key);
-    const prods = sortMatriz(grupos[key]);
-    h += '<div style="background:#fff;border:1px solid #C8C6BE;border-radius:8px;margin-bottom:8px;overflow:hidden">';
-    h += '<div style="display:flex;align-items:center;padding:10px 14px;gap:10px;cursor:pointer" onclick="matrizToggleExpandCliente(\'' + key + '\')">';
-    h += '<span style="font-size:14px;color:#5F5E5A;flex:0 0 auto">' + (expanded ? '▼' : '▶') + '</span>';
-    h += '<div style="flex:1">';
-    h += '<div style="font-weight:600;color:' + (isGen ? '#5F5E5A' : '#0C447C') + '">' + escapeHtml(clienteLbl) + '</div>';
-    h += '<div style="font-size:11px;color:#888;margin-top:2px">' + prods.length + ' producto(s)</div>';
-    h += '</div>';
-    h += '</div>';
-    if (expanded) {
-      h += '<div style="border-top:1px solid #E8E6DF;background:#FAF9F5;padding:8px 12px">';
-      prods.forEach(p => {
-        const procsCnt = productosMatrizProcesos.filter(pr => pr.producto_id === p.id).length;
-        h += '<div style="display:flex;align-items:center;gap:10px;padding:6px 4px;font-size:12px;border-bottom:1px solid #E8E6DF">';
-        if (p.foto_url) {
-          h += '<img src="' + escapeHtml(p.foto_url) + '" style="width:40px;height:40px;object-fit:cover;border-radius:4px;flex:0 0 auto">';
-        } else {
-          h += '<div style="width:40px;height:40px;background:#E8E6DF;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:18px;flex:0 0 auto">📦</div>';
-        }
-        h += '<div style="flex:1;min-width:0">';
-        h += '<div style="font-weight:600">' + escapeHtml(p.descripcion || '(sin descripción)') + '</div>';
-        const meta = [p.material, procsCnt + ' proceso(s)'].filter(Boolean).join(' · ');
-        h += '<div style="color:#888;font-size:11px;margin-top:2px">' + escapeHtml(meta) + '</div>';
-        h += '</div>';
-        h += '<div class="card-actions" style="flex:0 0 auto">';
-        h += '<button class="b b-icon" onclick="showProductoMatrizForm(' + p.id + ')">Editar</button>';
-        h += '</div>';
-        h += '</div>';
+  // Determinar que clientes tienen al menos un producto que pase los filtros.
+  const clientesConProductos = new Set();
+  let tieneGenerico = false;
+  filteredProds.forEach(p => {
+    const ubics = productosMatrizUbicaciones.filter(u => u.producto_id === p.id);
+    if (ubics.length === 0) {
+      if (!p.cliente_id) tieneGenerico = true;
+      else clientesConProductos.add(p.cliente_id);
+    } else {
+      ubics.forEach(u => {
+        if (u.cliente_id) clientesConProductos.add(u.cliente_id);
       });
-      h += '</div>';
     }
-    h += '</div>';
   });
+
+  // Ordenar clientes alfabeticamente
+  const cliList = clientes.filter(c => clientesConProductos.has(c.id))
+    .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+
+  let h = '';
+  cliList.forEach(c => {
+    h += _matrizRenderClienteNode(c);
+  });
+  // Genericos al final
+  if (tieneGenerico) {
+    h += _matrizRenderGenericosNode();
+  }
   return h;
+}
+
+function _matrizRenderClienteNode(cli) {
+  const cnt = _matrizCountProdsDelCliente(cli.id);
+  const codigoChip = cli.codigo
+    ? ' <span style="display:inline-block;padding:1px 5px;border-radius:3px;font-size:9px;background:#0C447C;color:#fff;font-weight:500;margin-left:4px;letter-spacing:0.3px">' + escapeHtml(cli.codigo) + '</span>'
+    : '';
+  return _matrizRenderNode(
+    'cli:' + cli.id,
+    '🏢',
+    escapeHtml(cli.nombre) + codigoChip,
+    cnt + ' producto(s)',
+    '#0C447C',
+    20,
+    () => {
+      // Hijos del cliente: sectores + productos directos del cliente (sin sector)
+      let inner = '';
+      const secs = _matrizSectoresDelCliente(cli.id);
+      // Sectores
+      secs.forEach(sec => {
+        const cnt2 = _matrizCountProdsDelSector(sec.id);
+        if (cnt2 === 0) return;  // skip sector sin productos que pasen filtros
+        inner += _matrizRenderSectorNode(sec, cli.id);
+      });
+      // Productos directos del cliente (ubicacion termina en cliente)
+      const directos = _matrizProductosEnNivel({
+        clienteId: cli.id, sectorId: null, equipoId: null, conjuntoId: null, subconjuntoId: null
+      });
+      directos.forEach(p => {
+        inner += _matrizRenderProductoCardNested(p);
+      });
+      if (!inner) inner = '<div style="font-size:11px;color:#888;font-style:italic;padding:4px 0">Sin sectores ni productos directos.</div>';
+      return inner;
+    }
+  );
+}
+
+function _matrizRenderSectorNode(sec, cliId) {
+  const cnt = _matrizCountProdsDelSector(sec.id);
+  return _matrizRenderNode(
+    'sec:' + sec.id,
+    '🏭',
+    escapeHtml(sec.nombre),
+    cnt + ' producto(s)',
+    '#5F5E5A',
+    24,
+    () => {
+      let inner = '';
+      const eqs = _matrizEquiposDelSector(sec.id);
+      eqs.forEach(eq => {
+        const cnt2 = _matrizCountProdsDelEquipo(eq.id);
+        if (cnt2 === 0) return;
+        inner += _matrizRenderEquipoNode(eq, cliId);
+      });
+      // Productos directos del sector (ubicacion termina en sector, sin equipo)
+      const directos = _matrizProductosEnNivel({
+        clienteId: cliId, sectorId: sec.id, equipoId: null, conjuntoId: null, subconjuntoId: null
+      });
+      directos.forEach(p => {
+        inner += _matrizRenderProductoCardNested(p);
+      });
+      if (!inner) inner = '<div style="font-size:11px;color:#888;font-style:italic;padding:4px 0">Sin equipos ni productos directos.</div>';
+      return inner;
+    }
+  );
+}
+
+function _matrizRenderEquipoNode(eq, cliId) {
+  const cnt = _matrizCountProdsDelEquipo(eq.id);
+  const codeChip = eq.codigo_cliente
+    ? ' <span style="font-size:10px;color:#888;font-weight:400">[' + escapeHtml(eq.codigo_cliente) + ']</span>'
+    : '';
+  return _matrizRenderNode(
+    'eq:' + eq.id,
+    '⚙',
+    escapeHtml(eq.nombre) + codeChip,
+    cnt + ' producto(s)',
+    '#5F5E5A',
+    24,
+    () => {
+      let inner = '';
+      // Conjuntos del equipo (orden 1)
+      const cons = _matrizConjuntosDelEquipo(eq.id, cliId);
+      cons.forEach(con => {
+        const cnt2 = _matrizCountProdsDelConjunto(con.id);
+        if (cnt2 === 0) return;
+        inner += _matrizRenderConjuntoNode(con, cliId);
+      });
+      // Productos directos del equipo (ubicacion termina en equipo, sin conjunto)
+      const directos = _matrizProductosEnNivel({
+        clienteId: cliId, sectorId: eq.sector_id, equipoId: eq.id, conjuntoId: null, subconjuntoId: null
+      });
+      directos.forEach(p => {
+        inner += _matrizRenderProductoCardNested(p);
+      });
+      if (!inner) inner = '<div style="font-size:11px;color:#888;font-style:italic;padding:4px 0">Sin conjuntos ni productos directos.</div>';
+      return inner;
+    }
+  );
+}
+
+function _matrizRenderConjuntoNode(con, cliId) {
+  const cnt = _matrizCountProdsDelConjunto(con.id);
+  return _matrizRenderNode(
+    'con:' + con.id,
+    '📦',
+    escapeHtml(con.nombre),
+    cnt + ' producto(s)',
+    '#5F5E5A',
+    24,
+    () => {
+      let inner = '';
+      // Subconjuntos del conjunto (orden 1)
+      const subs = _matrizSubconjuntosDelConjunto(con.id, cliId);
+      subs.forEach(sub => {
+        const cnt2 = _matrizCountProdsDelSubconjunto(sub.id);
+        if (cnt2 === 0) return;
+        inner += _matrizRenderSubconjuntoNode(sub, cliId);
+      });
+      // Productos del conjunto (ubicacion termina en conjunto, sin subconjunto)
+      // Como el producto puede tener varias ubicaciones a este conjunto desde
+      // distintos equipos, podemos verlo aparecer una sola vez dentro del
+      // conjunto. _matrizProductosEnNivel devuelve distintos por id.
+      const directos = _matrizProductosEnNivel({
+        conjuntoId: con.id, subconjuntoId: null
+      });
+      directos.forEach(p => {
+        inner += _matrizRenderProductoCardNested(p);
+      });
+      if (!inner) inner = '<div style="font-size:11px;color:#888;font-style:italic;padding:4px 0">Sin subconjuntos ni productos.</div>';
+      return inner;
+    }
+  );
+}
+
+function _matrizRenderSubconjuntoNode(sub, cliId) {
+  const cnt = _matrizCountProdsDelSubconjunto(sub.id);
+  return _matrizRenderNode(
+    'sub:' + sub.id,
+    '🔧',
+    escapeHtml(sub.nombre),
+    cnt + ' producto(s)',
+    '#5F5E5A',
+    24,
+    () => {
+      let inner = '';
+      const directos = _matrizProductosEnNivel({ subconjuntoId: sub.id });
+      directos.forEach(p => {
+        inner += _matrizRenderProductoCardNested(p);
+      });
+      if (!inner) inner = '<div style="font-size:11px;color:#888;font-style:italic;padding:4px 0">Sin productos.</div>';
+      return inner;
+    }
+  );
+}
+
+function _matrizRenderGenericosNode() {
+  // Productos sin cliente ni ubicaciones
+  const filtered = applyMatrizFilters(productosMatriz);
+  const generics = filtered.filter(p => !p.cliente_id);
+  if (generics.length === 0) return '';
+  return _matrizRenderNode(
+    'gen',
+    '📦',
+    'Productos Genéricos',
+    generics.length + ' producto(s)',
+    '#5F5E5A',
+    20,
+    () => {
+      let inner = '';
+      generics.forEach(p => {
+        inner += _matrizRenderProductoCardNested(p);
+      });
+      return inner;
+    }
+  );
 }
 
 // ----- Form de creacion/edicion de producto matriz -----
