@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v40</title>
+<title>Velasco App 2.0 — Proyectos v41</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -591,20 +591,34 @@ function richSize(id, sizeKey) {
   // Convertir los <font size="N"> que acaba de crear el browser en
   // <span style="font-size:Xem">. Solo los del editor actual.
   // Mapeo: 2 -> 1em, 4 -> 1.15em, 6 -> 1.35em.
+  // CRITICO: si el <font> trae tambien atributo color (cuando la seleccion
+  // ya tenia color aplicado), preservarlo en el style del span. Antes se
+  // perdia el color al cambiar tamano.
   const FONT_SIZE_MAP = { '2': '1em', '4': '1.15em', '6': '1.35em' };
   const fonts = el.querySelectorAll('font[size]');
   fonts.forEach(f => {
     const size = f.getAttribute('size');
+    const color = f.getAttribute('color');  // puede ser null
     const em = FONT_SIZE_MAP[size];
     if (em) {
       const span = document.createElement('span');
-      span.style.fontSize = em;
+      let style = 'font-size:' + em;
+      if (color) style += ';color:' + color;
+      span.setAttribute('style', style);
       while (f.firstChild) span.appendChild(f.firstChild);
       f.parentNode.replaceChild(span, f);
     } else {
-      // Tamano que no manejamos - desenvolvemos sin estilo
-      while (f.firstChild) f.parentNode.insertBefore(f.firstChild, f);
-      f.remove();
+      // Tamano que no manejamos - desenvolvemos pero preservamos color en span
+      // si lo tenia.
+      if (color) {
+        const span = document.createElement('span');
+        span.setAttribute('style', 'color:' + color);
+        while (f.firstChild) span.appendChild(f.firstChild);
+        f.parentNode.replaceChild(span, f);
+      } else {
+        while (f.firstChild) f.parentNode.insertBefore(f.firstChild, f);
+        f.remove();
+      }
     }
   });
 
@@ -2230,7 +2244,7 @@ function showProcesoForm(procesoId) {
 
   h += '<div class="ef"><div class="ef-l">Proceso <span style="color:#A32D2D">*</span></div>';
   h += '<select class="ef-i" id="p-proceso" onchange="onProcesoChange()">';
-  const procStandard = ['Agujereado','Armado','Compra','Control','Corte','Corte Pantografo','Desarme y limpieza','Despacho/Cierre','Electroerosion','Fresado','Mantenimiento','Plegado','Rectificado a piedra','Relevamiento','Rolado','Soldadura','Torneado','Tratamiento térmico'];
+  const procStandard = ['Agujereado','Armado','Compra','Control','Corte','Corte Pantografo','Desarme y limpieza','Despacho/Cierre','Electroerosion','Fresado','Grabado láser','Mantenimiento','Plegado','Rectificado a piedra','Relevamiento','Rolado','Soldadura','Torneado','Tratamiento térmico'];
   // Si es proceso existente, tomamos su valor. Si es nuevo, queda vacio para
   // forzar al responsable a elegir explicitamente (default no debe ser Torneado).
   const currentProc = proceso ? (proceso.proceso || proceso.descripcion) : '';
@@ -2875,17 +2889,179 @@ function renderRecursos() {
 // Lista de maquinas con sus procesos. Cada tarjeta muestra el nombre y los
 // procesos como chips. Boton "Editar" abre un modal con checkboxes.
 // Boton "+ Nueva maquina" crea una entrada nueva.
-function renderMaquinasTab() {
-  let h = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">';
-  h += '<div style="font-size:12px;color:#5F5E5A">Para cada máquina marcá los procesos que puede realizar. Esto se usa para filtrar las opciones de máquina al cargar un proceso en un proyecto.</div>';
-  h += '<button class="b b-p" onclick="showMaquinaForm(null)" style="flex:0 0 auto">+ Nueva máquina</button></div>';
-  if (!maquinas || maquinas.length === 0) {
-    h += '<div class="list-empty">No hay máquinas cargadas. Apretá "+ Nueva máquina" para empezar.</div>';
-    return h;
+// ============================================================================
+// FILTROS Y ORDEN - PESTAÑA MAQUINAS
+// ============================================================================
+const MAQ_FILTERS_KEY = 'velasco_maqFilters_v1';
+const MAQ_SORT_KEY = 'velasco_maqSort_v1';
+const DEFAULT_MAQ_FILTERS = {
+  search: '',         // substring sobre nombre
+  procesos: [],       // multi-select OR: maquinas que hagan al menos uno
+  soloSinProcesos: false  // checkbox: solo las que tienen procesos = []
+};
+const DEFAULT_MAQ_SORT = { by: 'nombre', dir: 'asc' };
+let maqFilters = (function(){
+  try { const r = localStorage.getItem(MAQ_FILTERS_KEY); return r ? { ...DEFAULT_MAQ_FILTERS, ...JSON.parse(r) } : { ...DEFAULT_MAQ_FILTERS }; }
+  catch(e){ return { ...DEFAULT_MAQ_FILTERS }; }
+})();
+let maqSort = (function(){
+  try { const r = localStorage.getItem(MAQ_SORT_KEY); return r ? { ...DEFAULT_MAQ_SORT, ...JSON.parse(r) } : { ...DEFAULT_MAQ_SORT }; }
+  catch(e){ return { ...DEFAULT_MAQ_SORT }; }
+})();
+function saveMaqFilters() { try { localStorage.setItem(MAQ_FILTERS_KEY, JSON.stringify(maqFilters)); } catch(e){} }
+function saveMaqSort() { try { localStorage.setItem(MAQ_SORT_KEY, JSON.stringify(maqSort)); } catch(e){} }
+
+function countActiveMaqFilters() {
+  let n = 0;
+  if (maqFilters.search && maqFilters.search.trim()) n++;
+  if (maqFilters.procesos && maqFilters.procesos.length > 0) n++;
+  if (maqFilters.soloSinProcesos) n++;
+  return n;
+}
+
+function applyMaqFilters(list) {
+  let out = list;
+  if (maqFilters.search && maqFilters.search.trim()) {
+    const q = maqFilters.search.trim().toLowerCase();
+    out = out.filter(m => (m.nombre || '').toLowerCase().includes(q));
   }
-  // Ordenar por nombre
-  const sorted = maquinas.slice().sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
-  sorted.forEach(m => {
+  if (maqFilters.procesos && maqFilters.procesos.length > 0) {
+    const set = new Set(maqFilters.procesos);
+    out = out.filter(m => {
+      const procs = (m.procesos && Array.isArray(m.procesos)) ? m.procesos : [];
+      return procs.some(p => set.has(p));
+    });
+  }
+  if (maqFilters.soloSinProcesos) {
+    out = out.filter(m => !m.procesos || !Array.isArray(m.procesos) || m.procesos.length === 0);
+  }
+  return out;
+}
+
+function sortMaquinas(list) {
+  const out = list.slice();
+  out.sort((a, b) => {
+    let cmp = 0;
+    if (maqSort.by === 'nombre') {
+      cmp = (a.nombre || '').localeCompare(b.nombre || '');
+    } else if (maqSort.by === 'cant_procesos') {
+      const ca = (a.procesos && Array.isArray(a.procesos)) ? a.procesos.length : 0;
+      const cb = (b.procesos && Array.isArray(b.procesos)) ? b.procesos.length : 0;
+      cmp = ca - cb;
+    }
+    if (cmp === 0) cmp = (a.id || 0) - (b.id || 0);
+    return maqSort.dir === 'asc' ? cmp : -cmp;
+  });
+  return out;
+}
+
+// Handlers
+function maqSearchInput(e) {
+  maqFilters.search = e.target.value;
+  saveMaqFilters();
+  // Re-render solo la lista (no la barra) para no perder el foco del input
+  _maqRerenderList();
+}
+function maqToggleProceso(p) {
+  const set = new Set(maqFilters.procesos || []);
+  if (set.has(p)) set.delete(p); else set.add(p);
+  maqFilters.procesos = [...set];
+  saveMaqFilters();
+  render();
+}
+function maqToggleSoloSin() {
+  maqFilters.soloSinProcesos = !maqFilters.soloSinProcesos;
+  saveMaqFilters();
+  render();
+}
+function maqClearFilters() {
+  maqFilters = { ...DEFAULT_MAQ_FILTERS };
+  saveMaqFilters();
+  render();
+}
+function maqSortByChange() {
+  const sel = document.getElementById('maq-sort-by');
+  if (!sel) return;
+  maqSort.by = sel.value;
+  saveMaqSort();
+  render();
+}
+function maqToggleSortDir() {
+  maqSort.dir = maqSort.dir === 'asc' ? 'desc' : 'asc';
+  saveMaqSort();
+  render();
+}
+function _maqRerenderList() {
+  // Re-renderiza solo la lista de maquinas (no la barra de filtros), para
+  // no perder el foco del input de busqueda al tipear.
+  const wrap = document.getElementById('maq-list-wrap');
+  if (!wrap) return;
+  wrap.innerHTML = _maqListHtml();
+}
+
+function renderMaquinasTab() {
+  // Lista de procesos disponibles (mismo set que el modal de maquina)
+  const procStandard = ['Agujereado','Armado','Compra','Control','Corte','Corte Pantografo','Desarme y limpieza','Despacho/Cierre','Electroerosion','Fresado','Grabado láser','Mantenimiento','Plegado','Rectificado a piedra','Relevamiento','Rolado','Soldadura','Torneado','Tratamiento térmico'];
+  const activeCount = countActiveMaqFilters();
+
+  let h = '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;gap:10px">';
+  h += '<div style="font-size:12px;color:#5F5E5A;flex:1">Para cada máquina marcá los procesos que puede realizar. Esto se usa para filtrar las opciones de máquina al cargar un proceso en un proyecto.</div>';
+  h += '<button class="b b-p" onclick="showMaquinaForm(null)" style="flex:0 0 auto">+ Nueva máquina</button></div>';
+
+  // Barra de filtros y orden
+  h += '<div style="background:#fff;border:1px solid #C8C6BE;border-radius:8px;padding:10px 14px;margin-bottom:12px">';
+  // Fila 1: busqueda + checkbox sin procesos + ordenar
+  h += '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">';
+  h += '<div style="font-size:11px;font-weight:600;color:#5F5E5A">Buscar:</div>';
+  h += '<input type="text" id="maq-search" value="' + escapeHtml(maqFilters.search || '') + '" placeholder="Nombre de máquina" style="padding:5px 8px;border:1px solid #C8C6BE;border-radius:5px;font-size:12px;width:200px" oninput="maqSearchInput(event)">';
+  h += '<label style="display:inline-flex;align-items:center;gap:6px;font-size:11px;color:#5F5E5A;cursor:pointer;margin-left:10px">';
+  h += '<input type="checkbox"' + (maqFilters.soloSinProcesos ? ' checked' : '') + ' onchange="maqToggleSoloSin()"> Solo sin procesos';
+  h += '</label>';
+  // Ordenar
+  h += '<div style="margin-left:auto;display:flex;align-items:center;gap:6px">';
+  h += '<div style="font-size:11px;font-weight:600;color:#5F5E5A">Ordenar por:</div>';
+  h += '<select id="maq-sort-by" onchange="maqSortByChange()" style="padding:3px 8px;border:1px solid #C8C6BE;border-radius:5px;font-size:11px">';
+  [['nombre', 'Nombre'], ['cant_procesos', 'Cantidad de procesos']].forEach(([v, lbl]) => {
+    h += '<option value="' + v + '"' + (maqSort.by === v ? ' selected' : '') + '>' + lbl + '</option>';
+  });
+  h += '</select>';
+  const arrow = maqSort.dir === 'asc' ? '↑' : '↓';
+  const arrowTitle = maqSort.dir === 'asc' ? 'Ascendente (click para invertir)' : 'Descendente (click para invertir)';
+  h += '<button class="b" title="' + arrowTitle + '" onclick="maqToggleSortDir()" style="padding:3px 8px;font-size:13px;font-weight:700;line-height:1">' + arrow + '</button>';
+  h += '</div>';
+  h += '</div>';
+
+  // Fila 2: chips de procesos para filtrar (multi-select OR)
+  h += '<div style="margin-top:8px;display:flex;align-items:center;flex-wrap:wrap;gap:4px">';
+  h += '<div style="font-size:11px;font-weight:600;color:#5F5E5A;margin-right:6px">Procesos:</div>';
+  procStandard.forEach(p => {
+    const active = (maqFilters.procesos || []).includes(p);
+    const style = active
+      ? 'background:#0C447C;color:#fff;border:1px solid #0C447C'
+      : 'background:#fff;color:#333;border:1px solid #C8C6BE';
+    h += '<button class="b" style="' + style + ';padding:2px 8px;font-size:10px;font-weight:500" onclick="maqToggleProceso(\'' + p.replace(/'/g, "\\'") + '\')">' + escapeHtml(p) + '</button>';
+  });
+  if (activeCount > 0) {
+    h += '<button class="b" onclick="maqClearFilters()" style="margin-left:auto;padding:3px 10px;font-size:11px;background:#fff;color:#5F5E5A;border:1px solid #C8C6BE">✕ Limpiar (' + activeCount + ')</button>';
+  }
+  h += '</div>';
+  h += '</div>';
+
+  // Lista filtrada y ordenada
+  h += '<div id="maq-list-wrap">' + _maqListHtml() + '</div>';
+  return h;
+}
+
+function _maqListHtml() {
+  if (!maquinas || maquinas.length === 0) {
+    return '<div class="list-empty">No hay máquinas cargadas. Apretá "+ Nueva máquina" para empezar.</div>';
+  }
+  const filtered = sortMaquinas(applyMaqFilters(maquinas));
+  if (filtered.length === 0) {
+    return '<div class="list-empty">No hay máquinas que coincidan con los filtros.</div>';
+  }
+  let h = '';
+  filtered.forEach(m => {
     const procs = (m.procesos && Array.isArray(m.procesos)) ? m.procesos : [];
     h += '<div class="card" style="margin-bottom:8px">';
     h += '<div class="card-img-empty">⚙</div>';
@@ -2913,7 +3089,7 @@ function showMaquinaForm(maquinaId) {
   const maq = isNew ? null : maquinas.find(m => m.id === maquinaId);
   if (!isNew && !maq) return;
   // Lista de procesos disponibles (mismo array que en el modal de proceso del item)
-  const procStandard = ['Agujereado','Armado','Compra','Control','Corte','Corte Pantografo','Desarme y limpieza','Despacho/Cierre','Electroerosion','Fresado','Mantenimiento','Plegado','Rectificado a piedra','Relevamiento','Rolado','Soldadura','Torneado','Tratamiento térmico'];
+  const procStandard = ['Agujereado','Armado','Compra','Control','Corte','Corte Pantografo','Desarme y limpieza','Despacho/Cierre','Electroerosion','Fresado','Grabado láser','Mantenimiento','Plegado','Rectificado a piedra','Relevamiento','Rolado','Soldadura','Torneado','Tratamiento térmico'];
   const currentProcs = (maq && maq.procesos && Array.isArray(maq.procesos)) ? maq.procesos : [];
 
   const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'maq-modal';
