@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v47</title>
+<title>Velasco App 2.0 — Proyectos v48</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -113,10 +113,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
   <div class="hd">
     <img id="hd-logo" alt="Velasco" style="height:36px;cursor:pointer" onclick="navigate({view:'projects'})">
     <div class="hd-r">
-      <button class="b" onclick="navigate({view:'clientes'})">Clientes</button>
-      <button class="b" onclick="navigate({view:'recursos',tab:'maquinas'})">Recursos</button>
+      <button class="b" onclick="navigate({view:'projects'})">Proyectos</button>
       <button class="b" onclick="window.open('tablero_operarios.html','_blank')">Tablero</button>
-      <button class="b b-p" onclick="navigate({view:'newProject'})">+ Nuevo proyecto</button>
+      <button class="b" onclick="navigate({view:'recursos',tab:'clientes'})">Recursos</button>
+      <button class="b" onclick="navigate({view:'clientes'})" title="Acceso directo a clientes (en próxima entrega se mueve a Recursos)">Clientes</button>
     </div>
   </div>
   <div id="crumbs" class="crumbs"></div>
@@ -143,6 +143,7 @@ let subconjuntos = [];
 let conjuntosEquipos = [];        // pivot N:M
 let subconjuntosConjuntos = [];   // pivot N:M
 let productosMatrizUbicaciones = [];
+let itemsUbicaciones = [];   // Entrega A: ubicaciones de items en proyectos
 let nav = { view: 'projects' };
 // Default filter for projects list: all states except closed/anulado/perdido
 let projectFilters = new Set(['Proyectando', 'Presupuestar', 'Confirmado']);
@@ -804,7 +805,7 @@ async function loadAll() {
   // rompe la app y queda como arrays vacios. Cuando se aplique el SQL, ya
   // funciona sin tocar nada).
   try {
-    const [pm, pmp, mat, sec, eq, con, sub, ce, sc, pmu] = await Promise.all([
+    const [pm, pmp, mat, sec, eq, con, sub, ce, sc, pmu, iu] = await Promise.all([
       sb.from('productos_matriz').select('*').order('descripcion'),
       sb.from('productos_matriz_procesos').select('*').order('orden', { ascending: true, nullsFirst: false }),
       sb.from('materiales').select('*').order('nombre'),
@@ -814,7 +815,8 @@ async function loadAll() {
       sb.from('subconjuntos').select('*').order('nombre'),
       sb.from('conjuntos_equipos').select('*'),
       sb.from('subconjuntos_conjuntos').select('*'),
-      sb.from('productos_matriz_ubicaciones').select('*')
+      sb.from('productos_matriz_ubicaciones').select('*'),
+      sb.from('items_ubicaciones').select('*')
     ]);
     productosMatriz = pm.data || [];
     productosMatrizProcesos = pmp.data || [];
@@ -826,6 +828,7 @@ async function loadAll() {
     conjuntosEquipos = ce.data || [];
     subconjuntosConjuntos = sc.data || [];
     productosMatrizUbicaciones = pmu.data || [];
+    itemsUbicaciones = iu.data || [];
   } catch(e) {
     console.warn('[loadAll] Tablas matriz/jerarquia no disponibles aun:', e);
     productosMatriz = [];
@@ -838,6 +841,7 @@ async function loadAll() {
     conjuntosEquipos = [];
     subconjuntosConjuntos = [];
     productosMatrizUbicaciones = [];
+    itemsUbicaciones = [];
   }
 }
 
@@ -862,7 +866,17 @@ function renderCrumbs() {
   } else if (nav.view === 'clientes') {
     h = '<a onclick="navigate({view:\'projects\'})">Proyectos</a> <span class="sep">›</span> Clientes';
   } else if (nav.view === 'recursos') {
-    h = '<a onclick="navigate({view:\'projects\'})">Proyectos</a> <span class="sep">›</span> Recursos';
+    const tabLabels = { clientes: 'Clientes', matriz: 'Matriz de Productos', rrhh: 'RRHH', maquinas: 'Máquinas' };
+    const tab = nav.tab || 'clientes';
+    const tabLbl = tabLabels[tab] || tab;
+    if (tab === 'clientes') {
+      // No hay sub-jerarquia mas alla de Recursos > Clientes (todavia)
+      h = '<a onclick="navigate({view:\'projects\'})">Proyectos</a> <span class="sep">›</span> ' +
+          '<a onclick="navigate({view:\'recursos\'})">Recursos</a> <span class="sep">›</span> ' + tabLbl;
+    } else {
+      h = '<a onclick="navigate({view:\'projects\'})">Proyectos</a> <span class="sep">›</span> ' +
+          '<a onclick="navigate({view:\'recursos\'})">Recursos</a> <span class="sep">›</span> ' + tabLbl;
+    }
   }
   c.innerHTML = h;
 }
@@ -884,9 +898,14 @@ function renderProjectsList() {
   const main = document.getElementById('main');
   const activeCount = countActiveAdvFilters(advFilters);
 
+  // Boton + Nuevo Proyecto (movido del header en Entrega A)
+  let h = '<div style="display:flex;justify-content:flex-end;margin-bottom:10px">';
+  h += '<button class="b b-p" onclick="navigate({view:\'newProject\'})">+ Nuevo proyecto</button>';
+  h += '</div>';
+
   // Toggle de filtros (sticky arriba). Boton "Filtros (N)" muestra badge si hay
   // filtros activos. Click expande/colapsa el panel.
-  let h = '<div id="adv-filters-bar" style="position:sticky;top:0;z-index:10;background:#FAFAF7;padding-bottom:6px">';
+  h += '<div id="adv-filters-bar" style="position:sticky;top:0;z-index:10;background:#FAFAF7;padding-bottom:6px">';
   h += '<div style="background:#fff;border:1px solid #C8C6BE;border-radius:8px;padding:10px 14px;margin-bottom:10px">';
 
   // Fila 0: Toggle de vista [Proyectos] [Items]
@@ -993,9 +1012,14 @@ function renderProjectsListBody(filteredProjects) {
     const needsPedidoWarn = PROJ_STATES_REQUIRE_PEDIDO.has(p.estado) && !p.pedido_nro;
     const warnHtml = needsPedidoWarn ? '<span title="Falta numero de pedido" style="color:#A32D2D;margin-left:4px;font-weight:700">⚠ FALTA Nº PEDIDO</span>' : '';
     const isExpanded = expandedProjects.has(p.id);
-    const arrow = isExpanded ? '▾' : '▸';
+    const arrow = isExpanded ? '▼' : '▶';
     h += '<div class="card-wrap" style="margin-bottom:8px">';
     h += '<div class="card card-clickable" style="background:' + cardBg + ';margin-bottom:0;display:flex;align-items:stretch" onclick="navigate({view:\'project\',projectId:' + p.id + '})">';
+    // Flecha de desplegar items: a la izquierda, antes de la imagen.
+    // Mismo estilo que la vista anidada de Matriz: ▶/▼ minimalista.
+    h += '<div style="display:flex;align-items:center;padding:0 4px 0 10px" onclick="event.stopPropagation()">';
+    h += '<button onclick="toggleProjectExpand(' + p.id + ')" title="Mostrar items" style="background:transparent;border:none;padding:4px;font-size:14px;color:#5F5E5A;cursor:pointer;flex:0 0 auto">' + arrow + '</button>';
+    h += '</div>';
     h += img;
     h += '<div class="card-body" style="flex:1">';
     h += '<div class="card-t">' + escapeHtml(p.descripcion || '(sin descripcion)') + urg + stBadge + warnHtml + '</div>';
@@ -1003,12 +1027,6 @@ function renderProjectsListBody(filteredProjects) {
     h += ' · Pr. ' + p.id;
     h += p.pedido_nro ? ' · Ped. ' + escapeHtml(p.pedido_nro) : '';
     h += ' · ' + p.items.length + ' item(s)</div>';
-    h += '</div>';
-    // Flecha de desplegar items: a la derecha, centrada verticalmente.
-    // Tiene padding generoso para click facil; el stopPropagation evita
-    // que la tarjeta navegue al detalle.
-    h += '<div style="display:flex;align-items:center;padding:0 14px" onclick="event.stopPropagation()">';
-    h += '<button onclick="toggleProjectExpand(' + p.id + ')" title="Mostrar items" style="background:none;border:1px solid #C8C6BE;border-radius:4px;cursor:pointer;font-size:13px;padding:4px 10px;color:#5F5E5A;font-weight:700;line-height:1">' + arrow + '</button>';
     h += '</div>';
     h += '</div>';
     // Panel desplegado de items
@@ -1054,9 +1072,13 @@ function renderItemsListBody(filteredProjects) {
     const itemEstado = item.estado || 'Espera MP';
     const itemEstadoBadge = '<span style="display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-weight:700;background:#E8F2FC;color:#0C447C;margin-left:6px">' + escapeHtml(itemEstado) + '</span>';
     const isExpanded = expandedItems.has(item.id);
-    const arrow = isExpanded ? '▾' : '▸';
+    const arrow = isExpanded ? '▼' : '▶';
     h += '<div class="card-wrap" style="margin-bottom:8px">';
     h += '<div class="card card-clickable" style="background:' + cardBg + ';margin-bottom:0;display:flex;align-items:stretch" onclick="navigate({view:\'item\',projectId:' + proyecto.id + ',itemId:' + item.id + '})">';
+    // Flecha desplegar procesos: a la izquierda, mismo estilo que matriz
+    h += '<div style="display:flex;align-items:center;padding:0 4px 0 10px" onclick="event.stopPropagation()">';
+    h += '<button onclick="toggleItemExpand(' + item.id + ')" title="Mostrar procesos" style="background:transparent;border:none;padding:4px;font-size:14px;color:#5F5E5A;cursor:pointer;flex:0 0 auto">' + arrow + '</button>';
+    h += '</div>';
     h += img;
     h += '<div class="card-body" style="flex:1">';
     h += '<div class="card-t">' + escapeHtml(item.descripcion || '(sin descripcion)') + urg + itemEstadoBadge + stBadge + '</div>';
@@ -1065,10 +1087,6 @@ function renderItemsListBody(filteredProjects) {
     if (proyecto.pedido_nro) h += ' · Ped. ' + escapeHtml(proyecto.pedido_nro);
     if (item.cantidad) h += ' · cant. ' + item.cantidad;
     h += '</div></div>';
-    // Flecha desplegar procesos: a la derecha, centrada vertical
-    h += '<div style="display:flex;align-items:center;padding:0 14px" onclick="event.stopPropagation()">';
-    h += '<button onclick="toggleItemExpand(' + item.id + ')" title="Mostrar procesos" style="background:none;border:1px solid #C8C6BE;border-radius:4px;cursor:pointer;font-size:13px;padding:4px 10px;color:#5F5E5A;font-weight:700;line-height:1">' + arrow + '</button>';
-    h += '</div>';
     h += '</div>';
     // Panel desplegado de procesos
     if (isExpanded) {
@@ -2958,17 +2976,17 @@ function renderClientesList() {
 // La tab activa se determina por nav.tab.
 function renderRecursos() {
   const main = document.getElementById('main');
-  const activeTab = nav.tab || 'maquinas';
+  const activeTab = nav.tab || 'clientes';
   let h = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">';
   h += '<h2 style="font-size:16px;font-weight:600;margin:0">Recursos</h2>';
   h += '</div>';
-  // Tabs
+  // Tabs - orden: Clientes, Matriz de Productos, RRHH, Máquinas
   h += '<div style="display:flex;gap:0;border-bottom:1px solid #C8C6BE;margin-bottom:14px;flex-wrap:wrap">';
   const tabs = [
-    ['maquinas', 'Máquinas'],
+    ['clientes', 'Clientes'],
     ['matriz', 'Matriz de Productos'],
     ['rrhh', 'RRHH'],
-    ['clientes', 'Clientes']
+    ['maquinas', 'Máquinas']
   ];
   tabs.forEach(([key, label]) => {
     const isActive = activeTab === key;
@@ -4452,10 +4470,16 @@ function _matrizRenderProductoCardNested(p) {
   const procs = productosMatrizProcesos.filter(pr => pr.producto_id === p.id)
     .sort((a, b) => (a.orden || 999999) - (b.orden || 999999));
   const expanded = matrizExpanded.has('prod:' + p.id);
+  // Toda la card es clickeable (abre la vista del producto), igual a la
+  // logica de cards de proyectos/items. La flecha tiene su propio handler
+  // con stopPropagation para no disparar la navegacion.
+  // En Entrega A "abrir la vista del producto" = mostrar el form actual de
+  // edicion del producto matriz. En Entrega B se reemplaza por una vista
+  // completa estilo item.
   let h = '<div style="background:#fff;border:1px solid #C8C6BE;border-radius:5px;margin-bottom:5px;overflow:hidden">';
-  h += '<div style="display:flex;align-items:center;padding:6px 10px;gap:8px">';
-  // Flecha
-  h += '<button class="b" onclick="matrizToggleExpand(\'prod:' + p.id + '\')" style="background:transparent;border:none;padding:2px;font-size:13px;color:#5F5E5A;cursor:pointer;flex:0 0 auto">' + (expanded ? '▼' : '▶') + '</button>';
+  h += '<div style="display:flex;align-items:center;padding:6px 10px;gap:8px;cursor:pointer" onclick="showProductoMatrizForm(' + p.id + ')">';
+  // Flecha (a la izquierda) con stopPropagation para no abrir la vista
+  h += '<button class="b" onclick="event.stopPropagation();matrizToggleExpand(\'prod:' + p.id + '\')" style="background:transparent;border:none;padding:2px;font-size:13px;color:#5F5E5A;cursor:pointer;flex:0 0 auto">' + (expanded ? '▼' : '▶') + '</button>';
   // Foto
   if (p.foto_url) {
     h += '<img src="' + escapeHtml(p.foto_url) + '" style="width:32px;height:32px;object-fit:cover;border-radius:3px;flex:0 0 auto">';
@@ -4469,17 +4493,13 @@ function _matrizRenderProductoCardNested(p) {
   const meta = [p.codigo_cliente, matLbl, procs.length + ' proceso(s)'].filter(Boolean).join(' · ');
   if (meta) h += '<div style="color:#888;font-size:10px;margin-top:1px">' + escapeHtml(meta) + '</div>';
   h += '</div>';
-  // Acciones
-  h += '<div class="card-actions" style="flex:0 0 auto">';
-  h += '<button class="b b-icon" onclick="event.stopPropagation();showProductoMatrizForm(' + p.id + ')" style="font-size:10px">Editar</button>';
-  h += '</div></div>';
-  // Procesos cuando expandido
+  h += '</div>';
+  // Procesos cuando expandido. Solo informativo: sin "+ Agregar", sin
+  // "Eliminar". El boton "Editar" del proceso lleva a la vista del producto
+  // y abre el modal del proceso encima (hace ambas cosas).
   if (expanded) {
     h += '<div style="border-top:1px solid #E8E6DF;background:#FAF9F5;padding:8px 12px">';
-    h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">';
-    h += '<div style="font-size:10px;font-weight:600;color:#5F5E5A">PROCESOS</div>';
-    h += '<button class="b b-p" style="padding:2px 8px;font-size:10px" onclick="event.stopPropagation();showProcesoForm(null, {tipo:\'producto\',parentId:' + p.id + '})">+ Agregar</button>';
-    h += '</div>';
+    h += '<div style="font-size:10px;font-weight:600;color:#5F5E5A;margin-bottom:4px">PROCESOS</div>';
     if (procs.length === 0) {
       h += '<div style="font-size:10px;color:#888;font-style:italic;padding:4px 0">Sin procesos.</div>';
     } else {
@@ -4492,8 +4512,9 @@ function _matrizRenderProductoCardNested(p) {
         const op = pr.operario_ideal_id ? opN(pr.operario_ideal_id) : '';
         const procMeta = [dur, mq, op].filter(Boolean).join(' · ');
         if (procMeta) h += '<span style="color:#888;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(procMeta) + '</span>';
-        h += '<button class="b b-icon" onclick="event.stopPropagation();showProcesoForm(' + pr.id + ', {tipo:\'producto\',parentId:' + p.id + '})" style="font-size:10px">Editar</button>';
-        h += '<button class="b b-icon b-d" onclick="event.stopPropagation();procCtx={tipo:\'producto\',parentId:' + p.id + '};confirmDeleteProceso(' + pr.id + ')" style="font-size:10px">×</button>';
+        // "Editar" lleva a la vista del producto Y abre el modal del proceso
+        // encima. matrizEditarProcesoDesdeAnidado se encarga de ambas cosas.
+        h += '<button class="b b-icon" onclick="event.stopPropagation();matrizEditarProcesoDesdeAnidado(' + p.id + ',' + pr.id + ')" style="font-size:10px">Editar</button>';
         h += '</div>';
       });
     }
@@ -4501,6 +4522,19 @@ function _matrizRenderProductoCardNested(p) {
   }
   h += '</div>';
   return h;
+}
+
+// Editar un proceso desde la vista anidada de Matriz: abre la vista del
+// producto y, encima, el modal de edicion del proceso.
+// En Entrega A "vista del producto" = showProductoMatrizForm. En Entrega B
+// se reemplaza por la vista completa.
+function matrizEditarProcesoDesdeAnidado(productoId, procesoId) {
+  showProductoMatrizForm(productoId);
+  // Abrir el modal del proceso encima. Defer 50ms para que el form del producto
+  // ya este montado (evita carrera de DOM).
+  setTimeout(() => {
+    showProcesoForm(procesoId, { tipo: 'producto', parentId: productoId });
+  }, 50);
 }
 
 // Vista clientes anidada
