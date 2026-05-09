@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v43</title>
+<title>Velasco App 2.0 — Proyectos v44</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -134,6 +134,15 @@ let clientes = [], maquinas = [], operarios = [], proyectos = [], items = [], ac
 // Matriz de Productos (Iteracion B)
 let productosMatriz = [];
 let productosMatrizProcesos = [];
+// Catalogos de jerarquia (B1.6.a)
+let materiales = [];
+let sectores = [];
+let equipos = [];
+let conjuntos = [];
+let subconjuntos = [];
+let conjuntosEquipos = [];        // pivot N:M
+let subconjuntosConjuntos = [];   // pivot N:M
+let productosMatrizUbicaciones = [];
 let nav = { view: 'projects' };
 // Default filter for projects list: all states except closed/anulado/perdido
 let projectFilters = new Set(['Proyectando', 'Presupuestar', 'Confirmado']);
@@ -795,16 +804,40 @@ async function loadAll() {
   // rompe la app y queda como arrays vacios. Cuando se aplique el SQL, ya
   // funciona sin tocar nada).
   try {
-    const [pm, pmp] = await Promise.all([
+    const [pm, pmp, mat, sec, eq, con, sub, ce, sc, pmu] = await Promise.all([
       sb.from('productos_matriz').select('*').order('descripcion'),
-      sb.from('productos_matriz_procesos').select('*').order('orden', { ascending: true, nullsFirst: false })
+      sb.from('productos_matriz_procesos').select('*').order('orden', { ascending: true, nullsFirst: false }),
+      sb.from('materiales').select('*').order('nombre'),
+      sb.from('sectores').select('*').order('nombre'),
+      sb.from('equipos').select('*').order('nombre'),
+      sb.from('conjuntos').select('*').order('nombre'),
+      sb.from('subconjuntos').select('*').order('nombre'),
+      sb.from('conjuntos_equipos').select('*'),
+      sb.from('subconjuntos_conjuntos').select('*'),
+      sb.from('productos_matriz_ubicaciones').select('*')
     ]);
     productosMatriz = pm.data || [];
     productosMatrizProcesos = pmp.data || [];
+    materiales = mat.data || [];
+    sectores = sec.data || [];
+    equipos = eq.data || [];
+    conjuntos = con.data || [];
+    subconjuntos = sub.data || [];
+    conjuntosEquipos = ce.data || [];
+    subconjuntosConjuntos = sc.data || [];
+    productosMatrizUbicaciones = pmu.data || [];
   } catch(e) {
-    console.warn('[loadAll] Tablas productos_matriz no disponibles aun:', e);
+    console.warn('[loadAll] Tablas matriz/jerarquia no disponibles aun:', e);
     productosMatriz = [];
     productosMatrizProcesos = [];
+    materiales = [];
+    sectores = [];
+    equipos = [];
+    conjuntos = [];
+    subconjuntos = [];
+    conjuntosEquipos = [];
+    subconjuntosConjuntos = [];
+    productosMatrizUbicaciones = [];
   }
 }
 
@@ -2902,7 +2935,11 @@ function renderClientesList() {
       h += '<div class="card">';
       h += '<div class="card-img-empty">' + escapeHtml(c.nombre.charAt(0).toUpperCase()) + '</div>';
       h += '<div class="card-body">';
-      h += '<div class="card-t">' + escapeHtml(c.nombre) + '</div>';
+      // Codigo como chip al lado del nombre
+      let title = escapeHtml(c.nombre);
+      if (c.codigo) title += ' <span style="display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;background:#0C447C;color:#fff;font-weight:500;margin-left:6px;letter-spacing:0.5px">' + escapeHtml(c.codigo) + '</span>';
+      else title += ' <span title="Falta cargar el código" style="color:#A32D2D;margin-left:6px;font-size:11px">⚠ sin código</span>';
+      h += '<div class="card-t">' + title + '</div>';
       h += '<div class="card-s">CUIT: ' + escapeHtml(c.cuit || '—') + ' · ' + projCount + ' proyecto(s)</div></div>';
       h += '<div class="card-actions">';
       h += '<button class="b b-icon" onclick="showClienteForm(' + c.id + ')">Editar</button>';
@@ -3268,6 +3305,336 @@ function maquinasParaProceso(procesoNombre) {
     if (procs.length === 0) return true;  // fallback: sin procesos -> todas
     return procs.includes(procesoNombre);
   });
+}
+
+// =============================================================================
+// COMPONENTE: searchable picker (dropdown buscable single-select)
+// =============================================================================
+// Renderiza un input de busqueda con un dropdown que muestra opciones que
+// CONTENGAN lo tipeado. Permite ademas "+ Cargar nuevo X" si onCreateLabel
+// y onCreateFn estan provistos.
+//
+// Estado: cada picker se identifica por un id unico. El valor seleccionado
+// se guarda en un hidden input con id `<id>-value` y el label visible en
+// el input visible `<id>-input`.
+//
+// API:
+//   renderPicker({
+//     id: 'pm-cliente',          // id base para todos los elementos
+//     value: 7,                  // valor actualmente seleccionado (id) o null
+//     valueLabel: 'GDLP',        // label visible si hay valor
+//     placeholder: '...',        // placeholder del input
+//     options: [...],            // [{id, label, sublabel?}, ...]
+//     onSelectFnName: 'foo',     // nombre de funcion global a llamar al elegir
+//     onCreateLabel: '+ Cargar nuevo X',  // si esta, agrega opcion al final
+//     onCreateFnName: 'bar',     // nombre de funcion global al click crear
+//     disabled: false            // si esta, lock total
+//   })
+//
+// La funcion onSelect(picked) recibe el option elegido. La funcion onCreate
+// recibe el query actual (lo tipeado al momento del click).
+function renderPicker(opts) {
+  const id = opts.id;
+  const value = opts.value || null;
+  const valueLabel = opts.valueLabel || '';
+  const placeholder = opts.placeholder || 'Buscar...';
+  const disabled = opts.disabled === true;
+  const disabledStyle = disabled ? ';background:#F5F3EC;color:#888;cursor:not-allowed' : '';
+  let h = '<div class="picker-wrap" data-picker-id="' + id + '" style="position:relative">';
+  h += '<input type="text" class="ef-i" id="' + id + '-input" value="' + escapeHtml(valueLabel) + '" placeholder="' + escapeHtml(placeholder) + '"' + (disabled ? ' disabled' : '') + ' autocomplete="off" oninput="pickerInput(\'' + id + '\')" onfocus="pickerOpen(\'' + id + '\')" onblur="setTimeout(function(){pickerClose(\'' + id + '\')}, 200)" style="' + disabledStyle + '">';
+  h += '<input type="hidden" id="' + id + '-value" value="' + (value || '') + '">';
+  h += '<div id="' + id + '-dropdown" class="combo-list" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:200;max-height:240px;overflow-y:auto"></div>';
+  h += '</div>';
+  // Guardamos las opciones en window.__pickerCache para que pickerInput pueda accederlas
+  if (!window.__pickerCache) window.__pickerCache = {};
+  window.__pickerCache[id] = {
+    options: opts.options || [],
+    onSelectFnName: opts.onSelectFnName,
+    onCreateLabel: opts.onCreateLabel,
+    onCreateFnName: opts.onCreateFnName
+  };
+  return h;
+}
+
+function pickerOpen(id) { pickerInput(id); const dd = document.getElementById(id + '-dropdown'); if (dd) dd.style.display = 'block'; }
+function pickerClose(id) { const dd = document.getElementById(id + '-dropdown'); if (dd) dd.style.display = 'none'; }
+function pickerInput(id) {
+  const cache = (window.__pickerCache || {})[id];
+  if (!cache) return;
+  const input = document.getElementById(id + '-input');
+  const dd = document.getElementById(id + '-dropdown');
+  if (!input || !dd) return;
+  const q = (input.value || '').trim().toLowerCase();
+  // Filtrar por substring en label o sublabel
+  let matches = cache.options.filter(o => {
+    const lbl = (o.label || '').toLowerCase();
+    const sublbl = (o.sublabel || '').toLowerCase();
+    return lbl.includes(q) || sublbl.includes(q);
+  });
+  let html = '';
+  if (matches.length === 0 && !cache.onCreateLabel) {
+    html = '<div style="padding:8px 10px;font-size:11px;color:#888;font-style:italic">No hay opciones</div>';
+  } else {
+    matches.forEach(o => {
+      // onmousedown para que dispare antes que el blur del input cierre el dropdown
+      let label = escapeHtml(o.label);
+      if (o.sublabel) label += ' <span style="color:#888;font-size:10px">' + escapeHtml(o.sublabel) + '</span>';
+      html += '<div class="combo-item" style="padding:6px 10px;cursor:pointer;font-size:12px" onmousedown="pickerSelect(\'' + id + '\',\'' + o.id + '\')">' + label + '</div>';
+    });
+    if (cache.onCreateLabel) {
+      html += '<div class="combo-item" style="padding:6px 10px;cursor:pointer;font-size:12px;border-top:1px solid #E8E6DF;color:#0C447C;font-weight:600" onmousedown="pickerCreate(\'' + id + '\')">' + escapeHtml(cache.onCreateLabel) + '</div>';
+    }
+  }
+  dd.innerHTML = html;
+  dd.style.display = 'block';
+}
+function pickerSelect(id, optId) {
+  const cache = (window.__pickerCache || {})[id];
+  if (!cache) return;
+  // optId viene como string del onmousedown
+  const opt = cache.options.find(o => String(o.id) === String(optId));
+  if (!opt) return;
+  document.getElementById(id + '-input').value = opt.label;
+  document.getElementById(id + '-value').value = opt.id;
+  pickerClose(id);
+  if (cache.onSelectFnName && window[cache.onSelectFnName]) {
+    window[cache.onSelectFnName](opt);
+  }
+}
+function pickerCreate(id) {
+  const cache = (window.__pickerCache || {})[id];
+  if (!cache || !cache.onCreateFnName) return;
+  const input = document.getElementById(id + '-input');
+  const q = input ? (input.value || '').trim() : '';
+  pickerClose(id);
+  if (window[cache.onCreateFnName]) {
+    window[cache.onCreateFnName](q);
+  }
+}
+function pickerSetValue(id, optId, optLabel) {
+  // Setea programaticamente el valor del picker (despues de cargar nuevo X)
+  const inp = document.getElementById(id + '-input');
+  const val = document.getElementById(id + '-value');
+  if (inp) inp.value = optLabel || '';
+  if (val) val.value = optId || '';
+  // Tambien actualizamos el cache si el option recien creado no esta. Lo
+  // reconstruye el caller despues de loadAll().
+}
+function pickerClear(id) {
+  const inp = document.getElementById(id + '-input');
+  const val = document.getElementById(id + '-value');
+  if (inp) inp.value = '';
+  if (val) val.value = '';
+}
+
+// =============================================================================
+// CATALOGOS: helpers para agregar entradas nuevas (materiales, sectores, etc.)
+// =============================================================================
+// Cada uno abre un modal pequeno con un input + botones, inserta en DB,
+// recarga loadAll, y deja la entrada nueva seleccionada en el picker que
+// disparo la creacion. El picker se identifica por su id.
+
+// Helper: dado el id del picker que disparo el cargar, actualizar
+// pmCompatState si corresponde (cuando el cargar viene del modal de compat).
+function _pmcSyncStateAfterLoad(pickerId, newId) {
+  if (!pmCompatState) return;
+  if (pickerId === 'pmc-sector') pmCompatState.sectorId = newId;
+  else if (pickerId === 'pmc-equipo') pmCompatState.equipoId = newId;
+  else if (pickerId === 'pmc-conjunto') pmCompatState.conjuntoId = newId;
+  else if (pickerId === 'pmc-subconjunto') pmCompatState.subconjuntoId = newId;
+  // Re-renderizar el modal compat para que se reflejen los cambios en pickers de niveles inferiores
+  if (pickerId.startsWith('pmc-')) _pmRenderCompatModal();
+}
+
+// MATERIALES
+async function showCargarMaterial(initialName, callbackPickerId) {
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'mini-modal';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '400px';
+  let h = '<div class="md-t">Cargar nuevo material</div>';
+  h += '<div class="ef"><div class="ef-l">Nombre del material <span style="color:#A32D2D">*</span></div>';
+  h += '<input type="text" class="ef-i" id="mini-input" value="' + escapeHtml(initialName || '') + '" placeholder="Ej. SAE 1045"></div>';
+  h += '<div class="actions">';
+  h += '<button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button>';
+  h += '<button class="b b-p" id="mini-btn-save">Guardar</button>';
+  h += '</div>';
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
+  setTimeout(() => document.getElementById('mini-input').focus(), 50);
+  document.getElementById('mini-btn-save').onclick = async () => {
+    const nombre = document.getElementById('mini-input').value.trim();
+    if (!nombre) { toast('Ingresa el nombre', true); return; }
+    const dup = materiales.find(x => (x.nombre || '').toLowerCase() === nombre.toLowerCase());
+    if (dup) { toast('Ya existe ese material', true); return; }
+    const { data, error } = await sb.from('materiales').insert({ nombre }).select().single();
+    if (error) { toast('Error: ' + error.message, true); return; }
+    document.getElementById('mini-modal').remove();
+    await loadAll();
+    toast('Material cargado');
+    // Re-render: para que se actualice el cache del picker que llamo. Como
+    // el picker esta dentro de un modal mas grande (showProductoMatrizForm),
+    // tenemos que re-renderizar ese modal. La forma mas simple: cerrar y
+    // reabrir? No, perderiamos los datos del form.
+    // En su lugar: actualizamos manualmente el picker pasandole el option recien
+    // creado, y refrescamos el cache de opciones.
+    if (callbackPickerId && window.__pickerCache && window.__pickerCache[callbackPickerId]) {
+      window.__pickerCache[callbackPickerId].options = materiales.map(x => ({ id: x.id, label: x.nombre }));
+      pickerSetValue(callbackPickerId, data.id, data.nombre);
+    }
+  };
+}
+
+// SECTORES (cargados desde el form de producto matriz, ya conocemos clienteId)
+async function showCargarSector(initialName, clienteId, callbackPickerId) {
+  if (!clienteId) { toast('Primero seleccioná un cliente', true); return; }
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'mini-modal';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '440px';
+  const cli = clientes.find(c => c.id === clienteId);
+  let h = '<div class="md-t">Cargar nuevo sector</div>';
+  h += '<div style="font-size:11px;color:#5F5E5A;margin-bottom:10px">Cliente: <b>' + escapeHtml(cli ? cli.nombre : '?') + '</b></div>';
+  h += '<div class="ef"><div class="ef-l">Nombre del sector <span style="color:#A32D2D">*</span></div>';
+  h += '<input type="text" class="ef-i" id="mini-input" value="' + escapeHtml(initialName || '') + '" placeholder="Ej. Producción"></div>';
+  h += '<div class="actions">';
+  h += '<button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button>';
+  h += '<button class="b b-p" id="mini-btn-save">Guardar</button>';
+  h += '</div>';
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
+  setTimeout(() => document.getElementById('mini-input').focus(), 50);
+  document.getElementById('mini-btn-save').onclick = async () => {
+    const nombre = document.getElementById('mini-input').value.trim();
+    if (!nombre) { toast('Ingresa el nombre', true); return; }
+    const dup = sectores.find(x => x.cliente_id === clienteId && (x.nombre || '').toLowerCase() === nombre.toLowerCase());
+    if (dup) { toast('Ya existe ese sector para este cliente', true); return; }
+    const { data, error } = await sb.from('sectores').insert({ nombre, cliente_id: clienteId }).select().single();
+    if (error) { toast('Error: ' + error.message, true); return; }
+    document.getElementById('mini-modal').remove();
+    await loadAll();
+    toast('Sector cargado');
+    if (callbackPickerId && window.__pickerCache && window.__pickerCache[callbackPickerId]) {
+      window.__pickerCache[callbackPickerId].options = sectoresParaCliente(clienteId).map(s => ({ id: s.id, label: s.nombre }));
+      pickerSetValue(callbackPickerId, data.id, data.nombre);
+    }
+    _pmcSyncStateAfterLoad(callbackPickerId, data.id);
+  };
+}
+
+// EQUIPOS (cargados con sectorId. Tienen codigo_cliente opcional.)
+async function showCargarEquipo(initialName, sectorId, callbackPickerId) {
+  if (!sectorId) { toast('Primero seleccioná un sector', true); return; }
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'mini-modal';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '480px';
+  const sec = sectores.find(s => s.id === sectorId);
+  const cli = sec ? clientes.find(c => c.id === sec.cliente_id) : null;
+  let h = '<div class="md-t">Cargar nuevo equipo</div>';
+  h += '<div style="font-size:11px;color:#5F5E5A;margin-bottom:10px">Sector: <b>' + escapeHtml(sec ? sec.nombre : '?') + '</b> (' + escapeHtml(cli ? cli.nombre : '?') + ')</div>';
+  h += '<div class="ef"><div class="ef-l">Nombre del equipo <span style="color:#A32D2D">*</span></div>';
+  h += '<input type="text" class="ef-i" id="mini-input" value="' + escapeHtml(initialName || '') + '" placeholder="Ej. Tapadora de bidones"></div>';
+  h += '<div class="ef"><div class="ef-l">Código que el cliente le puso al equipo (opcional)</div>';
+  h += '<input type="text" class="ef-i" id="mini-codigo" placeholder="Ej. TB-04 (texto libre)"></div>';
+  h += '<div class="actions">';
+  h += '<button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button>';
+  h += '<button class="b b-p" id="mini-btn-save">Guardar</button>';
+  h += '</div>';
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
+  setTimeout(() => document.getElementById('mini-input').focus(), 50);
+  document.getElementById('mini-btn-save').onclick = async () => {
+    const nombre = document.getElementById('mini-input').value.trim();
+    const codigo_cliente = document.getElementById('mini-codigo').value.trim() || null;
+    if (!nombre) { toast('Ingresa el nombre', true); return; }
+    const dup = equipos.find(x => x.sector_id === sectorId && (x.nombre || '').toLowerCase() === nombre.toLowerCase());
+    if (dup) { toast('Ya existe ese equipo para este sector', true); return; }
+    const { data, error } = await sb.from('equipos').insert({ nombre, sector_id: sectorId, codigo_cliente }).select().single();
+    if (error) { toast('Error: ' + error.message, true); return; }
+    document.getElementById('mini-modal').remove();
+    await loadAll();
+    toast('Equipo cargado');
+    if (callbackPickerId && window.__pickerCache && window.__pickerCache[callbackPickerId]) {
+      window.__pickerCache[callbackPickerId].options = equiposParaSector(sectorId).map(e => ({ id: e.id, label: e.nombre, sublabel: e.codigo_cliente || '' }));
+      pickerSetValue(callbackPickerId, data.id, data.nombre);
+    }
+    _pmcSyncStateAfterLoad(callbackPickerId, data.id);
+  };
+}
+
+// CONJUNTOS (cargados con clienteId. Sin FK directa al equipo; ese vinculo
+// se hace al asignar la ubicacion del producto.)
+async function showCargarConjunto(initialName, clienteId, callbackPickerId) {
+  if (!clienteId) { toast('Primero seleccioná un cliente', true); return; }
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'mini-modal';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '440px';
+  const cli = clientes.find(c => c.id === clienteId);
+  let h = '<div class="md-t">Cargar nuevo conjunto</div>';
+  h += '<div style="font-size:11px;color:#5F5E5A;margin-bottom:10px">Cliente: <b>' + escapeHtml(cli ? cli.nombre : '?') + '</b></div>';
+  h += '<div class="ef"><div class="ef-l">Nombre del conjunto <span style="color:#A32D2D">*</span></div>';
+  h += '<input type="text" class="ef-i" id="mini-input" value="' + escapeHtml(initialName || '') + '" placeholder="Ej. Porta-rodamiento"></div>';
+  h += '<div class="actions">';
+  h += '<button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button>';
+  h += '<button class="b b-p" id="mini-btn-save">Guardar</button>';
+  h += '</div>';
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
+  setTimeout(() => document.getElementById('mini-input').focus(), 50);
+  document.getElementById('mini-btn-save').onclick = async () => {
+    const nombre = document.getElementById('mini-input').value.trim();
+    if (!nombre) { toast('Ingresa el nombre', true); return; }
+    const dup = conjuntos.find(x => x.cliente_id === clienteId && (x.nombre || '').toLowerCase() === nombre.toLowerCase());
+    if (dup) { toast('Ya existe ese conjunto para este cliente', true); return; }
+    const { data, error } = await sb.from('conjuntos').insert({ nombre, cliente_id: clienteId }).select().single();
+    if (error) { toast('Error: ' + error.message, true); return; }
+    document.getElementById('mini-modal').remove();
+    await loadAll();
+    toast('Conjunto cargado');
+    if (callbackPickerId && window.__pickerCache && window.__pickerCache[callbackPickerId]) {
+      window.__pickerCache[callbackPickerId].options = conjuntosParaCliente(clienteId).map(c => ({ id: c.id, label: c.nombre }));
+      pickerSetValue(callbackPickerId, data.id, data.nombre);
+    }
+    _pmcSyncStateAfterLoad(callbackPickerId, data.id);
+  };
+}
+
+// SUBCONJUNTOS (cargados con clienteId. Sin FK directa.)
+async function showCargarSubconjunto(initialName, clienteId, callbackPickerId) {
+  if (!clienteId) { toast('Primero seleccioná un cliente', true); return; }
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'mini-modal';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '440px';
+  const cli = clientes.find(c => c.id === clienteId);
+  let h = '<div class="md-t">Cargar nuevo subconjunto</div>';
+  h += '<div style="font-size:11px;color:#5F5E5A;margin-bottom:10px">Cliente: <b>' + escapeHtml(cli ? cli.nombre : '?') + '</b></div>';
+  h += '<div class="ef"><div class="ef-l">Nombre del subconjunto <span style="color:#A32D2D">*</span></div>';
+  h += '<input type="text" class="ef-i" id="mini-input" value="' + escapeHtml(initialName || '') + '" placeholder="Ej. Eje principal"></div>';
+  h += '<div class="actions">';
+  h += '<button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button>';
+  h += '<button class="b b-p" id="mini-btn-save">Guardar</button>';
+  h += '</div>';
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
+  setTimeout(() => document.getElementById('mini-input').focus(), 50);
+  document.getElementById('mini-btn-save').onclick = async () => {
+    const nombre = document.getElementById('mini-input').value.trim();
+    if (!nombre) { toast('Ingresa el nombre', true); return; }
+    const dup = subconjuntos.find(x => x.cliente_id === clienteId && (x.nombre || '').toLowerCase() === nombre.toLowerCase());
+    if (dup) { toast('Ya existe ese subconjunto para este cliente', true); return; }
+    const { data, error } = await sb.from('subconjuntos').insert({ nombre, cliente_id: clienteId }).select().single();
+    if (error) { toast('Error: ' + error.message, true); return; }
+    document.getElementById('mini-modal').remove();
+    await loadAll();
+    toast('Subconjunto cargado');
+    if (callbackPickerId && window.__pickerCache && window.__pickerCache[callbackPickerId]) {
+      window.__pickerCache[callbackPickerId].options = subconjuntosParaCliente(clienteId).map(s => ({ id: s.id, label: s.nombre }));
+      pickerSetValue(callbackPickerId, data.id, data.nombre);
+    }
+    _pmcSyncStateAfterLoad(callbackPickerId, data.id);
+  };
+}
+
+// Helpers para listar entidades por padre/cliente
+function sectoresParaCliente(clienteId) {
+  return sectores.filter(s => s.cliente_id === clienteId);
+}
+function equiposParaSector(sectorId) {
+  return equipos.filter(e => e.sector_id === sectorId);
+}
+function conjuntosParaCliente(clienteId) {
+  return conjuntos.filter(c => c.cliente_id === clienteId);
+}
+function subconjuntosParaCliente(clienteId) {
+  return subconjuntos.filter(s => s.cliente_id === clienteId);
 }
 
 // ============================================================================
@@ -3647,63 +4014,462 @@ function _matrizListClientesHtml() {
 }
 
 // ----- Form de creacion/edicion de producto matriz -----
+// Estado en memoria del form de producto matriz. Necesario porque cuando el
+// usuario abre un sub-modal (ej. "+ Cargar nuevo sector") y vuelve, el estado
+// de los pickers en cascada hay que reconstruirlo.
+//
+// pmFormState = {
+//   productoId: <id|null>,
+//   nuevaUbicacion: { clienteId, sectorId, equipoId, conjuntoId, subconjuntoId } | null,
+//   ubicacionesPendientes: [...]   // lista de ubicaciones a guardar al hacer Save
+// }
+let pmFormState = null;
+
 function showProductoMatrizForm(productoId) {
   const isNew = !productoId;
   const prod = isNew ? null : productosMatriz.find(p => p.id === productoId);
   if (!isNew && !prod) return;
 
+  // Cargar ubicaciones existentes (si edicion) en estado pendiente.
+  // Estas se editan en memoria y se sincronizan a la DB al guardar.
+  let ubicaciones = [];
+  if (prod) {
+    ubicaciones = productosMatrizUbicaciones.filter(u => u.producto_id === prod.id).map(u => ({
+      // id solo para entradas que ya existian en DB. Los nuevos no tienen id.
+      id: u.id,
+      cliente_id: u.cliente_id,
+      sector_id: u.sector_id,
+      equipo_id: u.equipo_id,
+      conjunto_id: u.conjunto_id,
+      subconjunto_id: u.subconjunto_id
+    }));
+  }
+
+  pmFormState = {
+    productoId: productoId,
+    ubicacionesPendientes: ubicaciones
+  };
+
+  _renderPmModal(prod);
+}
+
+// Render principal del modal del producto. Lo separamos para poder
+// re-renderizar cuando se modifica la lista de ubicaciones sin perder
+// los datos del form.
+function _renderPmModal(prod) {
+  // Capturar valores actuales del form si ya estaba renderizado, para
+  // preservarlos al re-renderizar.
+  const captured = _pmCaptureFormValues();
+
+  // Si ya hay modal, lo borramos primero
+  const existing = document.getElementById('prod-matriz-modal');
+  if (existing) existing.remove();
+
+  const isNew = !prod;
   const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'prod-matriz-modal';
-  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '600px';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '720px';
   let h = '<div class="md-t">' + (isNew ? 'Nuevo producto matriz' : 'Editar producto matriz') + '</div>';
-  h += '<div class="ef"><div class="ef-l">Descripción <span style="color:#A32D2D">*</span></div>';
-  h += '<input type="text" class="ef-i" id="pm-desc" value="' + escapeHtml(prod ? prod.descripcion : '') + '" placeholder="Ej. Eje SAE 1045 Ø50mm L=200"></div>';
-  h += '<div class="ef"><div class="ef-l">Cliente (opcional - dejar vacío para producto genérico)</div>';
-  h += '<select class="ef-i" id="pm-cliente">';
-  h += '<option value="">— Producto genérico —</option>';
-  clientes.forEach(c => {
-    h += '<option value="' + c.id + '"' + (prod && prod.cliente_id === c.id ? ' selected' : '') + '>' + escapeHtml(c.nombre) + '</option>';
-  });
-  h += '</select></div>';
-  h += '<div class="ef"><div class="ef-l">Material</div>';
-  h += '<input type="text" class="ef-i" id="pm-material" value="' + escapeHtml(prod ? (prod.material || '') : '') + '" placeholder="Ej. SAE 1045"></div>';
-  h += '<div class="ef"><div class="ef-l">Presentación de materia prima</div>';
-  h += '<input type="text" class="ef-i" id="pm-presentacion" value="' + escapeHtml(prod ? (prod.presentacion_mat_prima || '') : '') + '" placeholder="Ej. Barra Ø60 x 6mts"></div>';
-  h += '<div class="ef"><div class="ef-l">Cantidad por defecto</div>';
-  h += '<input type="number" class="ef-i" id="pm-cant" value="' + (prod ? (prod.cantidad_default || 1) : 1) + '" min="1" style="max-width:120px"></div>';
-  h += '<div class="ef"><div class="ef-l">Foto (opcional)</div>';
-  h += buildPhotoWrapHtml(prod ? prod.foto_url : null, 'pm');
+
+  // ----- DATOS DEL PRODUCTO -----
+  // Si captured tiene datos, los usamos. Sino los del prod en DB.
+  const v = captured || {
+    descripcion: prod ? prod.descripcion : '',
+    codigo_cliente: prod ? (prod.codigo_cliente || '') : '',
+    material_id: prod ? (prod.material_id || '') : '',
+    material_label: prod && prod.material_id ? (materiales.find(x => x.id === prod.material_id) || {}).nombre || '' : '',
+    presentacion: prod ? (prod.presentacion_mat_prima || '') : '',
+    cantidad: prod ? (prod.cantidad_default || 1) : 1,
+    foto_url: prod ? (prod.foto_url || '') : ''
+  };
+
+  h += '<div class="row">';
+  h += '<div class="ef" style="flex:3"><div class="ef-l">Descripción <span style="color:#A32D2D">*</span></div>';
+  h += '<input type="text" class="ef-i" id="pm-desc" value="' + escapeHtml(v.descripcion) + '" placeholder="Ej. Eje SAE 1045 Ø50mm L=200"></div>';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Código del cliente</div>';
+  h += '<input type="text" class="ef-i" id="pm-cod-cli" value="' + escapeHtml(v.codigo_cliente) + '" placeholder="Ej. 4517-AB"></div>';
   h += '</div>';
+
+  h += '<div class="row">';
+  // Material - picker buscable
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Material</div>';
+  h += renderPicker({
+    id: 'pm-material',
+    value: v.material_id,
+    valueLabel: v.material_label,
+    placeholder: 'Buscar o cargar nuevo...',
+    options: materiales.map(x => ({ id: x.id, label: x.nombre })),
+    onCreateLabel: '+ Cargar nuevo material',
+    onCreateFnName: 'pmCargarMaterial'
+  });
+  h += '</div>';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Presentación de materia prima</div>';
+  h += '<input type="text" class="ef-i" id="pm-presentacion" value="' + escapeHtml(v.presentacion) + '" placeholder="Ej. Barra Ø60 x 6mts"></div>';
+  h += '<div class="ef" style="flex:0 0 110px"><div class="ef-l">Cantidad</div>';
+  h += '<input type="number" class="ef-i" id="pm-cant" value="' + v.cantidad + '" min="1"></div>';
+  h += '</div>';
+
+  h += '<div class="ef"><div class="ef-l">Foto (opcional)</div>';
+  h += buildPhotoWrapHtml(v.foto_url, 'pm');
+  h += '</div>';
+
+  // ----- EQUIPOS COMPATIBLES (UBICACIONES) -----
+  h += '<div style="margin-top:18px;padding-top:12px;border-top:1px solid #E8E6DF">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
+  h += '<div style="font-size:12px;font-weight:600;color:#5F5E5A">Equipos compatibles</div>';
+  h += '<button class="b" onclick="pmAsignarCompatibilidad()" style="padding:4px 10px;font-size:11px">+ Asignar compatibilidad</button>';
+  h += '</div>';
+  h += '<div id="pm-ubicaciones-list">' + _pmUbicacionesListHtml() + '</div>';
+  h += '<div class="ef-help" style="margin-top:6px">Si el producto se usa en distintos equipos/conjuntos, asigná cada ruta. Sin asignar ninguna, queda como producto sin ubicación específica.</div>';
+  h += '</div>';
+
   h += '<div class="actions">';
   h += '<button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button>';
-  h += '<button class="b b-p" onclick="saveProductoMatriz(' + (productoId || 'null') + ')">' + (isNew ? 'Crear' : 'Guardar') + '</button>';
+  h += '<button class="b b-p" onclick="saveProductoMatriz(' + (pmFormState.productoId || 'null') + ')">' + (isNew ? 'Crear' : 'Guardar') + '</button>';
   h += '</div>';
   m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
   // Activa el slot 'pm' para que paste (Ctrl+V) caiga en la foto del producto
   setupPhotoPaste();
 }
 
+// Captura valores actuales del form (para preservarlos al re-renderizar).
+function _pmCaptureFormValues() {
+  const desc = document.getElementById('pm-desc');
+  if (!desc) return null;  // form no esta renderizado todavia
+  const matVal = document.getElementById('pm-material-value');
+  const matInp = document.getElementById('pm-material-input');
+  return {
+    descripcion: desc.value,
+    codigo_cliente: document.getElementById('pm-cod-cli').value,
+    material_id: matVal ? matVal.value : '',
+    material_label: matInp ? matInp.value : '',
+    presentacion: document.getElementById('pm-presentacion').value,
+    cantidad: parseInt(document.getElementById('pm-cant').value) || 1,
+    foto_url: (document.getElementById('photo-url-pm') || { value: '' }).value
+  };
+}
+
+// Render de la lista de ubicaciones pendientes (chips con boton de eliminar)
+function _pmUbicacionesListHtml() {
+  if (!pmFormState || !pmFormState.ubicacionesPendientes || pmFormState.ubicacionesPendientes.length === 0) {
+    return '<div style="font-size:11px;color:#888;font-style:italic;padding:6px 0">Sin equipos compatibles asignados.</div>';
+  }
+  let h = '';
+  pmFormState.ubicacionesPendientes.forEach((u, idx) => {
+    h += '<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:#F5F3EC;border:1px solid #C8C6BE;border-radius:5px;margin-bottom:5px;font-size:12px">';
+    h += '<span style="flex:1">' + _pmUbicacionRoute(u) + '</span>';
+    h += '<button class="b b-icon b-d" onclick="pmQuitarUbicacion(' + idx + ')" title="Quitar esta ubicación" style="padding:2px 8px;font-size:11px">×</button>';
+    h += '</div>';
+  });
+  return h;
+}
+
+// Devuelve string "Cliente > Sector > Equipo > Conjunto > Subconjunto"
+function _pmUbicacionRoute(u) {
+  const parts = [];
+  if (u.cliente_id) {
+    const c = clientes.find(x => x.id === u.cliente_id);
+    parts.push(c ? c.nombre : '?');
+  }
+  if (u.sector_id) {
+    const s = sectores.find(x => x.id === u.sector_id);
+    parts.push(s ? s.nombre : '?');
+  } else if (u.cliente_id) {
+    parts.push('<i style="color:#888">Sin Sector</i>');
+  }
+  if (u.equipo_id) {
+    const e = equipos.find(x => x.id === u.equipo_id);
+    parts.push(e ? e.nombre : '?');
+  } else if (u.sector_id) {
+    parts.push('<i style="color:#888">Sin Equipo</i>');
+  }
+  if (u.conjunto_id) {
+    const c = conjuntos.find(x => x.id === u.conjunto_id);
+    parts.push(c ? c.nombre : '?');
+  } else if (u.equipo_id) {
+    parts.push('<i style="color:#888">Sin Conjunto</i>');
+  }
+  if (u.subconjunto_id) {
+    const s = subconjuntos.find(x => x.id === u.subconjunto_id);
+    parts.push(s ? s.nombre : '?');
+  } else if (u.conjunto_id) {
+    parts.push('<i style="color:#888">Sin Subconjunto</i>');
+  }
+  return parts.length > 0 ? parts.map(p => '<b>' + p + '</b>').join(' <span style="color:#888">›</span> ') : '<i>(sin ubicación)</i>';
+}
+
+function pmQuitarUbicacion(idx) {
+  if (!pmFormState) return;
+  pmFormState.ubicacionesPendientes.splice(idx, 1);
+  // Re-renderizar solo la lista
+  const list = document.getElementById('pm-ubicaciones-list');
+  if (list) list.innerHTML = _pmUbicacionesListHtml();
+}
+
+// Handler "+ Cargar nuevo material" en el picker de material
+function pmCargarMaterial(initialName) {
+  showCargarMaterial(initialName, 'pm-material');
+}
+
+// =============================================================================
+// MODAL "ASIGNAR COMPATIBILIDAD" (carga una ubicacion al producto)
+// =============================================================================
+// Pickers en cascada: Cliente -> Sector -> Equipo -> Conjunto -> Subconjunto.
+// Cada nivel se habilita solo si el padre tiene valor. Cada uno tiene
+// "+ Cargar nuevo X" (excepto Cliente, que tiene su propio modal global).
+// Al confirmar, la ubicacion se agrega a pmFormState.ubicacionesPendientes
+// y NO se persiste todavia (eso pasa cuando se guarda el producto).
+
+let pmCompatState = null;  // {clienteId, sectorId, equipoId, conjuntoId, subconjuntoId}
+
+function pmAsignarCompatibilidad() {
+  pmCompatState = { clienteId: null, sectorId: null, equipoId: null, conjuntoId: null, subconjuntoId: null };
+  _pmRenderCompatModal();
+}
+
+function _pmRenderCompatModal() {
+  // Si ya hay, lo borramos
+  const existing = document.getElementById('pm-compat-modal');
+  if (existing) existing.remove();
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'pm-compat-modal';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '520px';
+  m.style.zIndex = '1100';  // por encima del modal del producto
+  let h = '<div class="md-t">Asignar compatibilidad</div>';
+  h += '<div style="font-size:11px;color:#5F5E5A;margin-bottom:10px">Definí la ruta donde el producto se utiliza. Podés dejar niveles en blanco si no aplican.</div>';
+
+  // Cliente picker
+  const cliV = pmCompatState.clienteId;
+  const cliLbl = cliV ? clN(cliV) : '';
+  h += '<div class="ef"><div class="ef-l">Cliente <span style="color:#A32D2D">*</span></div>';
+  h += renderPicker({
+    id: 'pmc-cliente',
+    value: cliV || '',
+    valueLabel: cliLbl,
+    placeholder: 'Buscar cliente...',
+    options: clientes.map(c => ({ id: c.id, label: c.nombre, sublabel: c.codigo || '' })),
+    onSelectFnName: 'pmcOnCliente'
+  });
+  h += '</div>';
+
+  // Sector picker (habilitado si hay cliente)
+  const secV = pmCompatState.sectorId;
+  const secLbl = secV ? (sectores.find(x => x.id === secV) || {}).nombre || '' : '';
+  h += '<div class="ef"><div class="ef-l">Sector</div>';
+  h += renderPicker({
+    id: 'pmc-sector',
+    value: secV || '',
+    valueLabel: secLbl,
+    placeholder: cliV ? 'Buscar sector o cargar nuevo...' : 'Primero elegí cliente',
+    disabled: !cliV,
+    options: cliV ? sectoresParaCliente(cliV).map(s => ({ id: s.id, label: s.nombre })) : [],
+    onSelectFnName: 'pmcOnSector',
+    onCreateLabel: cliV ? '+ Cargar nuevo sector' : null,
+    onCreateFnName: 'pmcCargarSector'
+  });
+  h += '</div>';
+
+  // Equipo picker
+  const eqV = pmCompatState.equipoId;
+  const eqLbl = eqV ? (equipos.find(x => x.id === eqV) || {}).nombre || '' : '';
+  h += '<div class="ef"><div class="ef-l">Equipo</div>';
+  h += renderPicker({
+    id: 'pmc-equipo',
+    value: eqV || '',
+    valueLabel: eqLbl,
+    placeholder: secV ? 'Buscar equipo o cargar nuevo...' : 'Primero elegí sector',
+    disabled: !secV,
+    options: secV ? equiposParaSector(secV).map(e => ({ id: e.id, label: e.nombre, sublabel: e.codigo_cliente || '' })) : [],
+    onSelectFnName: 'pmcOnEquipo',
+    onCreateLabel: secV ? '+ Cargar nuevo equipo' : null,
+    onCreateFnName: 'pmcCargarEquipo'
+  });
+  h += '</div>';
+
+  // Conjunto picker (cliente_id para conjunto, no equipo_id - los conjuntos son N:M con equipo)
+  const conV = pmCompatState.conjuntoId;
+  const conLbl = conV ? (conjuntos.find(x => x.id === conV) || {}).nombre || '' : '';
+  h += '<div class="ef"><div class="ef-l">Conjunto</div>';
+  h += renderPicker({
+    id: 'pmc-conjunto',
+    value: conV || '',
+    valueLabel: conLbl,
+    placeholder: eqV ? 'Buscar conjunto o cargar nuevo...' : 'Primero elegí equipo',
+    disabled: !eqV,
+    // Mostrar conjuntos del cliente que ya estan ligados al equipo (via conjuntos_equipos),
+    // o todos los del cliente si no estan ligados aun. En B1.6.a no manejamos ligadura,
+    // mostramos todos los del cliente.
+    options: eqV && cliV ? conjuntosParaCliente(cliV).map(c => ({ id: c.id, label: c.nombre })) : [],
+    onSelectFnName: 'pmcOnConjunto',
+    onCreateLabel: eqV ? '+ Cargar nuevo conjunto' : null,
+    onCreateFnName: 'pmcCargarConjunto'
+  });
+  h += '</div>';
+
+  // Subconjunto picker - solo habilitado si conjunto esta seleccionado (regla del usuario)
+  const subV = pmCompatState.subconjuntoId;
+  const subLbl = subV ? (subconjuntos.find(x => x.id === subV) || {}).nombre || '' : '';
+  h += '<div class="ef"><div class="ef-l">Subconjunto</div>';
+  h += renderPicker({
+    id: 'pmc-subconjunto',
+    value: subV || '',
+    valueLabel: subLbl,
+    placeholder: conV ? 'Buscar subconjunto o cargar nuevo...' : 'Solo si hay conjunto',
+    disabled: !conV,
+    options: conV && cliV ? subconjuntosParaCliente(cliV).map(s => ({ id: s.id, label: s.nombre })) : [],
+    onSelectFnName: 'pmcOnSubconjunto',
+    onCreateLabel: conV ? '+ Cargar nuevo subconjunto' : null,
+    onCreateFnName: 'pmcCargarSubconjunto'
+  });
+  h += '</div>';
+
+  h += '<div class="actions">';
+  h += '<button class="b" onclick="document.getElementById(\'pm-compat-modal\').remove()">Cancelar</button>';
+  h += '<button class="b b-p" onclick="pmGuardarCompatibilidad()">Guardar compatibilidad</button>';
+  h += '</div>';
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
+}
+
+// Handlers de pickers en cascada
+function pmcOnCliente(opt) {
+  pmCompatState.clienteId = opt.id;
+  // Reset niveles inferiores
+  pmCompatState.sectorId = null;
+  pmCompatState.equipoId = null;
+  pmCompatState.conjuntoId = null;
+  pmCompatState.subconjuntoId = null;
+  _pmRenderCompatModal();
+}
+function pmcOnSector(opt) {
+  pmCompatState.sectorId = opt.id;
+  pmCompatState.equipoId = null;
+  pmCompatState.conjuntoId = null;
+  pmCompatState.subconjuntoId = null;
+  _pmRenderCompatModal();
+}
+function pmcOnEquipo(opt) {
+  pmCompatState.equipoId = opt.id;
+  pmCompatState.conjuntoId = null;
+  pmCompatState.subconjuntoId = null;
+  _pmRenderCompatModal();
+}
+function pmcOnConjunto(opt) {
+  pmCompatState.conjuntoId = opt.id;
+  pmCompatState.subconjuntoId = null;
+  _pmRenderCompatModal();
+}
+function pmcOnSubconjunto(opt) {
+  pmCompatState.subconjuntoId = opt.id;
+  _pmRenderCompatModal();
+}
+
+// "+ Cargar" handlers en este modal
+function pmcCargarSector(initial) { showCargarSector(initial, pmCompatState.clienteId, 'pmc-sector'); }
+function pmcCargarEquipo(initial) { showCargarEquipo(initial, pmCompatState.sectorId, 'pmc-equipo'); }
+function pmcCargarConjunto(initial) { showCargarConjunto(initial, pmCompatState.clienteId, 'pmc-conjunto'); }
+function pmcCargarSubconjunto(initial) { showCargarSubconjunto(initial, pmCompatState.clienteId, 'pmc-subconjunto'); }
+
+// Una vez que showCargar* retorna y selecciona el option en el picker via
+// pickerSetValue, necesitamos actualizar pmCompatState. Lo hacemos con un
+// hook: el callback onSelect del picker dispara pmcOn*, pero pickerSetValue
+// no llama onSelect. Solucion: leemos el value del hidden input y actualizamos
+// state ahi mismo. Pero el handler de pickerSetValue no lo hace... lo hacemos
+// post-loadAll en showCargar*. La forma simple: al cargar un sector/equipo/etc.
+// nuevo, ya quedan en sectores/equipos/etc. globales y la siguiente vez que
+// renderizamos el modal, los pickers ya tendran ese option en sus catalogos.
+// Pero el state en pmCompatState... lo actualizamos manualmente despues de
+// pickerSetValue? Mejor: re-renderizamos el modal completo con state que ya
+// tiene el id seleccionado. Para eso, en showCargar* hacemos un workaround:
+// despues de cargar, si el callback es 'pmc-X', actualizamos pmCompatState
+// y re-renderizamos. Lo haremos parcheando el callback.
+// SOLUCION SIMPLE: en lugar de pickerSetValue desde showCargar*, vamos a
+// disparar un evento custom que el modal escucha y actualiza pmCompatState.
+// Demasiado complejo. Mejor:
+// - showCargar* ya recarga loadAll y deja la entrada en globals.
+// - Devolvemos el id del nuevo desde showCargar* y desde pmcCargarX
+//   actualizamos pmCompatState directamente.
+// Refactorizo showCargar* para que devuelva la entrada nueva.
+
+function pmGuardarCompatibilidad() {
+  if (!pmCompatState.clienteId) {
+    toast('Cliente es obligatorio', true);
+    return;
+  }
+  if (!pmFormState) return;
+  // Verificar que no este duplicada
+  const dup = pmFormState.ubicacionesPendientes.find(u =>
+    u.cliente_id === pmCompatState.clienteId &&
+    u.sector_id === pmCompatState.sectorId &&
+    u.equipo_id === pmCompatState.equipoId &&
+    u.conjunto_id === pmCompatState.conjuntoId &&
+    u.subconjunto_id === pmCompatState.subconjuntoId
+  );
+  if (dup) {
+    toast('Ya está asignada esa ruta', true);
+    return;
+  }
+  pmFormState.ubicacionesPendientes.push({
+    cliente_id: pmCompatState.clienteId,
+    sector_id: pmCompatState.sectorId,
+    equipo_id: pmCompatState.equipoId,
+    conjunto_id: pmCompatState.conjuntoId,
+    subconjunto_id: pmCompatState.subconjuntoId
+  });
+  document.getElementById('pm-compat-modal').remove();
+  // Re-renderizar la lista de ubicaciones del modal padre
+  const list = document.getElementById('pm-ubicaciones-list');
+  if (list) list.innerHTML = _pmUbicacionesListHtml();
+  toast('Compatibilidad asignada');
+}
+
 async function saveProductoMatriz(productoId) {
   const descripcion = document.getElementById('pm-desc').value.trim();
   if (!descripcion) { toast('La descripción es obligatoria', true); return; }
-  const cliV = document.getElementById('pm-cliente').value;
-  const cliente_id = cliV ? parseInt(cliV) : null;
-  const material = document.getElementById('pm-material').value.trim() || null;
+  const codigo_cliente = document.getElementById('pm-cod-cli').value.trim() || null;
+  const matVal = document.getElementById('pm-material-value').value;
+  const material_id = matVal ? parseInt(matVal) : null;
   const presentacion_mat_prima = document.getElementById('pm-presentacion').value.trim() || null;
   const cantidad_default = parseInt(document.getElementById('pm-cant').value) || 1;
   const fotoEl = document.getElementById('photo-url-pm');
   const foto_url = fotoEl ? (fotoEl.value || null) : null;
+  // cliente_id: lo determinamos desde la primera ubicacion pendiente.
+  // Si no hay ubicaciones, queda como genérico (cliente_id = null).
+  let cliente_id = null;
+  if (pmFormState && pmFormState.ubicacionesPendientes && pmFormState.ubicacionesPendientes.length > 0) {
+    cliente_id = pmFormState.ubicacionesPendientes[0].cliente_id;
+  }
+
   const payload = {
-    descripcion, cliente_id, material, presentacion_mat_prima, cantidad_default, foto_url,
+    descripcion, cliente_id, codigo_cliente, material_id, presentacion_mat_prima, cantidad_default, foto_url,
     updated_at: new Date().toISOString()
   };
+
+  let savedProductoId = productoId;
   if (productoId) {
     const { error } = await sb.from('productos_matriz').update(payload).eq('id', productoId);
     if (error) { toast('Error: ' + error.message, true); console.error(error); return; }
   } else {
-    const { error } = await sb.from('productos_matriz').insert(payload);
+    const { data, error } = await sb.from('productos_matriz').insert(payload).select().single();
     if (error) { toast('Error: ' + error.message, true); console.error(error); return; }
+    savedProductoId = data.id;
   }
+
+  // Sincronizar ubicaciones: borrar las viejas, insertar las nuevas.
+  // (Es mas simple que diff-ear; las ubicaciones son baratas.)
+  await sb.from('productos_matriz_ubicaciones').delete().eq('producto_id', savedProductoId);
+  if (pmFormState && pmFormState.ubicacionesPendientes && pmFormState.ubicacionesPendientes.length > 0) {
+    const inserts = pmFormState.ubicacionesPendientes.map(u => ({
+      producto_id: savedProductoId,
+      cliente_id: u.cliente_id,
+      sector_id: u.sector_id,
+      equipo_id: u.equipo_id,
+      conjunto_id: u.conjunto_id,
+      subconjunto_id: u.subconjunto_id
+    }));
+    const { error: errU } = await sb.from('productos_matriz_ubicaciones').insert(inserts);
+    if (errU) { toast('Producto guardado pero error en ubicaciones: ' + errU.message, true); console.error(errU); }
+  }
+
   document.getElementById('prod-matriz-modal').remove();
+  pmFormState = null;
   await loadAll();
   toast(productoId ? 'Producto actualizado' : 'Producto creado');
   render();
@@ -3728,11 +4494,24 @@ async function confirmDeleteProductoMatriz(productoId) {
 function showClienteForm(clienteId) {
   const cliente = clienteId ? clientes.find(c => c.id === clienteId) : null;
   const isNew = !cliente;
+  // Codigo: 4 caracteres alfanumericos mayusculas, unico, opcional para clientes
+  // viejos (los que ya estan cargados sin codigo). Una vez asignado, no se puede
+  // cambiar (campo deshabilitado en edicion si ya tiene valor).
+  const tieneCodigo = cliente && cliente.codigo;
   const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'cli-modal';
   const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '480px';
   let h = '<div class="md-t">' + (isNew ? 'Nuevo cliente' : 'Editar cliente') + '</div>';
-  h += '<div class="ef"><div class="ef-l">Nombre <span style="color:#A32D2D">*</span></div>';
+  h += '<div class="row">';
+  h += '<div class="ef" style="flex:2"><div class="ef-l">Nombre <span style="color:#A32D2D">*</span></div>';
   h += '<input type="text" class="ef-i" id="c-nombre" value="' + escapeHtml(cliente ? cliente.nombre : '') + '" placeholder="Ej. Gente de la Pampa"></div>';
+  // Codigo: rojo si falta y es edicion (cliente viejo sin codigo), deshabilitado si ya esta cargado.
+  const codigoFaltante = !isNew && !tieneCodigo;
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Código' + (codigoFaltante ? ' <span style="color:#A32D2D" title="Falta completar">*</span>' : (isNew ? ' <span style="color:#A32D2D">*</span>' : '')) + '</div>';
+  const codigoStyle = codigoFaltante ? 'border-color:#A32D2D;background:#FEF5F5;text-transform:uppercase' : 'text-transform:uppercase';
+  h += '<input type="text" class="ef-i" id="c-codigo" value="' + escapeHtml(cliente && cliente.codigo ? cliente.codigo : '') + '" placeholder="4 letras/números" maxlength="4"' + (tieneCodigo ? ' disabled title="No se puede modificar una vez guardado"' : '') + ' style="' + codigoStyle + '">';
+  h += '<div class="ef-help" style="font-size:10px">Ej: GDLP. 4 caracteres alfanuméricos.</div>';
+  h += '<div class="ef-err" id="err-codigo" style="display:none"></div></div>';
+  h += '</div>';
   h += '<div class="ef"><div class="ef-l">CUIT <span style="color:#A32D2D">*</span></div>';
   h += '<input type="text" class="ef-i" id="c-cuit" value="' + escapeHtml(cliente && cliente.cuit ? cliente.cuit : '') + '" placeholder="11 digitos sin guiones" maxlength="11">';
   h += '<div class="ef-help">Ej: 30712345678 (11 digitos exactos, sin guiones).</div>';
@@ -3755,15 +4534,48 @@ async function saveCliente(clienteId) {
   const contacto = document.getElementById('c-contacto').value.trim() || null;
   const telefono = document.getElementById('c-telefono').value.trim() || null;
   const errCuit = document.getElementById('err-cuit');
+  const errCodigo = document.getElementById('err-codigo');
   errCuit.style.display = 'none';
+  errCodigo.style.display = 'none';
   if (!nombre) { toast('Ingresa el nombre', true); return; }
   if (!cuit) { errCuit.textContent = 'CUIT requerido'; errCuit.style.display = 'block'; return; }
   if (!validCuit(cuit)) { errCuit.textContent = 'CUIT debe tener 11 digitos sin guiones'; errCuit.style.display = 'block'; return; }
   const dup = clientes.find(c => c.cuit === cuit && c.id !== clienteId);
   if (dup) { errCuit.textContent = 'Ya existe un cliente con ese CUIT: ' + dup.nombre; errCuit.style.display = 'block'; return; }
-  const payload = { nombre, cuit, contacto, telefono };
+
+  // Codigo: solo lo procesamos si esta editable (campo no disabled, o sea: nuevo
+  // o viejo sin codigo). Si ya tenia codigo, ignoramos cualquier cosa que digan.
+  const cliente = clienteId ? clientes.find(c => c.id === clienteId) : null;
+  const tieneCodigo = cliente && cliente.codigo;
+  let codigo = cliente ? cliente.codigo : null;  // por defecto, mantenemos el actual
+  if (!tieneCodigo) {
+    // Editable: leemos del input
+    const codigoInput = document.getElementById('c-codigo').value.trim().toUpperCase();
+    if (!clienteId) {
+      // Nuevo cliente: codigo OBLIGATORIO
+      if (!codigoInput) { errCodigo.textContent = 'Código requerido'; errCodigo.style.display = 'block'; return; }
+      if (!/^[A-Z0-9]{4}$/.test(codigoInput)) { errCodigo.textContent = 'Código debe tener exactamente 4 caracteres alfanuméricos (A-Z, 0-9)'; errCodigo.style.display = 'block'; return; }
+      // Unicidad case-insensitive
+      const dupCod = clientes.find(c => c.codigo && c.codigo.toUpperCase() === codigoInput);
+      if (dupCod) { errCodigo.textContent = 'Ya existe un cliente con ese código: ' + dupCod.nombre; errCodigo.style.display = 'block'; return; }
+      codigo = codigoInput;
+    } else {
+      // Edicion de cliente viejo sin codigo: opcional. Si lo cargo, validar.
+      if (codigoInput) {
+        if (!/^[A-Z0-9]{4}$/.test(codigoInput)) { errCodigo.textContent = 'Código debe tener exactamente 4 caracteres alfanuméricos (A-Z, 0-9)'; errCodigo.style.display = 'block'; return; }
+        const dupCod = clientes.find(c => c.codigo && c.codigo.toUpperCase() === codigoInput && c.id !== clienteId);
+        if (dupCod) { errCodigo.textContent = 'Ya existe un cliente con ese código: ' + dupCod.nombre; errCodigo.style.display = 'block'; return; }
+        codigo = codigoInput;
+      } else {
+        codigo = null;  // queda sin codigo
+      }
+    }
+  }
+
+  const payload = { nombre, cuit, contacto, telefono, codigo };
   if (clienteId) {
-    await sb.from('clientes').update(payload).eq('id', clienteId);
+    const { error } = await sb.from('clientes').update(payload).eq('id', clienteId);
+    if (error) { toast('Error: ' + error.message, true); return; }
     toast('Cliente actualizado');
   } else {
     const { error } = await sb.from('clientes').insert(payload);
