@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v44</title>
+<title>Velasco App 2.0 — Proyectos v46</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -3654,12 +3654,18 @@ function subconjuntosParaCliente(clienteId) {
 // ids expandidos para mostrar procesos/productos).
 // ============================================================================
 
-const MATRIZ_FILTERS_KEY = 'velasco_matrizFilters_v2';
+const MATRIZ_FILTERS_KEY = 'velasco_matrizFilters_v3';
 const MATRIZ_SORT_KEY = 'velasco_matrizSort_v1';
 const DEFAULT_MATRIZ_FILTERS = {
   search: '',          // substring sobre descripcion del producto
-  clienteIds: []       // multi-select: array de ids de clientes (numeros) o 'GENERICO' (string)
-  // material y procesos sacados en B1.5; volveremos en B1.6 con campos jerarquicos.
+  clienteIds: [],      // multi-select: array de ids o 'GENERICO'
+  sectorIds: [],       // multi-select: array de ids
+  equipoIds: [],       // multi-select: array de ids
+  conjuntoIds: [],     // multi-select: array de ids
+  subconjuntoIds: [],  // multi-select: array de ids
+  codigos: ''          // substring transversal: matchea contra codigo del cliente,
+                       // codigo de equipo del cliente, codigo de cliente del producto,
+                       // ID interno del producto.
 };
 const DEFAULT_MATRIZ_SORT = { by: 'descripcion', dir: 'asc' };
 let matrizFilters = (function(){
@@ -3674,25 +3680,35 @@ function saveMatrizFilters() { try { localStorage.setItem(MATRIZ_FILTERS_KEY, JS
 function saveMatrizSort() { try { localStorage.setItem(MATRIZ_SORT_KEY, JSON.stringify(matrizSort)); } catch(e){} }
 
 // Estado de despliegue (no persistente)
-let matrizExpandedProds = new Set();   // ids de productos desplegados (vista productos)
-let matrizExpandedClientes = new Set();  // ids de clientes desplegados (vista clientes); 'GENERICO' para virtual
+let matrizExpandedProds = new Set();
+let matrizExpandedClientes = new Set();
 
 function countActiveMatrizFilters() {
   let n = 0;
   if (matrizFilters.search && matrizFilters.search.trim()) n++;
   if (matrizFilters.clienteIds && matrizFilters.clienteIds.length > 0) n++;
+  if (matrizFilters.sectorIds && matrizFilters.sectorIds.length > 0) n++;
+  if (matrizFilters.equipoIds && matrizFilters.equipoIds.length > 0) n++;
+  if (matrizFilters.conjuntoIds && matrizFilters.conjuntoIds.length > 0) n++;
+  if (matrizFilters.subconjuntoIds && matrizFilters.subconjuntoIds.length > 0) n++;
+  if (matrizFilters.codigos && matrizFilters.codigos.trim()) n++;
   return n;
 }
 
+// Filtra los productos aplicando todos los criterios. Para los filtros
+// jerarquicos (sector/equipo/conjunto/subconjunto), un producto matchea si
+// CUALQUIERA de sus ubicaciones matchea. Esto es cascada flexible: los
+// filtros se aplican en AND entre dimensiones, OR dentro de cada dimension,
+// y OR entre las ubicaciones del producto.
 function applyMatrizFilters(list) {
   let out = list;
+  // 1. Busqueda por descripcion (substring)
   if (matrizFilters.search && matrizFilters.search.trim()) {
     const q = matrizFilters.search.trim().toLowerCase();
     out = out.filter(p => (p.descripcion || '').toLowerCase().includes(q));
   }
+  // 2. Filtro de cliente (multi OR). Considera 'GENERICO' = sin cliente.
   if (matrizFilters.clienteIds && matrizFilters.clienteIds.length > 0) {
-    // Multi-select OR: el producto matchea si su cliente_id esta en la lista,
-    // o si la lista incluye 'GENERICO' y el producto no tiene cliente.
     const includesGenerico = matrizFilters.clienteIds.includes('GENERICO');
     const numericIds = new Set(matrizFilters.clienteIds.filter(x => x !== 'GENERICO').map(x => parseInt(x)));
     out = out.filter(p => {
@@ -3700,7 +3716,55 @@ function applyMatrizFilters(list) {
       return numericIds.has(p.cliente_id);
     });
   }
-  // material y procesos sacados en B1.5
+  // 3. Filtros jerarquicos: cada uno mira si alguna ubicacion del producto
+  //    apunta al sector/equipo/conjunto/subconjunto seleccionado.
+  const sectIds = new Set((matrizFilters.sectorIds || []).map(x => parseInt(x)));
+  const eqIds = new Set((matrizFilters.equipoIds || []).map(x => parseInt(x)));
+  const conIds = new Set((matrizFilters.conjuntoIds || []).map(x => parseInt(x)));
+  const subIds = new Set((matrizFilters.subconjuntoIds || []).map(x => parseInt(x)));
+  if (sectIds.size > 0 || eqIds.size > 0 || conIds.size > 0 || subIds.size > 0) {
+    out = out.filter(p => {
+      const ubics = productosMatrizUbicaciones.filter(u => u.producto_id === p.id);
+      // El producto matchea si CUALQUIERA de sus ubicaciones cumple TODOS los
+      // filtros jerarquicos activos. Para una ubicacion U:
+      //   U matchea sectores si U.sector_id ∈ sectIds (o sectIds vacio)
+      // Y asi para los demas niveles.
+      return ubics.some(u => {
+        if (sectIds.size > 0 && !sectIds.has(u.sector_id)) return false;
+        if (eqIds.size > 0 && !eqIds.has(u.equipo_id)) return false;
+        if (conIds.size > 0 && !conIds.has(u.conjunto_id)) return false;
+        if (subIds.size > 0 && !subIds.has(u.subconjunto_id)) return false;
+        return true;
+      });
+    });
+  }
+  // 4. Filtro transversal de codigos (substring case-insensitive)
+  if (matrizFilters.codigos && matrizFilters.codigos.trim()) {
+    const q = matrizFilters.codigos.trim().toLowerCase();
+    out = out.filter(p => {
+      // Codigo del cliente del producto
+      const cli = p.cliente_id ? clientes.find(c => c.id === p.cliente_id) : null;
+      if (cli && cli.codigo && cli.codigo.toLowerCase().includes(q)) return true;
+      // Codigo de cliente del producto (texto libre del producto)
+      if (p.codigo_cliente && p.codigo_cliente.toLowerCase().includes(q)) return true;
+      // ID interno del producto (numerico, comparado como string)
+      if (String(p.id).includes(q)) return true;
+      // Codigo de equipo del cliente: revisar en cualquiera de las ubicaciones
+      const ubics = productosMatrizUbicaciones.filter(u => u.producto_id === p.id);
+      for (const u of ubics) {
+        if (u.equipo_id) {
+          const eq = equipos.find(e => e.id === u.equipo_id);
+          if (eq && eq.codigo_cliente && eq.codigo_cliente.toLowerCase().includes(q)) return true;
+        }
+        // Codigo del cliente de la ubicacion (puede ser distinto al del producto)
+        if (u.cliente_id) {
+          const cu = clientes.find(c => c.id === u.cliente_id);
+          if (cu && cu.codigo && cu.codigo.toLowerCase().includes(q)) return true;
+        }
+      }
+      return false;
+    });
+  }
   return out;
 }
 
@@ -3731,19 +3795,29 @@ function sortMatriz(list) {
 
 // Handlers
 function matrizSearchInput(e) { matrizFilters.search = e.target.value; saveMatrizFilters(); _matrizRerenderList(); }
-function matrizToggleCliente(v) {
-  // v puede ser un id (numero como string) o 'GENERICO'.
-  // Normalizamos a numero si es numerico, asi todo el array es consistente.
+function matrizCodigosInput(e) { matrizFilters.codigos = e.target.value; saveMatrizFilters(); _matrizRerenderList(); }
+
+// Toggle generico para multi-select. fieldName es el nombre del campo en
+// matrizFilters (clienteIds, sectorIds, etc.). v puede ser numero o 'GENERICO'
+// (solo para clienteIds).
+function matrizToggleFilter(fieldName, v) {
   const norm = (v === 'GENERICO') ? 'GENERICO' : parseInt(v);
-  const list = (matrizFilters.clienteIds || []).slice();
+  const list = (matrizFilters[fieldName] || []).slice();
   const idx = list.findIndex(x => x === norm);
   if (idx >= 0) list.splice(idx, 1);
   else list.push(norm);
-  matrizFilters.clienteIds = list;
+  matrizFilters[fieldName] = list;
   saveMatrizFilters();
   render();
 }
-function matrizClearFilters() { matrizFilters = { ...DEFAULT_MATRIZ_FILTERS, clienteIds: [] }; saveMatrizFilters(); render(); }
+// Wrappers retrocompatibles
+function matrizToggleCliente(v) { matrizToggleFilter('clienteIds', v); }
+
+function matrizClearFilters() {
+  matrizFilters = JSON.parse(JSON.stringify(DEFAULT_MATRIZ_FILTERS));
+  saveMatrizFilters();
+  render();
+}
 function matrizSortByChange() {
   const sel = document.getElementById('matriz-sort-by');
   if (!sel) return;
@@ -3767,33 +3841,195 @@ function matrizToggleExpandCliente(idOrGen) {
   render();
 }
 
-// Dropdown buscable de clientes (multi-select)
-function matrizCliSearchOpen() { matrizCliSearchInput(); const dd = document.getElementById('matriz-cli-dropdown'); if (dd) dd.style.display = 'block'; }
-function matrizCliSearchClose() { const dd = document.getElementById('matriz-cli-dropdown'); if (dd) dd.style.display = 'none'; }
+// =============================================================================
+// COMPONENTE GENERICO: filtro multi-select buscable
+// =============================================================================
+// Encapsula el patron "chips arriba + input buscable + dropdown".
+// Cada filtro se identifica por su id base (ej. 'matriz-cli', 'matriz-sec', etc.).
+// Los handlers de open/close/input son nombrados por convencion:
+//   <baseId>SearchOpen, <baseId>SearchClose, <baseId>SearchInput
+//
+// Para evitar tener que codear handlers especificos para cada filtro,
+// usamos una unica funcion generica matrizMultiSelectInput que toma el id
+// y la fuente de datos de los candidatos.
+
+// Construye el HTML de un filtro multi-select buscable.
+// Args:
+//   - id: id base ('matriz-cli', 'matriz-sec', etc.)
+//   - label: etiqueta visible ('Clientes', 'Sectores', etc.)
+//   - selectedItems: array de ids seleccionados [{key, label}, ...]
+//   - placeholder: texto del input
+//   - onToggleFn: nombre de funcion para toggle (string)
+//   - onSearchFn: nombre de funcion para input event (string)
+//   - flexBasis: estilo flex para el wrap exterior (opcional)
+function _buildMultiFilter(opts) {
+  const { id, label, selectedItems, placeholder, onToggleFn, onSearchFn, flexBasis } = opts;
+  const wrapStyle = flexBasis ? ('flex:' + flexBasis) : 'flex:1';
+  let h = '<div style="display:flex;align-items:flex-start;gap:6px;' + wrapStyle + '">';
+  h += '<div style="font-size:11px;font-weight:600;color:#5F5E5A;padding-top:7px;flex:0 0 auto;white-space:nowrap">' + escapeHtml(label) + ':</div>';
+  h += '<div style="position:relative;flex:1;min-width:0">';
+  h += '<div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;border:1px solid #C8C6BE;border-radius:5px;padding:4px 6px;background:#fff;min-height:30px">';
+  selectedItems.forEach(it => {
+    h += '<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:3px;font-size:11px;background:#0C447C;color:#fff">' + escapeHtml(it.label) + ' <button onclick="' + onToggleFn + '(\'' + it.key + '\')" style="background:none;border:none;color:#fff;cursor:pointer;font-size:13px;line-height:1;padding:0">×</button></span>';
+  });
+  h += '<input type="text" id="' + id + '-search" placeholder="' + (selectedItems.length ? 'Agregar otro...' : placeholder) + '" autocomplete="off" oninput="' + onSearchFn + '()" onfocus="' + onSearchFn + '();document.getElementById(\'' + id + '-dropdown\').style.display=\'block\'" onblur="setTimeout(function(){var d=document.getElementById(\'' + id + '-dropdown\');if(d)d.style.display=\'none\'}, 200)" style="border:none;outline:none;flex:1;min-width:120px;font-size:12px;padding:2px 4px;background:transparent">';
+  h += '</div>';
+  h += '<div id="' + id + '-dropdown" class="combo-list" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:100;max-height:200px;overflow-y:auto"></div>';
+  h += '</div>';
+  h += '</div>';
+  return h;
+}
+
+// Renderiza el dropdown de un filtro multi-select. Recibe el id base, la
+// lista de candidatos disponibles {key, label, sublabel?} y la funcion de toggle.
+function _renderMultiDropdown(id, query, candidates, onToggleFn) {
+  const dd = document.getElementById(id + '-dropdown');
+  if (!dd) return;
+  const q = (query || '').toLowerCase();
+  const matches = candidates.filter(c =>
+    c.label.toLowerCase().includes(q) ||
+    (c.sublabel || '').toLowerCase().includes(q)
+  );
+  if (matches.length === 0) {
+    dd.innerHTML = '<div style="padding:8px 10px;font-size:11px;color:#888;font-style:italic">Sin opciones</div>';
+  } else {
+    dd.innerHTML = matches.map(c => {
+      let lblHtml = escapeHtml(c.label);
+      if (c.sublabel) lblHtml += ' <span style="color:#888;font-size:10px">' + escapeHtml(c.sublabel) + '</span>';
+      return '<div class="combo-item" style="padding:6px 10px;cursor:pointer;font-size:12px" onmousedown="' + onToggleFn + '(\'' + c.key + '\')">' + lblHtml + '</div>';
+    }).join('');
+  }
+  dd.style.display = 'block';
+}
+
+// Handlers especificos (instancias del patron generico)
+
+// Clientes
 function matrizCliSearchInput() {
   const input = document.getElementById('matriz-cli-search');
-  const dd = document.getElementById('matriz-cli-dropdown');
-  if (!input || !dd) return;
-  const q = (input.value || '').trim().toLowerCase();
+  if (!input) return;
   const selected = new Set(matrizFilters.clienteIds || []);
-  // Lista candidata: todos los clientes + "Productos Genéricos" como opcion virtual
   const candidates = [];
   if (!selected.has('GENERICO')) {
     candidates.push({ key: 'GENERICO', label: 'Productos Genéricos' });
   }
   clientes.forEach(c => {
-    if (!selected.has(c.id)) candidates.push({ key: c.id, label: c.nombre });
+    if (!selected.has(c.id)) candidates.push({ key: c.id, label: c.nombre, sublabel: c.codigo || '' });
   });
-  const matches = candidates.filter(c => c.label.toLowerCase().includes(q));
-  if (matches.length === 0) {
-    dd.innerHTML = '<div style="padding:8px 10px;font-size:11px;color:#888;font-style:italic">No hay clientes para mostrar</div>';
-  } else {
-    dd.innerHTML = matches.map(c =>
-      '<div class="combo-item" style="padding:6px 10px;cursor:pointer;font-size:12px" onmousedown="matrizToggleCliente(\'' + c.key + '\')">' + escapeHtml(c.label) + '</div>'
-    ).join('');
-  }
-  dd.style.display = 'block';
+  _renderMultiDropdown('matriz-cli', input.value, candidates, 'matrizToggleCliente');
 }
+
+// Sectores. Si hay clientes filtrados, mostramos solo los sectores de esos
+// clientes (sin prefijo). Si no hay, mostramos todos con prefijo "Cliente >".
+function matrizSecSearchInput() {
+  const input = document.getElementById('matriz-sec-search');
+  if (!input) return;
+  const selected = new Set((matrizFilters.sectorIds || []).map(x => parseInt(x)));
+  const cliFilter = matrizFilters.clienteIds || [];
+  const numericCli = new Set(cliFilter.filter(x => x !== 'GENERICO').map(x => parseInt(x)));
+  // Genericos no tienen sectores (los productos sin cliente no estan en jerarquia)
+  let candidatos = sectores.slice();
+  if (cliFilter.length > 0 && !cliFilter.includes('GENERICO')) {
+    candidatos = candidatos.filter(s => numericCli.has(s.cliente_id));
+  } else if (cliFilter.length > 0 && cliFilter.includes('GENERICO') && numericCli.size > 0) {
+    candidatos = candidatos.filter(s => numericCli.has(s.cliente_id));
+  }
+  // Si no hay cliente filtrado, mostramos todos con prefijo
+  const showPrefix = cliFilter.length === 0;
+  const candidates = candidatos.filter(s => !selected.has(s.id)).map(s => {
+    const cli = clientes.find(c => c.id === s.cliente_id);
+    return {
+      key: s.id,
+      label: showPrefix ? (cli ? cli.nombre + ' > ' + s.nombre : s.nombre) : s.nombre,
+      sublabel: ''
+    };
+  });
+  _renderMultiDropdown('matriz-sec', input.value, candidates, 'matrizToggleSector');
+}
+function matrizToggleSector(v) { matrizToggleFilter('sectorIds', v); }
+
+// Equipos. Filtro en cascada con sectores (y por extension con clientes).
+function matrizEqSearchInput() {
+  const input = document.getElementById('matriz-eq-search');
+  if (!input) return;
+  const selected = new Set((matrizFilters.equipoIds || []).map(x => parseInt(x)));
+  const sectFilter = (matrizFilters.sectorIds || []).map(x => parseInt(x));
+  const cliFilter = matrizFilters.clienteIds || [];
+  const numericCli = new Set(cliFilter.filter(x => x !== 'GENERICO').map(x => parseInt(x)));
+  let candidatos = equipos.slice();
+  if (sectFilter.length > 0) {
+    const sectSet = new Set(sectFilter);
+    candidatos = candidatos.filter(e => sectSet.has(e.sector_id));
+  } else if (cliFilter.length > 0 && !cliFilter.includes('GENERICO')) {
+    // sin sector pero con cliente: mostrar equipos cuyo sector pertenece al cliente
+    const sectsCli = new Set(sectores.filter(s => numericCli.has(s.cliente_id)).map(s => s.id));
+    candidatos = candidatos.filter(e => sectsCli.has(e.sector_id));
+  }
+  const showPrefix = cliFilter.length === 0 && sectFilter.length === 0;
+  const candidates = candidatos.filter(e => !selected.has(e.id)).map(e => {
+    const sec = sectores.find(s => s.id === e.sector_id);
+    const cli = sec ? clientes.find(c => c.id === sec.cliente_id) : null;
+    return {
+      key: e.id,
+      label: showPrefix ? ((cli ? cli.nombre + ' > ' : '') + (sec ? sec.nombre + ' > ' : '') + e.nombre) : e.nombre,
+      sublabel: e.codigo_cliente || ''
+    };
+  });
+  _renderMultiDropdown('matriz-eq', input.value, candidates, 'matrizToggleEquipo');
+}
+function matrizToggleEquipo(v) { matrizToggleFilter('equipoIds', v); }
+
+// Conjuntos. En cascada con cliente (los conjuntos pertenecen a un cliente).
+function matrizConSearchInput() {
+  const input = document.getElementById('matriz-con-search');
+  if (!input) return;
+  const selected = new Set((matrizFilters.conjuntoIds || []).map(x => parseInt(x)));
+  const cliFilter = matrizFilters.clienteIds || [];
+  const numericCli = new Set(cliFilter.filter(x => x !== 'GENERICO').map(x => parseInt(x)));
+  let candidatos = conjuntos.slice();
+  if (cliFilter.length > 0 && !cliFilter.includes('GENERICO')) {
+    candidatos = candidatos.filter(c => numericCli.has(c.cliente_id));
+  } else if (cliFilter.length > 0 && cliFilter.includes('GENERICO') && numericCli.size > 0) {
+    candidatos = candidatos.filter(c => numericCli.has(c.cliente_id));
+  }
+  const showPrefix = cliFilter.length === 0;
+  const candidates = candidatos.filter(c => !selected.has(c.id)).map(c => {
+    const cli = clientes.find(x => x.id === c.cliente_id);
+    return {
+      key: c.id,
+      label: showPrefix ? (cli ? cli.nombre + ' > ' + c.nombre : c.nombre) : c.nombre,
+      sublabel: ''
+    };
+  });
+  _renderMultiDropdown('matriz-con', input.value, candidates, 'matrizToggleConjunto');
+}
+function matrizToggleConjunto(v) { matrizToggleFilter('conjuntoIds', v); }
+
+// Subconjuntos. En cascada con cliente.
+function matrizSubSearchInput() {
+  const input = document.getElementById('matriz-sub-search');
+  if (!input) return;
+  const selected = new Set((matrizFilters.subconjuntoIds || []).map(x => parseInt(x)));
+  const cliFilter = matrizFilters.clienteIds || [];
+  const numericCli = new Set(cliFilter.filter(x => x !== 'GENERICO').map(x => parseInt(x)));
+  let candidatos = subconjuntos.slice();
+  if (cliFilter.length > 0 && !cliFilter.includes('GENERICO')) {
+    candidatos = candidatos.filter(s => numericCli.has(s.cliente_id));
+  } else if (cliFilter.length > 0 && cliFilter.includes('GENERICO') && numericCli.size > 0) {
+    candidatos = candidatos.filter(s => numericCli.has(s.cliente_id));
+  }
+  const showPrefix = cliFilter.length === 0;
+  const candidates = candidatos.filter(s => !selected.has(s.id)).map(s => {
+    const cli = clientes.find(x => x.id === s.cliente_id);
+    return {
+      key: s.id,
+      label: showPrefix ? (cli ? cli.nombre + ' > ' + s.nombre : s.nombre) : s.nombre,
+      sublabel: ''
+    };
+  });
+  _renderMultiDropdown('matriz-sub', input.value, candidates, 'matrizToggleSubconjunto');
+}
+function matrizToggleSubconjunto(v) { matrizToggleFilter('subconjuntoIds', v); }
 
 function _matrizRerenderList() {
   const wrap = document.getElementById('matriz-list-wrap');
@@ -3808,7 +4044,6 @@ function renderMatrizTab() {
 
   // Header con toggle [Productos] [Clientes] + boton "+ Nuevo producto"
   let h = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:10px;flex-wrap:wrap">';
-  // Toggle view
   h += '<div style="display:flex;border:1px solid #C8C6BE;border-radius:5px;overflow:hidden">';
   ['productos', 'clientes'].forEach(v => {
     const active = matrizView === v;
@@ -3824,10 +4059,12 @@ function renderMatrizTab() {
 
   // Barra de filtros
   h += '<div style="background:#fff;border:1px solid #C8C6BE;border-radius:8px;padding:10px 14px;margin-bottom:12px">';
-  // Fila 1: busqueda descripcion + ordenar (sin material en B1.5)
+  // Fila 1: buscar descripcion + codigos + ordenar
   h += '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">';
   h += '<div style="font-size:11px;font-weight:600;color:#5F5E5A">Buscar:</div>';
-  h += '<input type="text" id="matriz-search" value="' + escapeHtml(matrizFilters.search || '') + '" placeholder="Descripción del producto" style="padding:5px 8px;border:1px solid #C8C6BE;border-radius:5px;font-size:12px;width:220px" oninput="matrizSearchInput(event)">';
+  h += '<input type="text" id="matriz-search" value="' + escapeHtml(matrizFilters.search || '') + '" placeholder="Descripción del producto" style="padding:5px 8px;border:1px solid #C8C6BE;border-radius:5px;font-size:12px;width:200px" oninput="matrizSearchInput(event)">';
+  h += '<div style="font-size:11px;font-weight:600;color:#5F5E5A;margin-left:6px">Códigos:</div>';
+  h += '<input type="text" id="matriz-codigos" value="' + escapeHtml(matrizFilters.codigos || '') + '" placeholder="Cliente / Equipo / Producto / ID" title="Busca en código del cliente, código del equipo, código del cliente del producto e ID interno" style="padding:5px 8px;border:1px solid #C8C6BE;border-radius:5px;font-size:12px;width:200px" oninput="matrizCodigosInput(event)">';
   // Ordenar
   h += '<div style="margin-left:auto;display:flex;align-items:center;gap:6px">';
   h += '<div style="font-size:11px;font-weight:600;color:#5F5E5A">Ordenar:</div>';
@@ -3840,28 +4077,120 @@ function renderMatrizTab() {
   h += '<button class="b" onclick="matrizToggleSortDir()" style="padding:3px 8px;font-size:13px;font-weight:700;line-height:1">' + arrow + '</button>';
   h += '</div>';
   h += '</div>';
-  // Fila 2: dropdown buscable de clientes (multi-select)
-  h += '<div style="margin-top:10px;display:flex;align-items:flex-start;gap:8px">';
-  h += '<div style="font-size:11px;font-weight:600;color:#5F5E5A;padding-top:7px;flex:0 0 auto">Clientes:</div>';
-  h += '<div style="position:relative;flex:1">';
-  h += '<div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;border:1px solid #C8C6BE;border-radius:5px;padding:4px 6px;background:#fff;min-height:30px">';
-  (matrizFilters.clienteIds || []).forEach(cId => {
-    const lbl = (cId === 'GENERICO') ? 'Productos Genéricos' : clN(cId);
-    h += '<span style="display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:3px;font-size:11px;background:#0C447C;color:#fff">' + escapeHtml(lbl) + ' <button onclick="matrizToggleCliente(\'' + cId + '\')" style="background:none;border:none;color:#fff;cursor:pointer;font-size:13px;line-height:1;padding:0">×</button></span>';
+
+  // Fila 2: Clientes + Sectores
+  h += '<div style="margin-top:10px;display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap">';
+  // Clientes
+  const cliSelectedItems = (matrizFilters.clienteIds || []).map(cId => {
+    return { key: cId, label: (cId === 'GENERICO') ? 'Productos Genéricos' : clN(cId) };
   });
-  h += '<input type="text" id="matriz-cli-search" placeholder="' + ((matrizFilters.clienteIds || []).length ? 'Agregar otro cliente...' : 'Escribir para buscar clientes...') + '" autocomplete="off" oninput="matrizCliSearchInput()" onfocus="matrizCliSearchOpen()" onblur="setTimeout(matrizCliSearchClose, 200)" style="border:none;outline:none;flex:1;min-width:160px;font-size:12px;padding:2px 4px;background:transparent">';
+  h += _buildMultiFilter({
+    id: 'matriz-cli', label: 'Clientes', selectedItems: cliSelectedItems,
+    placeholder: 'Buscar cliente...', onToggleFn: 'matrizToggleCliente', onSearchFn: 'matrizCliSearchInput'
+  });
+  // Sectores
+  const secSelectedItems = (matrizFilters.sectorIds || []).map(sId => {
+    const s = sectores.find(x => x.id === parseInt(sId));
+    return { key: sId, label: s ? s.nombre : '?' };
+  });
+  h += _buildMultiFilter({
+    id: 'matriz-sec', label: 'Sectores', selectedItems: secSelectedItems,
+    placeholder: 'Buscar sector...', onToggleFn: 'matrizToggleSector', onSearchFn: 'matrizSecSearchInput'
+  });
   h += '</div>';
-  h += '<div id="matriz-cli-dropdown" class="combo-list" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:100;max-height:200px;overflow-y:auto"></div>';
+
+  // Fila 3: Equipos + Conjuntos
+  h += '<div style="margin-top:8px;display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap">';
+  const eqSelectedItems = (matrizFilters.equipoIds || []).map(eId => {
+    const e = equipos.find(x => x.id === parseInt(eId));
+    return { key: eId, label: e ? e.nombre : '?' };
+  });
+  h += _buildMultiFilter({
+    id: 'matriz-eq', label: 'Equipos', selectedItems: eqSelectedItems,
+    placeholder: 'Buscar equipo...', onToggleFn: 'matrizToggleEquipo', onSearchFn: 'matrizEqSearchInput'
+  });
+  const conSelectedItems = (matrizFilters.conjuntoIds || []).map(cId => {
+    const c = conjuntos.find(x => x.id === parseInt(cId));
+    return { key: cId, label: c ? c.nombre : '?' };
+  });
+  h += _buildMultiFilter({
+    id: 'matriz-con', label: 'Conjuntos', selectedItems: conSelectedItems,
+    placeholder: 'Buscar conjunto...', onToggleFn: 'matrizToggleConjunto', onSearchFn: 'matrizConSearchInput'
+  });
   h += '</div>';
+
+  // Fila 4: Subconjuntos + Limpiar
+  h += '<div style="margin-top:8px;display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap">';
+  const subSelectedItems = (matrizFilters.subconjuntoIds || []).map(sId => {
+    const s = subconjuntos.find(x => x.id === parseInt(sId));
+    return { key: sId, label: s ? s.nombre : '?' };
+  });
+  h += _buildMultiFilter({
+    id: 'matriz-sub', label: 'Subconjuntos', selectedItems: subSelectedItems,
+    placeholder: 'Buscar subconjunto...', onToggleFn: 'matrizToggleSubconjunto', onSearchFn: 'matrizSubSearchInput'
+  });
+  // Boton limpiar a la derecha
   if (activeCount > 0) {
-    h += '<button class="b" onclick="matrizClearFilters()" style="padding:5px 10px;font-size:11px;background:#fff;color:#5F5E5A;border:1px solid #C8C6BE;flex:0 0 auto">✕ Limpiar (' + activeCount + ')</button>';
+    h += '<button class="b" onclick="matrizClearFilters()" style="padding:5px 10px;font-size:11px;background:#fff;color:#5F5E5A;border:1px solid #C8C6BE;flex:0 0 auto;align-self:flex-start;margin-top:5px">✕ Limpiar (' + activeCount + ')</button>';
   }
   h += '</div>';
+
+  // Breadcrumb del filtro actual (resumen de las dimensiones activas)
+  const breadcrumb = _matrizFilterBreadcrumbHtml();
+  if (breadcrumb) {
+    h += '<div style="margin-top:10px;padding-top:8px;border-top:1px solid #E8E6DF;font-size:11px;color:#5F5E5A;line-height:1.5">';
+    h += '<span style="color:#888;margin-right:6px">Filtro actual:</span>' + breadcrumb;
+    h += '</div>';
+  }
+
   h += '</div>';
 
   // Lista
   h += '<div id="matriz-list-wrap">' + _matrizListHtml() + '</div>';
   return h;
+}
+
+// Genera el breadcrumb del filtro: una linea con las dimensiones activas
+// separadas por ›. Ej: "GDLP › Producción › Tapadora › (Cualquier conjunto) › Brida".
+// Cada dimension muestra:
+//   - una sola seleccion: el nombre.
+//   - varias selecciones: "(Nombre1, Nombre2, ...)" o "(N items)".
+//   - sin seleccion: nada (no se muestra esa dimension).
+// Si no hay nada activo, devuelve null.
+function _matrizFilterBreadcrumbHtml() {
+  const parts = [];
+  // Codigos: si esta activo, lo ponemos al inicio como filtro especial
+  if (matrizFilters.codigos && matrizFilters.codigos.trim()) {
+    parts.push('<b>Códigos:</b> "' + escapeHtml(matrizFilters.codigos.trim()) + '"');
+  }
+  // Search: si esta activo, igual
+  if (matrizFilters.search && matrizFilters.search.trim()) {
+    parts.push('<b>Buscar:</b> "' + escapeHtml(matrizFilters.search.trim()) + '"');
+  }
+  // Jerarquia
+  const dimensions = [
+    { ids: matrizFilters.clienteIds || [], get: (id) => id === 'GENERICO' ? 'Productos Genéricos' : clN(id), name: 'Cliente' },
+    { ids: matrizFilters.sectorIds || [], get: (id) => { const s = sectores.find(x => x.id === parseInt(id)); return s ? s.nombre : '?'; }, name: 'Sector' },
+    { ids: matrizFilters.equipoIds || [], get: (id) => { const e = equipos.find(x => x.id === parseInt(id)); return e ? e.nombre : '?'; }, name: 'Equipo' },
+    { ids: matrizFilters.conjuntoIds || [], get: (id) => { const c = conjuntos.find(x => x.id === parseInt(id)); return c ? c.nombre : '?'; }, name: 'Conjunto' },
+    { ids: matrizFilters.subconjuntoIds || [], get: (id) => { const s = subconjuntos.find(x => x.id === parseInt(id)); return s ? s.nombre : '?'; }, name: 'Subconjunto' }
+  ];
+  const jerParts = [];
+  dimensions.forEach(d => {
+    if (d.ids.length === 0) return;
+    if (d.ids.length === 1) {
+      jerParts.push('<b>' + escapeHtml(d.get(d.ids[0])) + '</b>');
+    } else if (d.ids.length <= 3) {
+      jerParts.push('<b>' + d.ids.map(i => escapeHtml(d.get(i))).join(', ') + '</b>');
+    } else {
+      jerParts.push('<b>' + d.ids.length + ' ' + d.name.toLowerCase() + 's</b>');
+    }
+  });
+  if (jerParts.length > 0) {
+    parts.push(jerParts.join(' <span style="color:#999">›</span> '));
+  }
+  if (parts.length === 0) return null;
+  return parts.join(' <span style="color:#888;margin:0 6px">·</span> ');
 }
 
 function _matrizListHtml() {
@@ -4070,18 +4399,34 @@ function _renderPmModal(prod) {
   const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '720px';
   let h = '<div class="md-t">' + (isNew ? 'Nuevo producto matriz' : 'Editar producto matriz') + '</div>';
 
-  // ----- DATOS DEL PRODUCTO -----
   // Si captured tiene datos, los usamos. Sino los del prod en DB.
+  // Se saco el campo "cantidad" del form (era cantidad_default; ambiguo y
+  // poco util en la matriz porque la cantidad la decide el proyecto al
+  // importar). La columna en DB queda pero no la tocamos.
   const v = captured || {
     descripcion: prod ? prod.descripcion : '',
     codigo_cliente: prod ? (prod.codigo_cliente || '') : '',
     material_id: prod ? (prod.material_id || '') : '',
     material_label: prod && prod.material_id ? (materiales.find(x => x.id === prod.material_id) || {}).nombre || '' : '',
     presentacion: prod ? (prod.presentacion_mat_prima || '') : '',
-    cantidad: prod ? (prod.cantidad_default || 1) : 1,
     foto_url: prod ? (prod.foto_url || '') : ''
   };
 
+  // ----- 1ro: EQUIPOS COMPATIBLES (UBICACIONES) -----
+  // El usuario carga primero la jerarquia para que despues los datos del
+  // producto queden ya "ubicados".
+  h += '<div style="margin-bottom:14px">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
+  h += '<div style="font-size:12px;font-weight:600;color:#5F5E5A">Equipos compatibles</div>';
+  h += '<button class="b b-p" onclick="pmAsignarCompatibilidad()" style="padding:4px 10px;font-size:11px">+ Asignar compatibilidad</button>';
+  h += '</div>';
+  h += '<div id="pm-ubicaciones-list">' + _pmUbicacionesListHtml() + '</div>';
+  h += '<div class="ef-help" style="margin-top:6px">Definí en qué cliente/sector/equipo/conjunto/subconjunto se usa este producto. Si se usa en varios equipos, asigná cada ruta. Sin ninguna, queda como producto genérico (sin ubicación específica).</div>';
+  h += '</div>';
+
+  // ----- 2do: DATOS DEL PRODUCTO -----
+  h += '<div style="padding-top:12px;border-top:1px solid #E8E6DF">';
+  h += '<div style="font-size:12px;font-weight:600;color:#5F5E5A;margin-bottom:8px">Datos del producto</div>';
   h += '<div class="row">';
   h += '<div class="ef" style="flex:3"><div class="ef-l">Descripción <span style="color:#A32D2D">*</span></div>';
   h += '<input type="text" class="ef-i" id="pm-desc" value="' + escapeHtml(v.descripcion) + '" placeholder="Ej. Eje SAE 1045 Ø50mm L=200"></div>';
@@ -4104,30 +4449,18 @@ function _renderPmModal(prod) {
   h += '</div>';
   h += '<div class="ef" style="flex:1"><div class="ef-l">Presentación de materia prima</div>';
   h += '<input type="text" class="ef-i" id="pm-presentacion" value="' + escapeHtml(v.presentacion) + '" placeholder="Ej. Barra Ø60 x 6mts"></div>';
-  h += '<div class="ef" style="flex:0 0 110px"><div class="ef-l">Cantidad</div>';
-  h += '<input type="number" class="ef-i" id="pm-cant" value="' + v.cantidad + '" min="1"></div>';
   h += '</div>';
 
   h += '<div class="ef"><div class="ef-l">Foto (opcional)</div>';
   h += buildPhotoWrapHtml(v.foto_url, 'pm');
   h += '</div>';
-
-  // ----- EQUIPOS COMPATIBLES (UBICACIONES) -----
-  h += '<div style="margin-top:18px;padding-top:12px;border-top:1px solid #E8E6DF">';
-  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
-  h += '<div style="font-size:12px;font-weight:600;color:#5F5E5A">Equipos compatibles</div>';
-  h += '<button class="b" onclick="pmAsignarCompatibilidad()" style="padding:4px 10px;font-size:11px">+ Asignar compatibilidad</button>';
-  h += '</div>';
-  h += '<div id="pm-ubicaciones-list">' + _pmUbicacionesListHtml() + '</div>';
-  h += '<div class="ef-help" style="margin-top:6px">Si el producto se usa en distintos equipos/conjuntos, asigná cada ruta. Sin asignar ninguna, queda como producto sin ubicación específica.</div>';
-  h += '</div>';
+  h += '</div>';  // cierra "Datos del producto"
 
   h += '<div class="actions">';
   h += '<button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button>';
   h += '<button class="b b-p" onclick="saveProductoMatriz(' + (pmFormState.productoId || 'null') + ')">' + (isNew ? 'Crear' : 'Guardar') + '</button>';
   h += '</div>';
   m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
-  // Activa el slot 'pm' para que paste (Ctrl+V) caiga en la foto del producto
   setupPhotoPaste();
 }
 
@@ -4143,7 +4476,6 @@ function _pmCaptureFormValues() {
     material_id: matVal ? matVal.value : '',
     material_label: matInp ? matInp.value : '',
     presentacion: document.getElementById('pm-presentacion').value,
-    cantidad: parseInt(document.getElementById('pm-cant').value) || 1,
     foto_url: (document.getElementById('photo-url-pm') || { value: '' }).value
   };
 }
@@ -4427,7 +4759,6 @@ async function saveProductoMatriz(productoId) {
   const matVal = document.getElementById('pm-material-value').value;
   const material_id = matVal ? parseInt(matVal) : null;
   const presentacion_mat_prima = document.getElementById('pm-presentacion').value.trim() || null;
-  const cantidad_default = parseInt(document.getElementById('pm-cant').value) || 1;
   const fotoEl = document.getElementById('photo-url-pm');
   const foto_url = fotoEl ? (fotoEl.value || null) : null;
   // cliente_id: lo determinamos desde la primera ubicacion pendiente.
@@ -4438,7 +4769,7 @@ async function saveProductoMatriz(productoId) {
   }
 
   const payload = {
-    descripcion, cliente_id, codigo_cliente, material_id, presentacion_mat_prima, cantidad_default, foto_url,
+    descripcion, cliente_id, codigo_cliente, material_id, presentacion_mat_prima, foto_url,
     updated_at: new Date().toISOString()
   };
 
