@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v37</title>
+<title>Velasco App 2.0 — Proyectos v39</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -112,6 +112,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
     <img id="hd-logo" alt="Velasco" style="height:36px;cursor:pointer" onclick="navigate({view:'projects'})">
     <div class="hd-r">
       <button class="b" onclick="navigate({view:'clientes'})">Clientes</button>
+      <button class="b" onclick="navigate({view:'recursos',tab:'maquinas'})">Recursos</button>
       <button class="b" onclick="window.open('tablero_operarios.html','_blank')">Tablero</button>
       <button class="b b-p" onclick="navigate({view:'newProject'})">+ Nuevo proyecto</button>
     </div>
@@ -563,24 +564,57 @@ function richExec(id, cmd, value) {
   document.execCommand(cmd, false, value || null);
 }
 
+// Aplica un tamaño de fuente (en em) a la seleccion del editor.
+// Estrategia robusta:
+//   1) Tomamos la seleccion actual.
+//   2) Le quitamos cualquier font-size que ya tuviera (recorriendo descendientes
+//      y limpiando el style font-size de cada uno).
+//   3) Envolvemos el rango en un span con el font-size deseado.
+// Esto permite cambiar el tamano N veces sin acumular spans anidados que se
+// estorban (que era el bug: agrandar dejaba el span exterior dominante y al
+// achicar despues no se respetaba).
 function richSize(id, sizeEm) {
   const el = document.querySelector('[data-rich-content="' + id + '"]');
   if (!el) return;
   el.focus();
   const sel = window.getSelection();
-  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) {
-    // Sin seleccion, no hace nada (no aplicar a todo el editor por accidente)
-    return;
-  }
-  // Wrapping con span y font-size en em
+  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
   const range = sel.getRangeAt(0);
-  const span = document.createElement('span');
-  span.style.fontSize = sizeEm;
-  try {
-    range.surroundContents(span);
-  } catch (e) {
-    // Si la seleccion cruza limites, usamos extractContents como fallback
-    span.appendChild(range.extractContents());
+
+  // Paso 1: extraer el contenido del rango como un fragmento documental.
+  const frag = range.extractContents();
+
+  // Paso 2: limpiar font-size de cualquier descendiente del fragmento.
+  // Recorremos en profundidad. Si un span queda con style="" lo eliminamos
+  // (reemplazandolo por sus hijos). Asi no acumulamos spans vacios.
+  function stripFontSize(node) {
+    if (node.nodeType === 1 && node.style && node.style.fontSize) {
+      node.style.fontSize = '';
+    }
+    // Recorrer hijos
+    [...(node.childNodes || [])].forEach(stripFontSize);
+    // Si es span sin estilos ni atributos utiles, desenvolverlo
+    if (node.nodeType === 1 && node.tagName === 'SPAN'
+        && (!node.getAttribute('style') || node.getAttribute('style').trim() === '')) {
+      const parent = node.parentNode;
+      if (parent) {
+        while (node.firstChild) parent.insertBefore(node.firstChild, node);
+        node.remove();
+      }
+    }
+  }
+  // Hacemos el strip sobre los hijos del fragmento (no sobre el fragmento mismo)
+  [...frag.childNodes].forEach(stripFontSize);
+
+  // Paso 3: envolver en span nuevo con el font-size deseado, salvo que sea el
+  // tamano "default" (1em). Para 1em, simplemente reinsertamos sin envolver
+  // (asi queda completamente "limpio" de tamanos).
+  if (sizeEm === '1em') {
+    range.insertNode(frag);
+  } else {
+    const span = document.createElement('span');
+    span.style.fontSize = sizeEm;
+    span.appendChild(frag);
     range.insertNode(span);
   }
   sel.removeAllRanges();
@@ -753,6 +787,8 @@ function renderCrumbs() {
         escapeHtml(item ? item.descripcion : 'Item');
   } else if (nav.view === 'clientes') {
     h = '<a onclick="navigate({view:\'projects\'})">Proyectos</a> <span class="sep">›</span> Clientes';
+  } else if (nav.view === 'recursos') {
+    h = '<a onclick="navigate({view:\'projects\'})">Proyectos</a> <span class="sep">›</span> Recursos';
   }
   c.innerHTML = h;
 }
@@ -766,6 +802,7 @@ function render() {
   if (nav.view === 'project') return renderProjectDetail();
   if (nav.view === 'item') return renderItemDetail();
   if (nav.view === 'clientes') return renderClientesList();
+  if (nav.view === 'recursos') return renderRecursos();
 }
 
 // ========== PROJECTS LIST ==========
@@ -2162,7 +2199,13 @@ function showProcesoForm(procesoId) {
     else if (proceso.maquina_ideal_nombre) { maqSelected = 'OTRA'; maqOtraName = proceso.maquina_ideal_nombre; }
     else maqSelected = 'NINGUNA';
   } else { maqSelected = ''; }
-  const maqOpts = maquinas.map(m =>
+  // Filtrar las maquinas mostradas segun el proceso seleccionado.
+  // Si el proceso es vacio (al crear nuevo), mostramos todas - el filtrado
+  // se aplicara dinamicamente cuando el usuario elija el proceso (en
+  // onProcesoChange).
+  const procesoActual = proceso ? (proceso.proceso || '') : '';
+  const maquinasFiltradas = procesoActual ? maquinasParaProceso(procesoActual) : maquinas;
+  const maqOpts = maquinasFiltradas.map(m =>
     '<option value="' + m.id + '"' + (maqSelected === String(m.id) ? ' selected' : '') + '>' + escapeHtml(m.nombre) + '</option>'
   ).join('') +
   '<option value="OTRA"' + (maqSelected === 'OTRA' ? ' selected' : '') + '>Otra (especificar)</option>' +
@@ -2180,7 +2223,7 @@ function showProcesoForm(procesoId) {
 
   h += '<div class="ef"><div class="ef-l">Proceso <span style="color:#A32D2D">*</span></div>';
   h += '<select class="ef-i" id="p-proceso" onchange="onProcesoChange()">';
-  const procStandard = ['Agujereado','Armado','Compra','Control','Corte','Desarme y limpieza','Despacho/Cierre','Electroerosion','Fresado','Mantenimiento','Plegado','Rectificado a piedra','Relevamiento','Soldadura','Torneado','Tratamiento térmico'];
+  const procStandard = ['Agujereado','Armado','Compra','Control','Corte','Corte Pantografo','Desarme y limpieza','Despacho/Cierre','Electroerosion','Fresado','Mantenimiento','Plegado','Rectificado a piedra','Relevamiento','Rolado','Soldadura','Torneado','Tratamiento térmico'];
   // Si es proceso existente, tomamos su valor. Si es nuevo, queda vacio para
   // forzar al responsable a elegir explicitamente (default no debe ser Torneado).
   const currentProc = proceso ? (proceso.proceso || proceso.descripcion) : '';
@@ -2281,8 +2324,23 @@ function showProcesoForm(procesoId) {
   h += '<button class="b b-p" onclick="saveProceso(' + (procesoId || 'null') + ')">' + (isNew ? 'Agregar' : 'Guardar') + '</button>';
   h += '</div>';
   m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
-  buildChips('chips-maq', maquinas, supMaqIds, 'maq');
+  buildChips('chips-maq', maquinasFiltradas, supMaqIds, 'maq');
   buildChips('chips-op', operarios, supOpIds, 'op');
+  // Fix tentativo del bug "no se puede escribir en el modal":
+  // 1. Forzamos focus al primer select del modal en el siguiente tick.
+  // 2. Logueamos a consola para debug si el bug se reproduce.
+  setTimeout(() => {
+    const firstSelect = m.querySelector('#p-proceso');
+    if (firstSelect) {
+      firstSelect.focus();
+      console.log('[proc-modal] abierto. activeElement:', document.activeElement, 'tag:', document.activeElement ? document.activeElement.tagName : '(ninguno)');
+      // Si el activeElement no esta dentro del modal, hay algun otro elemento
+      // capturando el foco. Lo logueamos como warning.
+      if (document.activeElement && !m.contains(document.activeElement)) {
+        console.warn('[proc-modal] El foco quedo afuera del modal! activeElement:', document.activeElement);
+      }
+    }
+  }, 50);
 }
 
 async function saveProceso(procesoId) {
@@ -2480,33 +2538,39 @@ function onTipoChange() {
   }
 }
 function toggleSetupField() { onTipoChange(); }
-// Cuando cambia el proceso seleccionado, ocultar/mostrar el input "Otro" y
-// resetear las selecciones de maquina (ideal y suplentes) ya que la maquina
-// debe corresponder al proceso. En la Iteracion B se filtraran las opciones
-// de maquina segun el proceso elegido. Por ahora solo limpiamos.
+// Cuando cambia el proceso seleccionado:
+// 1. Mostrar/ocultar el input "Otro".
+// 2. Resetear maquina ideal y "OTRA".
+// 3. Repoblar el dropdown de maquina ideal con las maquinas que pueden hacer
+//    el proceso elegido (las que tienen procesos = [] aparecen como fallback).
+// 4. Repoblar los chips de maquinas suplentes con la misma lista filtrada.
 function onProcesoChange() {
   const sel = document.getElementById('p-proceso');
   const input = document.getElementById('p-proceso-custom');
   if (!input || !sel) return;
   if (sel.value === 'Otro') { input.style.display = 'block'; input.focus(); }
   else { input.style.display = 'none'; input.value = ''; }
-  // Reset de maquina ideal: vuelve a "— elegir —"
+  // Determinar el proceso final (si es "Otro", el valor real esta en el input custom)
+  const procNombre = sel.value === 'Otro' ? input.value.trim() : sel.value;
+  const filtradas = procNombre ? maquinasParaProceso(procNombre) : maquinas;
+  // Repoblar dropdown de maquina ideal
   const maqIdeal = document.getElementById('p-maq-ideal');
   if (maqIdeal) {
+    let opts = '<option value="">— elegir —</option>';
+    filtradas.forEach(m => {
+      opts += '<option value="' + m.id + '">' + escapeHtml(m.nombre) + '</option>';
+    });
+    opts += '<option value="OTRA">Otra (especificar)</option>';
+    opts += '<option value="NINGUNA">Ninguna (sin maquina)</option>';
+    maqIdeal.innerHTML = opts;
     maqIdeal.value = '';
-    // Ocultar y limpiar el input de "OTRA" si estaba abierto
     const maqOtra = document.getElementById('p-maq-otra');
     if (maqOtra) { maqOtra.style.display = 'none'; maqOtra.value = ''; }
   }
-  // Limpiar chips de maquinas suplentes
-  if (typeof selectedMachines !== 'undefined') {
-    selectedMachines = [];
-    const chips = document.getElementById('chips-maq');
-    if (chips && typeof renderChipsMaq === 'function') renderChipsMaq();
-  }
+  // Repoblar chips de maquinas suplentes con la lista filtrada (sin nada seleccionado)
+  buildChips('chips-maq', filtradas, [], 'maq');
 }
-// Alias retrocompatible (por si quedo referenciado en algun lado del DOM
-// que ya esta cacheado en la pagina)
+// Alias retrocompatible
 function toggleProcCustom() { onProcesoChange(); }
 function toggleMaqOtra() {
   const sel = document.getElementById('p-maq-ideal');
@@ -2743,6 +2807,160 @@ function renderClientesList() {
     });
   }
   main.innerHTML = h;
+}
+
+// ============================================================================
+// MODULO RECURSOS
+// ============================================================================
+// Sub-vistas (tabs): Maquinas (funcional), Matriz de Productos (placeholder),
+// RRHH (placeholder), Clientes (placeholder - se mantiene la pagina actual).
+// La tab activa se determina por nav.tab.
+function renderRecursos() {
+  const main = document.getElementById('main');
+  const activeTab = nav.tab || 'maquinas';
+  let h = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">';
+  h += '<h2 style="font-size:16px;font-weight:600;margin:0">Recursos</h2>';
+  h += '</div>';
+  // Tabs
+  h += '<div style="display:flex;gap:0;border-bottom:1px solid #C8C6BE;margin-bottom:14px;flex-wrap:wrap">';
+  const tabs = [
+    ['maquinas', 'Máquinas'],
+    ['matriz', 'Matriz de Productos'],
+    ['rrhh', 'RRHH'],
+    ['clientes', 'Clientes']
+  ];
+  tabs.forEach(([key, label]) => {
+    const isActive = activeTab === key;
+    const style = isActive
+      ? 'background:#fff;border:1px solid #C8C6BE;border-bottom:1px solid #fff;color:#0C447C;font-weight:700;margin-bottom:-1px;position:relative;z-index:1'
+      : 'background:transparent;border:none;color:#5F5E5A;font-weight:500';
+    h += '<button class="b" style="' + style + ';padding:8px 18px;font-size:13px;border-radius:5px 5px 0 0" onclick="navigate({view:\'recursos\',tab:\'' + key + '\'})">' + label + '</button>';
+  });
+  h += '</div>';
+  if (activeTab === 'maquinas') {
+    h += renderMaquinasTab();
+  } else if (activeTab === 'matriz') {
+    h += '<div class="list-empty" style="text-align:center;padding:40px 20px;color:#5F5E5A">';
+    h += '<div style="font-size:32px;margin-bottom:8px">📦</div>';
+    h += '<div><b>Matriz de Productos</b></div>';
+    h += '<div style="font-size:12px;margin-top:6px">Próximamente. Aquí vas a poder cargar productos predefinidos para usarlos como plantilla al crear proyectos nuevos.</div>';
+    h += '</div>';
+  } else if (activeTab === 'rrhh') {
+    h += '<div class="list-empty" style="text-align:center;padding:40px 20px;color:#5F5E5A">';
+    h += '<div style="font-size:32px;margin-bottom:8px">👷</div>';
+    h += '<div><b>RRHH</b></div>';
+    h += '<div style="font-size:12px;margin-top:6px">Próximamente. Aquí vas a poder gestionar los perfiles de los operarios (horarios, vacaciones, máquinas que manejan, etc.).</div>';
+    h += '</div>';
+  } else if (activeTab === 'clientes') {
+    h += '<div class="list-empty" style="text-align:center;padding:30px 20px;color:#5F5E5A">';
+    h += '<div style="font-size:32px;margin-bottom:8px">🏢</div>';
+    h += '<div><b>Clientes</b></div>';
+    h += '<div style="font-size:12px;margin-top:6px">La gestión de clientes está disponible en el botón <b>Clientes</b> de la barra superior. En una próxima iteración la moveremos a este módulo.</div>';
+    h += '<div style="margin-top:14px"><button class="b b-p" onclick="navigate({view:\'clientes\'})">Ir a Clientes</button></div>';
+    h += '</div>';
+  }
+  main.innerHTML = h;
+}
+
+// ============================================================================
+// VISTA MAQUINAS (subtab del modulo Recursos)
+// ============================================================================
+// Lista de maquinas con sus procesos. Cada tarjeta muestra el nombre y los
+// procesos como chips. Boton "Editar" abre un modal con checkboxes.
+// Boton "+ Nueva maquina" crea una entrada nueva.
+function renderMaquinasTab() {
+  let h = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">';
+  h += '<div style="font-size:12px;color:#5F5E5A">Para cada máquina marcá los procesos que puede realizar. Esto se usa para filtrar las opciones de máquina al cargar un proceso en un proyecto.</div>';
+  h += '<button class="b b-p" onclick="showMaquinaForm(null)" style="flex:0 0 auto">+ Nueva máquina</button></div>';
+  if (!maquinas || maquinas.length === 0) {
+    h += '<div class="list-empty">No hay máquinas cargadas. Apretá "+ Nueva máquina" para empezar.</div>';
+    return h;
+  }
+  // Ordenar por nombre
+  const sorted = maquinas.slice().sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+  sorted.forEach(m => {
+    const procs = (m.procesos && Array.isArray(m.procesos)) ? m.procesos : [];
+    h += '<div class="card" style="margin-bottom:8px">';
+    h += '<div class="card-img-empty">⚙</div>';
+    h += '<div class="card-body">';
+    h += '<div class="card-t">' + escapeHtml(m.nombre || '(sin nombre)') + '</div>';
+    h += '<div class="card-s" style="margin-top:4px">';
+    if (procs.length === 0) {
+      h += '<span style="color:#A32D2D;font-style:italic">Sin procesos asignados (aparece en todas las opciones como fallback)</span>';
+    } else {
+      procs.forEach(p => {
+        h += '<span style="display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;background:#E8F2FC;color:#0C447C;margin-right:4px;margin-top:2px">' + escapeHtml(p) + '</span>';
+      });
+    }
+    h += '</div></div>';
+    h += '<div class="card-actions">';
+    h += '<button class="b b-icon" onclick="showMaquinaForm(' + m.id + ')">Editar</button>';
+    h += '</div></div>';
+  });
+  return h;
+}
+
+// Modal de edicion/creacion de maquina
+function showMaquinaForm(maquinaId) {
+  const isNew = !maquinaId;
+  const maq = isNew ? null : maquinas.find(m => m.id === maquinaId);
+  if (!isNew && !maq) return;
+  // Lista de procesos disponibles (mismo array que en el modal de proceso del item)
+  const procStandard = ['Agujereado','Armado','Compra','Control','Corte','Corte Pantografo','Desarme y limpieza','Despacho/Cierre','Electroerosion','Fresado','Mantenimiento','Plegado','Rectificado a piedra','Relevamiento','Rolado','Soldadura','Torneado','Tratamiento térmico'];
+  const currentProcs = (maq && maq.procesos && Array.isArray(maq.procesos)) ? maq.procesos : [];
+
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'maq-modal';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '560px';
+  let h = '<div class="md-t">' + (isNew ? 'Nueva máquina' : 'Editar máquina') + '</div>';
+  h += '<div class="ef"><div class="ef-l">Nombre <span style="color:#A32D2D">*</span></div>';
+  h += '<input type="text" class="ef-i" id="maq-nombre" value="' + escapeHtml(maq ? maq.nombre : '') + '" placeholder="Ej. VF3-YT"></div>';
+  h += '<div class="ef"><div class="ef-l">Procesos que realiza</div>';
+  h += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:6px;padding:8px;background:#F5F3EC;border-radius:5px;border:1px solid #C8C6BE">';
+  procStandard.forEach(p => {
+    const checked = currentProcs.includes(p) ? ' checked' : '';
+    h += '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;padding:3px 4px"><input type="checkbox" class="maq-proc-cb" value="' + escapeHtml(p) + '"' + checked + '> ' + escapeHtml(p) + '</label>';
+  });
+  h += '</div>';
+  h += '<div class="ef-help">Si no marcás ninguno, esta máquina aparecerá como fallback en TODAS las opciones de proceso (no se filtra).</div>';
+  h += '</div>';
+  h += '<div class="actions">';
+  h += '<button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button>';
+  h += '<button class="b b-p" onclick="saveMaquina(' + (maquinaId || 'null') + ')">' + (isNew ? 'Crear' : 'Guardar') + '</button>';
+  h += '</div>';
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
+}
+
+async function saveMaquina(maquinaId) {
+  const nombre = document.getElementById('maq-nombre').value.trim();
+  if (!nombre) { toast('El nombre es obligatorio', true); return; }
+  // Recolectar procesos seleccionados
+  const cbs = document.querySelectorAll('.maq-proc-cb:checked');
+  const procs = [...cbs].map(cb => cb.value);
+  if (maquinaId) {
+    // Editar existente
+    const { error } = await sb.from('maquinas').update({ nombre, procesos: procs }).eq('id', maquinaId);
+    if (error) { toast('Error al guardar: ' + error.message, true); console.error(error); return; }
+  } else {
+    // Crear nueva
+    const { error } = await sb.from('maquinas').insert({ nombre, procesos: procs });
+    if (error) { toast('Error al crear: ' + error.message, true); console.error(error); return; }
+  }
+  document.getElementById('maq-modal').remove();
+  await loadAll();
+  toast(maquinaId ? 'Máquina actualizada' : 'Máquina creada');
+  render();
+}
+
+// Filtra la lista de maquinas devolviendo SOLO las que pueden hacer el proceso
+// dado. Una maquina con procesos = [] aparece SIEMPRE como fallback (es decir,
+// una maquina sin procesos asignados se muestra en todas las opciones).
+function maquinasParaProceso(procesoNombre) {
+  if (!procesoNombre) return maquinas;
+  return maquinas.filter(m => {
+    const procs = (m.procesos && Array.isArray(m.procesos)) ? m.procesos : [];
+    if (procs.length === 0) return true;  // fallback: sin procesos -> todas
+    return procs.includes(procesoNombre);
+  });
 }
 
 function showClienteForm(clienteId) {
