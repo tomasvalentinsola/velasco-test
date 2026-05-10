@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v48</title>
+<title>Velasco App 2.0 — Proyectos v49</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -877,6 +877,14 @@ function renderCrumbs() {
       h = '<a onclick="navigate({view:\'projects\'})">Proyectos</a> <span class="sep">›</span> ' +
           '<a onclick="navigate({view:\'recursos\'})">Recursos</a> <span class="sep">›</span> ' + tabLbl;
     }
+  } else if (nav.view === 'productoMatriz') {
+    const prod = productosMatriz.find(p => p.id === nav.productoId);
+    const cliLbl = prod && prod.cliente_id ? clN(prod.cliente_id) : 'Productos Genéricos';
+    h = '<a onclick="navigate({view:\'projects\'})">Proyectos</a> <span class="sep">›</span> ' +
+        '<a onclick="navigate({view:\'recursos\',tab:\'matriz\'})">Recursos</a> <span class="sep">›</span> ' +
+        '<a onclick="navigate({view:\'recursos\',tab:\'matriz\'})">Matriz de Productos</a> <span class="sep">›</span> ' +
+        escapeHtml(cliLbl) + ' <span class="sep">›</span> ' +
+        escapeHtml(prod ? prod.descripcion : 'Producto');
   }
   c.innerHTML = h;
 }
@@ -891,6 +899,7 @@ function render() {
   if (nav.view === 'item') return renderItemDetail();
   if (nav.view === 'clientes') return renderClientesList();
   if (nav.view === 'recursos') return renderRecursos();
+  if (nav.view === 'productoMatriz') return renderProductoMatrizDetail();
 }
 
 // ========== PROJECTS LIST ==========
@@ -1715,7 +1724,7 @@ function renderProjectDetail() {
   h += '<button class="b b-d" onclick="confirmDeleteProject()">Eliminar proyecto</button>';
   h += '<button class="b b-p" onclick="saveProjectMeta()">Guardar cambios</button></div>';
 
-  h += '<div class="section-t">Items del proyecto <button class="b b-p" onclick="showItemForm(null)">+ Agregar item</button></div>';
+  h += '<div class="section-t">Items del proyecto <button class="b b-p" onclick="showItemForm(null)">+ Agregar item</button> <button class="b" onclick="showAgregarDesdeMatriz()" style="padding:4px 10px;font-size:11px;margin-left:4px">+ Desde Matriz</button></div>';
   if (proj.items.length > 0) {
     // Header row with column titles
     h += '<div style="display:flex;gap:10px;align-items:center;padding:4px 12px;font-size:10px;font-weight:700;color:#5F5E5A;text-transform:uppercase;letter-spacing:0.5px">';
@@ -1943,48 +1952,418 @@ async function saveProjectState(projectId) {
 }
 
 // ========== ITEM FORM ==========
+// Estado en memoria del form de item. Necesario porque cuando se abre un
+// sub-modal (ej. "+ Cargar nuevo material") y vuelve, hay que reconstruir.
+//
+// itFormState = {
+//   itemId: <id|null>,
+//   ubicacionesPendientes: [...],   // copias de items_ubicaciones
+//   importedFromMatriz: <bool>      // si true, los campos heredados son read-only
+// }
+let itFormState = null;
+
 function showItemForm(itemId) {
   const item = itemId ? items.find(i => i.id === itemId) : null;
   const isNew = !item;
+  const proj = getProject(nav.projectId);
+  if (!proj) return;
+
+  // Cargar ubicaciones del item (modo edicion). Estas se editan en memoria.
+  let ubicaciones = [];
+  if (item) {
+    ubicaciones = itemsUbicaciones.filter(u => u.item_id === item.id).map(u => ({
+      id: u.id,
+      cliente_id: u.cliente_id,
+      sector_id: u.sector_id,
+      equipo_id: u.equipo_id,
+      conjunto_id: u.conjunto_id,
+      subconjunto_id: u.subconjunto_id
+    }));
+  }
+
+  itFormState = {
+    itemId: itemId,
+    ubicacionesPendientes: ubicaciones,
+    importedFromMatriz: !!(item && item.imported_from_matriz_id)
+  };
+
+  _renderItemModal(item, proj);
+}
+
+// Render principal del modal del item. Se separa para poder re-renderizar
+// cuando se modifica la lista de ubicaciones sin perder los datos del form.
+function _renderItemModal(item, proj) {
+  const captured = _itCaptureFormValues();
+  const existing = document.getElementById('item-modal');
+  if (existing) existing.remove();
+
+  const isNew = !item;
+  const importedFromMatriz = itFormState.importedFromMatriz;
+
+  const v = captured || {
+    descripcion: item ? item.descripcion : '',
+    cantidad: item ? item.cantidad : 1,
+    codigo_cliente: item ? (item.codigo_cliente || '') : '',
+    material_id: item ? (item.material_id || '') : '',
+    material_label: item && item.material_id ? (materiales.find(x => x.id === item.material_id) || {}).nombre || '' : '',
+    presentacion: item ? (item.presentacion_mat_prima || '') : '',
+    fechaFin: item && item.fecha_fin_estipulada ? item.fecha_fin_estipulada : '',
+    foto_url: item ? (item.foto_url || '') : '',
+    estado: item ? (item.estado || 'Espera MP') : 'Espera MP',
+    obs_anulacion: (item && item.observaciones_anulacion) || ''
+  };
+
   const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'item-modal';
-  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '600px';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '720px';
   let h = '<div class="md-t">' + (isNew ? 'Nuevo item' : 'Editar item') + '</div>';
+
+  if (importedFromMatriz) {
+    h += '<div style="background:#E8F2FC;color:#0C447C;padding:8px 12px;border-radius:5px;margin-bottom:12px;font-size:12px;border:1px solid #A8C8E8">';
+    h += '<b>Item importado de la matriz.</b> Los campos heredados (código del cliente, material y equipos compatibles) están bloqueados. Para modificarlos, edite el producto en Matriz de Productos.';
+    h += '</div>';
+  }
+
+  // Fila 1: Descripcion + Cantidad
   h += '<div class="row">';
-  h += '<div class="ef" style="flex:3"><div class="ef-l">Descripcion <span style="color:#A32D2D">*</span></div>';
-  h += '<input type="text" class="ef-i" id="i-desc" value="' + escapeHtml(item ? item.descripcion : '') + '" placeholder="Ej. Eje principal"></div>';
+  h += '<div class="ef" style="flex:3"><div class="ef-l">Descripción <span style="color:#A32D2D">*</span></div>';
+  h += '<input type="text" class="ef-i" id="i-desc" value="' + escapeHtml(v.descripcion) + '" placeholder="Ej. Eje principal"></div>';
   h += '<div class="ef" style="flex:1"><div class="ef-l">Cantidad</div>';
-  h += '<input type="number" class="ef-i" id="i-cant" value="' + (item ? item.cantidad : 1) + '" min="1" step="1"></div></div>';
-  // Estado del item visible siempre (para que se pueda elegir al crear).
-  // Default 'Espera MP'. Solo al crear se muestra opción de saltar al estado real.
-  const currentEstado = item ? (item.estado || 'Espera MP') : 'Espera MP';
+  h += '<input type="number" class="ef-i" id="i-cant" value="' + v.cantidad + '" min="1" step="1"></div>';
+  h += '</div>';
+
+  // Estado del item
   h += '<div class="ef" style="background:#FFF4D5;padding:8px 10px;border-radius:5px;border:1px solid #F5C842"><div class="ef-l" style="color:#854F0B">Estado del item</div>';
   h += '<select class="ef-i" id="i-estado" onchange="onItemStateChange()">';
   ITEM_STATES.forEach(st => {
-    h += '<option value="' + st + '"' + (currentEstado === st ? ' selected' : '') + '>' + st + '</option>';
+    h += '<option value="' + st + '"' + (v.estado === st ? ' selected' : '') + '>' + st + '</option>';
   });
   h += '</select></div>';
-  h += '<div class="ef" id="i-obs-wrap" style="display:' + (currentEstado === 'Anulado' ? 'block' : 'none') + '">';
-  h += '<div class="ef-l">Observaciones de anulacion <span style="color:#A32D2D">*</span></div>';
-  h += '<textarea class="ef-i" id="i-obs" rows="3" placeholder="Ej. Cliente ya no quiso la pieza, se asume perdida">' + escapeHtml((item && item.observaciones_anulacion) || '') + '</textarea></div>';
+  h += '<div class="ef" id="i-obs-wrap" style="display:' + (v.estado === 'Anulado' ? 'block' : 'none') + '">';
+  h += '<div class="ef-l">Observaciones de anulación <span style="color:#A32D2D">*</span></div>';
+  h += '<textarea class="ef-i" id="i-obs" rows="3" placeholder="Ej. Cliente ya no quiso la pieza, se asume perdida">' + escapeHtml(v.obs_anulacion) + '</textarea></div>';
+
+  // Codigo del cliente (heredado read-only si vino de matriz)
   h += '<div class="row">';
-  h += '<div class="ef" style="flex:1"><div class="ef-l">Material</div>';
-  h += '<input type="text" class="ef-i" id="i-mat" value="' + escapeHtml(item && item.material ? item.material : '') + '" placeholder="Ej. SAE 1010"></div>';
-  h += '<div class="ef" style="flex:1"><div class="ef-l">Presentacion materia prima</div>';
-  h += '<input type="text" class="ef-i" id="i-pres" value="' + escapeHtml(item && item.presentacion_mat_prima ? item.presentacion_mat_prima : '') + '" placeholder="Ej. \u00d8290 x 1 1/2 pulg"></div>';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Código del cliente' + (importedFromMatriz ? ' <span style="font-size:10px;color:#888">(heredado de matriz)</span>' : '') + '</div>';
+  if (importedFromMatriz) {
+    h += '<input type="text" class="ef-i" id="i-cod-cli" value="' + escapeHtml(v.codigo_cliente) + '" disabled style="background:#F5F3EC;color:#888">';
+  } else {
+    h += '<input type="text" class="ef-i" id="i-cod-cli" value="' + escapeHtml(v.codigo_cliente) + '" placeholder="Ej. 4517-AB">';
+  }
   h += '</div>';
-  h += '<div class="ef"><div class="ef-l">Fecha de fin estipulada' + (item && !item.fecha_fin_estipulada ? ' <span style="color:#A32D2D" title="Falta completar">*</span>' : '') + '</div>';
-  h += '<input type="date" class="ef-i" id="i-fechafin" value="' + (item && item.fecha_fin_estipulada ? item.fecha_fin_estipulada : '') + '" style="max-width:200px' + (item && !item.fecha_fin_estipulada ? ';border-color:#A32D2D;background:#FEF5F5' : '') + '">';
-  h += '<div class="ef-help">Estimacion de oficina tecnica para cumplir el plazo.</div></div>';
-  h += '<div class="ef"><div class="ef-l">Foto del item (opcional)</div>' + buildPhotoWrapHtml(item ? item.foto_url : null, 'item') + '<div class="ef-help">Si la dejas vacia, se usa la del proyecto.</div></div>';
+  // Material (picker buscable, read-only si vino de matriz)
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Material' + (importedFromMatriz ? ' <span style="font-size:10px;color:#888">(heredado de matriz)</span>' : '') + '</div>';
+  if (importedFromMatriz) {
+    h += '<input type="text" class="ef-i" value="' + escapeHtml(v.material_label) + '" disabled style="background:#F5F3EC;color:#888">';
+    h += '<input type="hidden" id="i-material-value" value="' + (v.material_id || '') + '">';
+  } else {
+    h += renderPicker({
+      id: 'i-material',
+      value: v.material_id,
+      valueLabel: v.material_label,
+      placeholder: 'Buscar o cargar nuevo...',
+      options: materiales.map(x => ({ id: x.id, label: x.nombre })),
+      onCreateLabel: '+ Cargar nuevo material',
+      onCreateFnName: 'itCargarMaterial'
+    });
+  }
+  h += '</div>';
+  h += '</div>';
+
+  // Presentacion + Fecha fin estipulada
+  h += '<div class="row">';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Presentación materia prima</div>';
+  h += '<input type="text" class="ef-i" id="i-pres" value="' + escapeHtml(v.presentacion) + '" placeholder="Ej. Ø290 x 1 1/2 pulg"></div>';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Fecha de fin estipulada' + (item && !item.fecha_fin_estipulada ? ' <span style="color:#A32D2D" title="Falta completar">*</span>' : '') + '</div>';
+  h += '<input type="date" class="ef-i" id="i-fechafin" value="' + escapeHtml(v.fechaFin) + '" style="' + (item && !item.fecha_fin_estipulada ? 'border-color:#A32D2D;background:#FEF5F5' : '') + '">';
+  h += '<div class="ef-help">Estimación de oficina técnica para cumplir el plazo.</div></div>';
+  h += '</div>';
+
+  // Foto
+  h += '<div class="ef"><div class="ef-l">Foto del item (opcional)</div>' + buildPhotoWrapHtml(v.foto_url, 'item') + '<div class="ef-help">Si la dejás vacía, se usa la del proyecto.</div></div>';
+
+  // ----- Equipos compatibles (read-only si vino de matriz) -----
+  h += '<div style="margin-top:14px;padding-top:12px;border-top:1px solid #E8E6DF">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
+  h += '<div style="font-size:12px;font-weight:600;color:#5F5E5A">Equipos compatibles' + (importedFromMatriz ? ' <span style="font-size:10px;color:#888;font-weight:400">(heredado de matriz)</span>' : '') + '</div>';
+  if (!importedFromMatriz) {
+    h += '<button class="b" onclick="itAsignarCompatibilidad()" style="padding:4px 10px;font-size:11px">+ Asignar compatibilidad</button>';
+  }
+  h += '</div>';
+  h += '<div id="it-ubicaciones-list">' + _itUbicacionesListHtml() + '</div>';
+  if (!importedFromMatriz) {
+    h += '<div class="ef-help" style="margin-top:6px">Si el item se usa en distintos equipos/conjuntos, asigná cada ruta. Sin asignar ninguna, queda como item sin ubicación específica.</div>';
+  }
+  h += '</div>';
+
   h += '<div class="actions">';
   h += '<button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button>';
-  if (!isNew) {
-    const procCount = actividades.filter(a => a.item_id === itemId && !a.proceso_eliminado).length;
-    h += '<button class="b b-d" onclick="confirmDeleteItem(' + itemId + ')">Eliminar' + (procCount > 0 ? ' (' + procCount + ' procesos)' : '') + '</button>';
+  if (item) {
+    const procCount = actividades.filter(a => a.item_id === item.id && !a.proceso_eliminado).length;
+    h += '<button class="b b-d" onclick="confirmDeleteItem(' + item.id + ')">Eliminar' + (procCount > 0 ? ' (' + procCount + ' procesos)' : '') + '</button>';
   }
-  h += '<button class="b b-p" onclick="saveItem(' + (itemId || 'null') + ')">' + (isNew ? 'Crear' : 'Guardar') + '</button></div>';
+  h += '<button class="b b-p" onclick="saveItem(' + (itFormState.itemId || 'null') + ')">' + (isNew ? 'Crear' : 'Guardar') + '</button></div>';
   m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
   setupPhotoPaste();
+}
+
+function _itCaptureFormValues() {
+  const desc = document.getElementById('i-desc');
+  if (!desc) return null;
+  const matVal = document.getElementById('i-material-value');
+  const matInp = document.getElementById('i-material-input');
+  return {
+    descripcion: desc.value,
+    cantidad: parseInt(document.getElementById('i-cant').value) || 1,
+    codigo_cliente: document.getElementById('i-cod-cli').value,
+    material_id: matVal ? matVal.value : '',
+    // Si es read-only (no hay i-material-input), reusamos el label del state
+    material_label: matInp ? matInp.value : '',
+    presentacion: document.getElementById('i-pres').value,
+    fechaFin: document.getElementById('i-fechafin').value,
+    foto_url: (document.getElementById('photo-url-item') || { value: '' }).value,
+    estado: document.getElementById('i-estado').value,
+    obs_anulacion: (document.getElementById('i-obs') || { value: '' }).value
+  };
+}
+
+function _itUbicacionesListHtml() {
+  if (!itFormState || !itFormState.ubicacionesPendientes || itFormState.ubicacionesPendientes.length === 0) {
+    return '<div style="font-size:11px;color:#888;font-style:italic;padding:6px 0">Sin equipos compatibles asignados.</div>';
+  }
+  const importedFromMatriz = itFormState.importedFromMatriz;
+  let h = '';
+  itFormState.ubicacionesPendientes.forEach((u, idx) => {
+    h += '<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:#F5F3EC;border:1px solid #C8C6BE;border-radius:5px;margin-bottom:5px;font-size:12px">';
+    h += '<span style="flex:1">' + _pmUbicacionRoute(u) + '</span>';
+    if (!importedFromMatriz) {
+      h += '<button class="b b-icon b-d" onclick="itQuitarUbicacion(' + idx + ')" title="Quitar esta ubicación" style="padding:2px 8px;font-size:11px">×</button>';
+    }
+    h += '</div>';
+  });
+  return h;
+}
+
+function itQuitarUbicacion(idx) {
+  if (!itFormState) return;
+  itFormState.ubicacionesPendientes.splice(idx, 1);
+  const list = document.getElementById('it-ubicaciones-list');
+  if (list) list.innerHTML = _itUbicacionesListHtml();
+}
+
+function itCargarMaterial(initialName) {
+  showCargarMaterial(initialName, 'i-material');
+}
+
+// ----- Modal "Asignar compatibilidad" para item -----
+// Igual al de producto matriz. Solo cambia el destino: itFormState en lugar de pmFormState.
+let itCompatState = null;
+
+function itAsignarCompatibilidad() {
+  // Pre-cargar cliente del proyecto. Tomi pidio: por defecto filtrar por
+  // cliente del proyecto, con checkbox "Habilitar todos los clientes".
+  const proj = getProject(nav.projectId);
+  itCompatState = {
+    clienteId: proj ? proj.cliente_id : null,
+    sectorId: null, equipoId: null, conjuntoId: null, subconjuntoId: null,
+    habilitarTodos: false
+  };
+  _itRenderCompatModal();
+}
+
+function _itRenderCompatModal() {
+  const existing = document.getElementById('it-compat-modal');
+  if (existing) existing.remove();
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'it-compat-modal';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '520px';
+  m.style.zIndex = '1100';
+  const proj = getProject(nav.projectId);
+
+  let h = '<div class="md-t">Asignar compatibilidad</div>';
+  h += '<div style="font-size:11px;color:#5F5E5A;margin-bottom:10px">Definí la ruta donde el item se utiliza. Por defecto se filtra por el cliente del proyecto (' + escapeHtml(proj ? clN(proj.cliente_id) : '?') + ').</div>';
+  // Checkbox "Habilitar todos los clientes"
+  h += '<div class="ef" style="margin-bottom:10px"><label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer">';
+  h += '<input type="checkbox" id="it-compat-todos"' + (itCompatState.habilitarTodos ? ' checked' : '') + ' onchange="itCompatToggleTodos()"> Habilitar todos los clientes';
+  h += '</label></div>';
+
+  // Cliente picker (deshabilitado si no es habilitarTodos)
+  const cliV = itCompatState.clienteId;
+  const cliLbl = cliV ? clN(cliV) : '';
+  h += '<div class="ef"><div class="ef-l">Cliente <span style="color:#A32D2D">*</span></div>';
+  h += renderPicker({
+    id: 'itc-cliente',
+    value: cliV || '',
+    valueLabel: cliLbl,
+    placeholder: 'Buscar cliente...',
+    disabled: !itCompatState.habilitarTodos,
+    options: clientes.map(c => ({ id: c.id, label: c.nombre, sublabel: c.codigo || '' })),
+    onSelectFnName: 'itcOnCliente'
+  });
+  h += '</div>';
+
+  // Sector picker
+  const secV = itCompatState.sectorId;
+  const secLbl = secV ? (sectores.find(x => x.id === secV) || {}).nombre || '' : '';
+  h += '<div class="ef"><div class="ef-l">Sector</div>';
+  h += renderPicker({
+    id: 'itc-sector',
+    value: secV || '',
+    valueLabel: secLbl,
+    placeholder: cliV ? 'Buscar sector o cargar nuevo...' : 'Primero elegí cliente',
+    disabled: !cliV,
+    options: cliV ? sectoresParaCliente(cliV).map(s => ({ id: s.id, label: s.nombre })) : [],
+    onSelectFnName: 'itcOnSector',
+    onCreateLabel: cliV ? '+ Cargar nuevo sector' : null,
+    onCreateFnName: 'itcCargarSector'
+  });
+  h += '</div>';
+
+  // Equipo
+  const eqV = itCompatState.equipoId;
+  const eqLbl = eqV ? (equipos.find(x => x.id === eqV) || {}).nombre || '' : '';
+  h += '<div class="ef"><div class="ef-l">Equipo</div>';
+  h += renderPicker({
+    id: 'itc-equipo',
+    value: eqV || '',
+    valueLabel: eqLbl,
+    placeholder: secV ? 'Buscar equipo o cargar nuevo...' : 'Primero elegí sector',
+    disabled: !secV,
+    options: secV ? equiposParaSector(secV).map(e => ({ id: e.id, label: e.nombre, sublabel: e.codigo_cliente || '' })) : [],
+    onSelectFnName: 'itcOnEquipo',
+    onCreateLabel: secV ? '+ Cargar nuevo equipo' : null,
+    onCreateFnName: 'itcCargarEquipo'
+  });
+  h += '</div>';
+
+  // Conjunto
+  const conV = itCompatState.conjuntoId;
+  const conLbl = conV ? (conjuntos.find(x => x.id === conV) || {}).nombre || '' : '';
+  h += '<div class="ef"><div class="ef-l">Conjunto</div>';
+  h += renderPicker({
+    id: 'itc-conjunto',
+    value: conV || '',
+    valueLabel: conLbl,
+    placeholder: eqV ? 'Buscar conjunto o cargar nuevo...' : 'Primero elegí equipo',
+    disabled: !eqV,
+    options: eqV && cliV ? conjuntosParaCliente(cliV).map(c => ({ id: c.id, label: c.nombre })) : [],
+    onSelectFnName: 'itcOnConjunto',
+    onCreateLabel: eqV ? '+ Cargar nuevo conjunto' : null,
+    onCreateFnName: 'itcCargarConjunto'
+  });
+  h += '</div>';
+
+  // Subconjunto
+  const subV = itCompatState.subconjuntoId;
+  const subLbl = subV ? (subconjuntos.find(x => x.id === subV) || {}).nombre || '' : '';
+  h += '<div class="ef"><div class="ef-l">Subconjunto</div>';
+  h += renderPicker({
+    id: 'itc-subconjunto',
+    value: subV || '',
+    valueLabel: subLbl,
+    placeholder: conV ? 'Buscar subconjunto o cargar nuevo...' : 'Solo si hay conjunto',
+    disabled: !conV,
+    options: conV && cliV ? subconjuntosParaCliente(cliV).map(s => ({ id: s.id, label: s.nombre })) : [],
+    onSelectFnName: 'itcOnSubconjunto',
+    onCreateLabel: conV ? '+ Cargar nuevo subconjunto' : null,
+    onCreateFnName: 'itcCargarSubconjunto'
+  });
+  h += '</div>';
+
+  h += '<div class="actions">';
+  h += '<button class="b" onclick="document.getElementById(\'it-compat-modal\').remove()">Cancelar</button>';
+  h += '<button class="b b-p" onclick="itGuardarCompatibilidad()">Guardar compatibilidad</button>';
+  h += '</div>';
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
+}
+
+function itCompatToggleTodos() {
+  const cb = document.getElementById('it-compat-todos');
+  if (!cb) return;
+  itCompatState.habilitarTodos = cb.checked;
+  if (!cb.checked) {
+    // Volver a fijar al cliente del proyecto
+    const proj = getProject(nav.projectId);
+    itCompatState.clienteId = proj ? proj.cliente_id : null;
+    itCompatState.sectorId = null;
+    itCompatState.equipoId = null;
+    itCompatState.conjuntoId = null;
+    itCompatState.subconjuntoId = null;
+  }
+  _itRenderCompatModal();
+}
+
+function itcOnCliente(opt) {
+  itCompatState.clienteId = opt.id;
+  itCompatState.sectorId = null;
+  itCompatState.equipoId = null;
+  itCompatState.conjuntoId = null;
+  itCompatState.subconjuntoId = null;
+  _itRenderCompatModal();
+}
+function itcOnSector(opt) {
+  itCompatState.sectorId = opt.id;
+  itCompatState.equipoId = null;
+  itCompatState.conjuntoId = null;
+  itCompatState.subconjuntoId = null;
+  _itRenderCompatModal();
+}
+function itcOnEquipo(opt) {
+  itCompatState.equipoId = opt.id;
+  itCompatState.conjuntoId = null;
+  itCompatState.subconjuntoId = null;
+  _itRenderCompatModal();
+}
+function itcOnConjunto(opt) {
+  itCompatState.conjuntoId = opt.id;
+  itCompatState.subconjuntoId = null;
+  _itRenderCompatModal();
+}
+function itcOnSubconjunto(opt) {
+  itCompatState.subconjuntoId = opt.id;
+  _itRenderCompatModal();
+}
+
+function itcCargarSector(initial) { showCargarSector(initial, itCompatState.clienteId, 'itc-sector'); }
+function itcCargarEquipo(initial) { showCargarEquipo(initial, itCompatState.sectorId, 'itc-equipo'); }
+function itcCargarConjunto(initial) { showCargarConjunto(initial, itCompatState.clienteId, 'itc-conjunto'); }
+function itcCargarSubconjunto(initial) { showCargarSubconjunto(initial, itCompatState.clienteId, 'itc-subconjunto'); }
+
+// Helper: cuando se carga un nuevo X desde el modal de compat de item, sync state.
+// Lo agregamos a la cadena existente de _pmcSyncStateAfterLoad.
+function _itcSyncStateAfterLoad(pickerId, newId) {
+  if (!itCompatState) return;
+  if (pickerId === 'itc-sector') itCompatState.sectorId = newId;
+  else if (pickerId === 'itc-equipo') itCompatState.equipoId = newId;
+  else if (pickerId === 'itc-conjunto') itCompatState.conjuntoId = newId;
+  else if (pickerId === 'itc-subconjunto') itCompatState.subconjuntoId = newId;
+  if (pickerId.startsWith('itc-')) _itRenderCompatModal();
+}
+
+function itGuardarCompatibilidad() {
+  if (!itCompatState.clienteId) {
+    toast('Cliente es obligatorio', true);
+    return;
+  }
+  if (!itFormState) return;
+  const dup = itFormState.ubicacionesPendientes.find(u =>
+    u.cliente_id === itCompatState.clienteId &&
+    u.sector_id === itCompatState.sectorId &&
+    u.equipo_id === itCompatState.equipoId &&
+    u.conjunto_id === itCompatState.conjuntoId &&
+    u.subconjunto_id === itCompatState.subconjuntoId
+  );
+  if (dup) { toast('Ya está asignada esa ruta', true); return; }
+  itFormState.ubicacionesPendientes.push({
+    cliente_id: itCompatState.clienteId,
+    sector_id: itCompatState.sectorId,
+    equipo_id: itCompatState.equipoId,
+    conjunto_id: itCompatState.conjuntoId,
+    subconjunto_id: itCompatState.subconjuntoId
+  });
+  document.getElementById('it-compat-modal').remove();
+  const list = document.getElementById('it-ubicaciones-list');
+  if (list) list.innerHTML = _itUbicacionesListHtml();
+  toast('Compatibilidad asignada');
 }
 
 function onItemStateChange() {
@@ -1998,7 +2377,10 @@ async function saveItem(itemId) {
   const desc = document.getElementById('i-desc').value.trim();
   const cant = parseInt(document.getElementById('i-cant').value) || 1;
   const foto = document.getElementById('photo-url-item').value.trim() || null;
-  const material = document.getElementById('i-mat').value.trim() || null;
+  const codigoClienteEl = document.getElementById('i-cod-cli');
+  const codigo_cliente = codigoClienteEl ? (codigoClienteEl.value.trim() || null) : null;
+  const matValEl = document.getElementById('i-material-value');
+  const material_id = matValEl && matValEl.value ? parseInt(matValEl.value) : null;
   const presentacion = document.getElementById('i-pres').value.trim() || null;
   const fechaFin = document.getElementById('i-fechafin').value || null;
   if (!desc) { toast('Descripcion requerida', true); return; }
@@ -2014,12 +2396,14 @@ async function saveItem(itemId) {
   }
   const payload = {
     descripcion: desc, cantidad: cant, foto_url: foto,
-    material, presentacion_mat_prima: presentacion, fecha_fin_estipulada: fechaFin,
+    material_id, codigo_cliente,
+    presentacion_mat_prima: presentacion, fecha_fin_estipulada: fechaFin,
     estado, observaciones_anulacion: obs
   };
+
+  let savedItemId = itemId;
   if (itemId) {
     await sb.from('items').update(payload).eq('id', itemId);
-    // Update related activities (only fields that should propagate)
     const itemActs = actividades.filter(a => a.item_id === itemId && !a.proceso_eliminado);
     for (const a of itemActs) {
       await sb.from('actividades_tablero').update({
@@ -2032,11 +2416,223 @@ async function saveItem(itemId) {
     payload.proyecto_id = proj.id;
     payload.cliente_id = proj.cliente_id;
     payload.pedido_nro = proj.pedido_nro;
-    await sb.from('items').insert(payload);
+    const { data, error } = await sb.from('items').insert(payload).select().single();
+    if (error) { toast('Error: ' + error.message, true); return; }
+    savedItemId = data.id;
     toast('Item agregado');
   }
+
+  // Sincronizar ubicaciones (solo si no es importado de matriz, o sea, editable)
+  if (!itFormState.importedFromMatriz) {
+    await sb.from('items_ubicaciones').delete().eq('item_id', savedItemId);
+    if (itFormState.ubicacionesPendientes && itFormState.ubicacionesPendientes.length > 0) {
+      const inserts = itFormState.ubicacionesPendientes.map(u => ({
+        item_id: savedItemId,
+        cliente_id: u.cliente_id,
+        sector_id: u.sector_id,
+        equipo_id: u.equipo_id,
+        conjunto_id: u.conjunto_id,
+        subconjunto_id: u.subconjunto_id
+      }));
+      await sb.from('items_ubicaciones').insert(inserts);
+    }
+  }
+
   await loadAll();
   document.getElementById('item-modal').remove();
+  itFormState = null;
+  render();
+}
+
+// =============================================================================
+// "+ Desde Matriz": importar producto matriz al proyecto como item nuevo.
+// =============================================================================
+// Modal con lista de productos matriz filtrados por cliente del proyecto.
+// Checkbox "Habilitar todos los clientes" para mostrar todos.
+// Click en producto -> copia el producto al proyecto como item nuevo,
+// incluyendo descripcion, codigo del cliente, material, presentacion, foto,
+// ubicaciones y procesos. Usa imported_from_matriz_id para marcar el origen.
+
+let agregarDesdeMatrizState = { habilitarTodos: false, search: '' };
+
+function showAgregarDesdeMatriz() {
+  const proj = getProject(nav.projectId);
+  if (!proj) return;
+  agregarDesdeMatrizState = { habilitarTodos: false, search: '' };
+  _renderAgregarDesdeMatrizModal();
+}
+
+function _renderAgregarDesdeMatrizModal() {
+  const existing = document.getElementById('add-from-matriz-modal');
+  if (existing) existing.remove();
+  const proj = getProject(nav.projectId);
+  if (!proj) return;
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'add-from-matriz-modal';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '720px';
+  let h = '<div class="md-t">Agregar item desde Matriz de Productos</div>';
+  h += '<div style="font-size:11px;color:#5F5E5A;margin-bottom:10px">Cliente del proyecto: <b>' + escapeHtml(clN(proj.cliente_id)) + '</b></div>';
+  // Controles
+  h += '<div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap">';
+  h += '<input type="text" id="afm-search" value="' + escapeHtml(agregarDesdeMatrizState.search) + '" placeholder="Buscar producto..." style="padding:5px 8px;border:1px solid #C8C6BE;border-radius:5px;font-size:12px;width:240px" oninput="afmSearchInput(event)">';
+  h += '<label style="display:flex;align-items:center;gap:6px;font-size:11px;cursor:pointer">';
+  h += '<input type="checkbox" id="afm-todos"' + (agregarDesdeMatrizState.habilitarTodos ? ' checked' : '') + ' onchange="afmToggleTodos()"> Habilitar todos los clientes';
+  h += '</label>';
+  h += '</div>';
+
+  // Lista de productos
+  let candidatos = productosMatriz.slice();
+  if (!agregarDesdeMatrizState.habilitarTodos) {
+    // Por defecto, productos del cliente del proyecto + productos genericos (sin cliente).
+    candidatos = candidatos.filter(p => p.cliente_id === proj.cliente_id || !p.cliente_id);
+  }
+  if (agregarDesdeMatrizState.search.trim()) {
+    const q = agregarDesdeMatrizState.search.trim().toLowerCase();
+    candidatos = candidatos.filter(p => (p.descripcion || '').toLowerCase().includes(q));
+  }
+  candidatos.sort((a, b) => (a.descripcion || '').localeCompare(b.descripcion || ''));
+
+  h += '<div id="afm-list" style="max-height:400px;overflow-y:auto;border:1px solid #C8C6BE;border-radius:5px">';
+  if (candidatos.length === 0) {
+    h += '<div style="padding:20px;text-align:center;color:#888;font-size:12px;font-style:italic">No hay productos para mostrar.</div>';
+  } else {
+    candidatos.forEach(p => {
+      const procsCnt = productosMatrizProcesos.filter(pr => pr.producto_id === p.id).length;
+      const cliLbl = p.cliente_id ? clN(p.cliente_id) : 'Genérico';
+      const matLbl = p.material_id ? ((materiales.find(x => x.id === p.material_id) || {}).nombre || '') : '';
+      h += '<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid #E8E6DF;cursor:pointer" onclick="importarProductoAlProyecto(' + p.id + ')">';
+      if (p.foto_url) {
+        h += '<img src="' + escapeHtml(p.foto_url) + '" style="width:40px;height:40px;object-fit:cover;border-radius:4px;flex:0 0 auto">';
+      } else {
+        h += '<div style="width:40px;height:40px;background:#E8E6DF;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:18px;flex:0 0 auto">📦</div>';
+      }
+      h += '<div style="flex:1;min-width:0">';
+      h += '<div style="font-weight:600;font-size:12px">' + escapeHtml(p.descripcion || '') + '</div>';
+      const meta = [cliLbl, p.codigo_cliente, matLbl, procsCnt + ' proceso(s)'].filter(Boolean).join(' · ');
+      h += '<div style="color:#888;font-size:10px;margin-top:1px">' + escapeHtml(meta) + '</div>';
+      h += '</div>';
+      h += '<button class="b b-p" style="padding:4px 10px;font-size:11px">Importar</button>';
+      h += '</div>';
+    });
+  }
+  h += '</div>';
+
+  h += '<div class="actions" style="margin-top:14px">';
+  h += '<button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button>';
+  h += '</div>';
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
+}
+
+function afmSearchInput(e) {
+  agregarDesdeMatrizState.search = e.target.value;
+  _renderAgregarDesdeMatrizModal();
+  setTimeout(() => {
+    const inp = document.getElementById('afm-search');
+    if (inp) {
+      inp.focus();
+      inp.setSelectionRange(inp.value.length, inp.value.length);
+    }
+  }, 0);
+}
+
+function afmToggleTodos() {
+  const cb = document.getElementById('afm-todos');
+  if (!cb) return;
+  agregarDesdeMatrizState.habilitarTodos = cb.checked;
+  _renderAgregarDesdeMatrizModal();
+}
+
+async function importarProductoAlProyecto(productoId) {
+  const proj = getProject(nav.projectId);
+  if (!proj) return;
+  const prod = productosMatriz.find(p => p.id === productoId);
+  if (!prod) return;
+  if (!confirm('¿Importar "' + prod.descripcion + '" al proyecto?\n\nSe creará un item nuevo con los datos del producto y se copiarán todos sus procesos. El item quedará en modo estricto: los datos heredados no se podrán modificar.')) return;
+
+  // 1. Crear item con datos del producto. Cantidad por defecto = 1.
+  const itemPayload = {
+    proyecto_id: proj.id,
+    cliente_id: proj.cliente_id,
+    pedido_nro: proj.pedido_nro,
+    descripcion: prod.descripcion,
+    cantidad: 1,
+    foto_url: prod.foto_url || null,
+    material_id: prod.material_id || null,
+    codigo_cliente: prod.codigo_cliente || null,
+    presentacion_mat_prima: prod.presentacion_mat_prima || null,
+    fecha_fin_estipulada: null,  // que el responsable lo cargue despues
+    estado: 'Espera MP',
+    imported_from_matriz_id: prod.id
+  };
+  const { data: newItem, error: itErr } = await sb.from('items').insert(itemPayload).select().single();
+  if (itErr) { toast('Error creando item: ' + itErr.message, true); console.error(itErr); return; }
+
+  // 2. Copiar ubicaciones del producto al item
+  const ubics = productosMatrizUbicaciones.filter(u => u.producto_id === productoId);
+  if (ubics.length > 0) {
+    const ubicInserts = ubics.map(u => ({
+      item_id: newItem.id,
+      cliente_id: u.cliente_id,
+      sector_id: u.sector_id,
+      equipo_id: u.equipo_id,
+      conjunto_id: u.conjunto_id,
+      subconjunto_id: u.subconjunto_id
+    }));
+    await sb.from('items_ubicaciones').insert(ubicInserts);
+  }
+
+  // 3. Copiar procesos del producto al item, en actividades_tablero.
+  // Usamos los mismos campos pero adaptados al contexto del item.
+  const prodProcs = productosMatrizProcesos.filter(pp => pp.producto_id === productoId)
+    .sort((a, b) => (a.orden || 999999) - (b.orden || 999999));
+
+  const newActIds = [];
+  for (let i = 0; i < prodProcs.length; i++) {
+    const pp = prodProcs[i];
+    const actPayload = {
+      item_id: newItem.id,
+      cliente_id: proj.cliente_id,
+      pedido_nro: proj.pedido_nro,
+      descripcion: prod.descripcion + ' - ' + (pp.proceso || ''),
+      descripcion_proyecto: proj.descripcion,
+      descripcion_trabajo: pp.trabajo_a_realizar || null,
+      proceso: pp.proceso,
+      duracion_estimada_min: pp.duracion_estimada_min,
+      duracion_margen_min: pp.duracion_margen_min || 0,
+      duracion_operario_min: pp.duracion_operario_min,
+      duracion_planificador_min: (pp.duracion_estimada_min || 0) + (pp.duracion_margen_min || 0),
+      tipo: pp.tipo,
+      maquina_ideal_id: pp.maquina_ideal_id,
+      maquina_ideal_nombre: pp.maquina_ideal_nombre,
+      maquinas_suplentes_ids: pp.maquinas_suplentes,
+      operario_ideal_id: pp.operario_ideal_id,
+      operarios_suplentes_ids: pp.operarios_suplentes,
+      urgencia: proj.urgencia,
+      foto_proyecto_url: proj.foto_url,
+      foto_url: prod.foto_url,
+      fecha_ingreso: proj.fecha_ingreso,
+      cliente_final: proj.cliente_final,
+      orden: i + 1,
+      estado: 'sin_planificar',
+      fecha: '1900-01-01',
+      hora_inicio: '06:00:00',
+      estado_proceso: 'Planificación Pendiente'
+    };
+    const { data: newAct, error: actErr } = await sb.from('actividades_tablero').insert(actPayload).select().single();
+    if (actErr) { console.error('Error creando proceso:', actErr); continue; }
+    newActIds.push(newAct.id);
+  }
+
+  // 4. Crear correlatividades secuenciales (cada proceso es predecesor del siguiente)
+  for (let i = 0; i < newActIds.length - 1; i++) {
+    await sb.from('correlatividades').insert({
+      predecesor_id: newActIds[i],
+      sucesor_id: newActIds[i + 1]
+    });
+  }
+
+  document.getElementById('add-from-matriz-modal').remove();
+  await loadAll();
+  toast('Item importado de la matriz: ' + prodProcs.length + ' proceso(s)');
   render();
 }
 
@@ -2142,6 +2738,117 @@ function renderItemDetail() {
   }
   h += '</div>';
   main.innerHTML = h;
+}
+
+// ============================================================================
+// VISTA COMPLETA DEL PRODUCTO MATRIZ
+// ============================================================================
+// Layout analogo a renderItemDetail. Diferencias:
+// - Encabezado dice "Producto matriz" en lugar de "Item".
+// - No tiene proyecto/pedido/cantidad/fechas (esos son solo del item).
+// - Muestra "Equipos compatibles" (ubicaciones) y boton para gestionar.
+// - Procesos: misma logica que el item pero sin estados de planificacion ni
+//   correlatividades (los procesos en la matriz son plantilla, sin tablero).
+// ============================================================================
+function renderProductoMatrizDetail() {
+  const main = document.getElementById('main');
+  const prod = productosMatriz.find(p => p.id === nav.productoId);
+  if (!prod) {
+    main.innerHTML = '<button class="b" style="margin-bottom:10px" onclick="navigate({view:\'recursos\',tab:\'matriz\'})">← Volver a Matriz</button>' +
+                     '<div class="list-empty">El producto no existe.</div>';
+    return;
+  }
+  const procesos = productosMatrizProcesos.filter(pp => pp.producto_id === nav.productoId)
+    .sort((a, b) => (a.orden || 999999) - (b.orden || 999999));
+  const ubics = productosMatrizUbicaciones.filter(u => u.producto_id === nav.productoId);
+  const matLbl = prod.material_id ? ((materiales.find(m => m.id === prod.material_id) || {}).nombre || '?') : '—';
+  const cliLbl = prod.cliente_id ? clN(prod.cliente_id) : 'Productos Genéricos';
+  const cliCodigo = prod.cliente_id ? (clientes.find(c => c.id === prod.cliente_id) || {}).codigo : null;
+
+  let h = '<button class="b" style="margin-bottom:10px" onclick="navigate({view:\'recursos\',tab:\'matriz\'})">← Volver a Matriz</button>';
+  h += '<div class="form">';
+  h += '<div class="form-t" style="display:flex;justify-content:space-between;align-items:center">';
+  h += '<span>Producto: ' + escapeHtml(prod.descripcion) + '</span>';
+  h += '</div>';
+  h += '<div style="display:flex;gap:20px;margin-bottom:14px"><div style="flex-shrink:0">';
+  if (prod.foto_url) h += '<img src="' + escapeHtml(prod.foto_url) + '" style="width:120px;height:120px;object-fit:cover;border-radius:6px">';
+  else h += '<div class="card-img-empty" style="width:120px;height:120px">sin foto</div>';
+  h += '</div>';
+  h += '<div style="flex:1;font-size:12px;color:#5F5E5A;line-height:1.8">';
+  h += '<b>Cliente:</b> ' + escapeHtml(cliLbl) + (cliCodigo ? ' <span style="display:inline-block;padding:1px 5px;border-radius:3px;font-size:10px;background:#0C447C;color:#fff;font-weight:500;margin-left:4px">' + escapeHtml(cliCodigo) + '</span>' : '') + '<br>';
+  h += '<b>Código del cliente:</b> ' + escapeHtml(prod.codigo_cliente || '—') + '<br>';
+  h += '<b>Material:</b> ' + escapeHtml(matLbl) + ' &nbsp; <b>Presentación:</b> ' + escapeHtml(prod.presentacion_mat_prima || '—') + '<br>';
+  h += '<button class="b b-icon" style="margin-top:8px" onclick="showProductoMatrizForm(' + prod.id + ')">Editar producto</button></div></div>';
+
+  // Equipos compatibles (read-only en la vista, se editan desde el form)
+  h += '<div class="section-t" style="margin-top:8px">Equipos compatibles</div>';
+  if (ubics.length === 0) {
+    h += '<div style="font-size:12px;color:#888;font-style:italic;padding:6px 0">Sin ubicaciones asignadas (producto sin ubicación específica).</div>';
+  } else {
+    ubics.forEach(u => {
+      h += '<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:#F5F3EC;border:1px solid #C8C6BE;border-radius:5px;margin-bottom:5px;font-size:12px">';
+      h += '<span style="flex:1">' + _pmUbicacionRoute(u) + '</span>';
+      h += '</div>';
+    });
+  }
+
+  // Procesos del producto
+  h += '<div class="section-t" style="margin-top:14px">Procesos del producto <button class="b b-p" onclick="showProcesoForm(null, {tipo:\'producto\',parentId:' + prod.id + '})">+ Agregar proceso</button></div>';
+  if (procesos.length === 0) {
+    h += '<div class="list-empty" style="padding:20px">Aún no hay procesos cargados. Sin procesos, este producto matriz solo tiene los datos de cabecera.</div>';
+  } else {
+    procesos.forEach((p, idx) => {
+      const dur = Math.floor((p.duracion_estimada_min || 0) / 60) + 'h' + ((p.duracion_estimada_min || 0) % 60 ? ' ' + ((p.duracion_estimada_min || 0) % 60) + 'm' : '');
+      let tag;
+      if (p.tipo === 'automatica') tag = '<span class="tag tag-auto">AUTO</span>';
+      else if (p.tipo === 'semi_automatica') tag = '<span class="tag tag-semi">SEMI</span>';
+      else tag = '<span class="tag tag-man">MAN</span>';
+      const setup = (p.tipo === 'automatica' || p.tipo === 'semi_automatica') && p.duracion_operario_min ? ' · setup: ' + p.duracion_operario_min + ' min' : '';
+      // Suplentes: en producto matriz se llaman maquinas_suplentes / operarios_suplentes
+      const supMaqs = (p.maquinas_suplentes || []).map(id => mN(parseInt(id))).join(', ');
+      const supOps = (p.operarios_suplentes || []).map(id => opN(parseInt(id))).join(', ');
+      h += '<div class="proc-card"><div class="proc-card-body">';
+      h += '<div class="proc-card-t"><span style="color:#888780;font-weight:400;margin-right:6px">' + (idx + 1) + '.</span>' + escapeHtml(p.proceso || p.descripcion || '') + tag;
+      h += '</div>';
+      h += '<div class="proc-card-s">';
+      h += '<b>Duración estimada:</b> ' + dur + setup + '<br>';
+      h += '<b>Maq. ideal:</b> ' + escapeHtml(p.maquina_ideal_id ? mN(p.maquina_ideal_id) : (p.maquina_ideal_nombre ? p.maquina_ideal_nombre + ' (otra)' : '— ninguna —')) + (supMaqs ? ' · <b>Suplentes:</b> ' + escapeHtml(supMaqs) : '') + '<br>';
+      h += '<b>Op. ideal:</b> ' + escapeHtml(p.operario_ideal_id ? opN(p.operario_ideal_id) : '—') + (supOps ? ' · <b>Suplentes:</b> ' + escapeHtml(supOps) : '');
+      if (p.trabajo_a_realizar) {
+        const trabHtml = /[<>]/.test(p.trabajo_a_realizar) ? sanitizeRichHtml(p.trabajo_a_realizar) : escapeHtml(p.trabajo_a_realizar);
+        h += '<br><b>Trabajo:</b> ' + trabHtml;
+      }
+      h += '</div></div>';
+      h += '<div class="card-actions" style="display:flex;flex-direction:column;gap:4px">';
+      h += '<div style="display:flex;gap:2px">';
+      h += '<button class="b b-icon" ' + (idx === 0 ? 'disabled' : 'onclick="movePmProceso(' + p.id + ',-1)"') + ' title="Subir">▲</button>';
+      h += '<button class="b b-icon" ' + (idx === procesos.length - 1 ? 'disabled' : 'onclick="movePmProceso(' + p.id + ',1)"') + ' title="Bajar">▼</button>';
+      h += '</div>';
+      h += '<button class="b b-icon" onclick="showProcesoForm(' + p.id + ', {tipo:\'producto\',parentId:' + prod.id + '})">Editar</button>';
+      h += '<button class="b b-icon b-d" onclick="procCtx={tipo:\'producto\',parentId:' + prod.id + '};confirmDeleteProceso(' + p.id + ')">Eliminar</button>';
+      h += '</div></div>';
+    });
+  }
+  h += '</div>';
+  main.innerHTML = h;
+}
+
+// Mover un proceso del producto matriz: cambia el orden con el adyacente.
+async function movePmProceso(procesoId, delta) {
+  const proc = productosMatrizProcesos.find(p => p.id === procesoId);
+  if (!proc) return;
+  const sameProd = productosMatrizProcesos.filter(p => p.producto_id === proc.producto_id)
+    .sort((a, b) => (a.orden || 999999) - (b.orden || 999999));
+  const idx = sameProd.findIndex(p => p.id === procesoId);
+  const newIdx = idx + delta;
+  if (newIdx < 0 || newIdx >= sameProd.length) return;
+  const otro = sameProd[newIdx];
+  const ordenA = proc.orden;
+  const ordenB = otro.orden;
+  await sb.from('productos_matriz_procesos').update({ orden: ordenB }).eq('id', proc.id);
+  await sb.from('productos_matriz_procesos').update({ orden: ordenA }).eq('id', otro.id);
+  await loadAll();
+  render();
 }
 
 // Render the chips of predecessors of a given activity (used in the modal).
@@ -3455,13 +4162,18 @@ function pickerClear(id) {
 // Helper: dado el id del picker que disparo el cargar, actualizar
 // pmCompatState si corresponde (cuando el cargar viene del modal de compat).
 function _pmcSyncStateAfterLoad(pickerId, newId) {
+  // Si el picker es del modal de compat de item (itc-*), delegar
+  if (pickerId && pickerId.startsWith('itc-')) {
+    _itcSyncStateAfterLoad(pickerId, newId);
+    return;
+  }
   if (!pmCompatState) return;
   if (pickerId === 'pmc-sector') pmCompatState.sectorId = newId;
   else if (pickerId === 'pmc-equipo') pmCompatState.equipoId = newId;
   else if (pickerId === 'pmc-conjunto') pmCompatState.conjuntoId = newId;
   else if (pickerId === 'pmc-subconjunto') pmCompatState.subconjuntoId = newId;
   // Re-renderizar el modal compat para que se reflejen los cambios en pickers de niveles inferiores
-  if (pickerId.startsWith('pmc-')) _pmRenderCompatModal();
+  if (pickerId && pickerId.startsWith('pmc-')) _pmRenderCompatModal();
 }
 
 // MATERIALES
@@ -4477,7 +5189,7 @@ function _matrizRenderProductoCardNested(p) {
   // edicion del producto matriz. En Entrega B se reemplaza por una vista
   // completa estilo item.
   let h = '<div style="background:#fff;border:1px solid #C8C6BE;border-radius:5px;margin-bottom:5px;overflow:hidden">';
-  h += '<div style="display:flex;align-items:center;padding:6px 10px;gap:8px;cursor:pointer" onclick="showProductoMatrizForm(' + p.id + ')">';
+  h += '<div style="display:flex;align-items:center;padding:6px 10px;gap:8px;cursor:pointer" onclick="navigate({view:\'productoMatriz\',productoId:' + p.id + '})">';
   // Flecha (a la izquierda) con stopPropagation para no abrir la vista
   h += '<button class="b" onclick="event.stopPropagation();matrizToggleExpand(\'prod:' + p.id + '\')" style="background:transparent;border:none;padding:2px;font-size:13px;color:#5F5E5A;cursor:pointer;flex:0 0 auto">' + (expanded ? '▼' : '▶') + '</button>';
   // Foto
@@ -4524,14 +5236,13 @@ function _matrizRenderProductoCardNested(p) {
   return h;
 }
 
-// Editar un proceso desde la vista anidada de Matriz: abre la vista del
-// producto y, encima, el modal de edicion del proceso.
-// En Entrega A "vista del producto" = showProductoMatrizForm. En Entrega B
-// se reemplaza por la vista completa.
+// Editar un proceso desde la vista anidada de Matriz: navega a la vista
+// completa del producto y, encima, abre el modal de edicion del proceso.
 function matrizEditarProcesoDesdeAnidado(productoId, procesoId) {
-  showProductoMatrizForm(productoId);
-  // Abrir el modal del proceso encima. Defer 50ms para que el form del producto
-  // ya este montado (evita carrera de DOM).
+  // Primero navegamos a la vista del producto. navigate() llama a render() que
+  // va a montar el DOM completo de la vista. Despues, en el siguiente tick,
+  // abrimos el modal del proceso encima.
+  navigate({ view: 'productoMatriz', productoId: productoId });
   setTimeout(() => {
     showProcesoForm(procesoId, { tipo: 'producto', parentId: productoId });
   }, 50);
