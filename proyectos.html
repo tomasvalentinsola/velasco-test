@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v52</title>
+<title>Velasco App 2.0 — Proyectos v53</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -2728,6 +2728,7 @@ function showAgregarDesdeMatriz(opts) {
   agregarDesdeMatrizState = {
     modo: modo,
     clienteProjId: cliId,
+    tab: 'productos',  // 'productos' | 'conjuntos' | 'subconjuntos'
     filters: {
       search: '',
       codigos: '',
@@ -2753,6 +2754,18 @@ function _renderAgregarDesdeMatrizModal() {
   let h = '<div class="md-t">Agregar item desde Matriz de Productos</div>';
   const cliLblProj = clN(state.clienteProjId);
   h += '<div style="font-size:11px;color:#5F5E5A;margin-bottom:10px">Cliente del proyecto: <b>' + escapeHtml(cliLblProj) + '</b>. Por defecto se filtran productos de este cliente y los genéricos. Modificá los filtros para ver más opciones.</div>';
+
+  // ===== TABS: Productos / Conjuntos / Subconjuntos =====
+  h += '<div style="display:flex;border-bottom:1px solid #C8C6BE;margin-bottom:12px;gap:0">';
+  const tabsAfm = [['productos','Productos'], ['conjuntos','Conjuntos'], ['subconjuntos','Subconjuntos']];
+  tabsAfm.forEach(([key, lbl]) => {
+    const active = state.tab === key;
+    const style = active
+      ? 'background:#0C447C;color:#fff;border:1px solid #0C447C;border-bottom:none;font-weight:700'
+      : 'background:#fff;color:#5F5E5A;border:1px solid #C8C6BE;border-bottom:none;font-weight:500';
+    h += '<button class="b" style="' + style + ';padding:6px 16px;font-size:12px;border-radius:5px 5px 0 0;margin-bottom:-1px;position:relative;z-index:1" onclick="afmCambiarTab(\'' + key + '\')">' + lbl + '</button>';
+  });
+  h += '</div>';
 
   // ===== BARRA DE FILTROS (igual a la pagina de Matriz) =====
   h += '<div style="background:#F5F3EC;border:1px solid #C8C6BE;border-radius:6px;padding:10px 14px;margin-bottom:12px">';
@@ -2830,38 +2843,204 @@ function _renderAgregarDesdeMatrizModal() {
   h += '</div>';
   h += '</div>';
 
-  // ===== LISTA =====
-  const candidatos = afmGetFilteredProductos();
+  // ===== LISTA (varia segun tab) =====
   h += '<div id="afm-list" style="max-height:400px;overflow-y:auto;border:1px solid #C8C6BE;border-radius:5px">';
-  if (candidatos.length === 0) {
-    h += '<div style="padding:20px;text-align:center;color:#888;font-size:12px;font-style:italic">No hay productos que coincidan con los filtros.</div>';
-  } else {
-    candidatos.forEach(p => {
-      const procsCnt = productosMatrizProcesos.filter(pr => pr.producto_id === p.id).length;
-      const cliLbl = p.cliente_id ? clN(p.cliente_id) : 'Genérico';
-      const matLbl = p.material_id ? ((materiales.find(x => x.id === p.material_id) || {}).nombre || '') : '';
-      h += '<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid #E8E6DF;cursor:pointer" onclick="afmSeleccionarProducto(' + p.id + ')">';
-      if (p.foto_url) {
-        h += '<img src="' + escapeHtml(p.foto_url) + '" style="width:40px;height:40px;object-fit:cover;border-radius:4px;flex:0 0 auto">';
-      } else {
-        h += '<div style="width:40px;height:40px;background:#E8E6DF;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:18px;flex:0 0 auto">📦</div>';
-      }
-      h += '<div style="flex:1;min-width:0">';
-      h += '<div style="font-weight:600;font-size:12px">' + escapeHtml(p.descripcion || '') + '</div>';
-      const meta = [cliLbl, p.codigo_cliente, matLbl, procsCnt + ' proceso(s)'].filter(Boolean).join(' · ');
-      h += '<div style="color:#888;font-size:10px;margin-top:1px">' + escapeHtml(meta) + '</div>';
-      h += '</div>';
-      const btnLabel = (state.modo === 'newProject') ? 'Elegir' : 'Importar';
-      h += '<button class="b b-p" style="padding:4px 10px;font-size:11px">' + btnLabel + '</button>';
-      h += '</div>';
-    });
-  }
+  h += _afmListaHtml();
   h += '</div>';
 
   h += '<div class="actions" style="margin-top:14px">';
   h += '<button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button>';
   h += '</div>';
   m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
+}
+
+// Genera el HTML de la lista según el tab activo.
+function _afmListaHtml() {
+  const state = agregarDesdeMatrizState;
+  if (!state) return '';
+  if (state.tab === 'productos') return _afmListaProductosHtml();
+  if (state.tab === 'conjuntos') return _afmListaConjuntosHtml();
+  if (state.tab === 'subconjuntos') return _afmListaSubconjuntosHtml();
+  return '';
+}
+
+function _afmListaProductosHtml() {
+  const state = agregarDesdeMatrizState;
+  const candidatos = afmGetFilteredProductos();
+  if (candidatos.length === 0) {
+    return '<div style="padding:20px;text-align:center;color:#888;font-size:12px;font-style:italic">No hay productos que coincidan con los filtros.</div>';
+  }
+  let h = '';
+  candidatos.forEach(p => {
+    const procsCnt = productosMatrizProcesos.filter(pr => pr.producto_id === p.id).length;
+    const cliLbl = p.cliente_id ? clN(p.cliente_id) : 'Genérico';
+    const matLbl = p.material_id ? ((materiales.find(x => x.id === p.material_id) || {}).nombre || '') : '';
+    const validacion = validarProductoMatriz(p.id);
+    const warn = validacion.ok ? '' : _warningIconHtml('Producto incompleto o desactualizado');
+    h += '<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid #E8E6DF;cursor:pointer" onclick="afmSeleccionarProducto(' + p.id + ')">';
+    if (p.foto_url) {
+      h += '<img src="' + escapeHtml(p.foto_url) + '" style="width:40px;height:40px;object-fit:cover;border-radius:4px;flex:0 0 auto">';
+    } else {
+      h += '<div style="width:40px;height:40px;background:#E8E6DF;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:18px;flex:0 0 auto">📦</div>';
+    }
+    h += '<div style="flex:1;min-width:0">';
+    h += '<div style="font-weight:600;font-size:12px">' + escapeHtml(p.descripcion || '') + warn + '</div>';
+    const meta = [cliLbl, p.codigo_cliente, matLbl, procsCnt + ' proceso(s)'].filter(Boolean).join(' · ');
+    h += '<div style="color:#888;font-size:10px;margin-top:1px">' + escapeHtml(meta) + '</div>';
+    h += '</div>';
+    const btnLabel = (state.modo === 'newProject') ? 'Elegir' : 'Importar';
+    h += '<button class="b b-p" style="padding:4px 10px;font-size:11px">' + btnLabel + '</button>';
+    h += '</div>';
+  });
+  return h;
+}
+
+// Lista de conjuntos filtrados por cliente_id elegido en filtros.
+// Cada conjunto muestra: nombre, cliente, cuántos productos contiene (incluyendo
+// los de sus subconjuntos recursivamente).
+function _afmListaConjuntosHtml() {
+  const state = agregarDesdeMatrizState;
+  const f = state.filters;
+  const cliFilter = f.clienteIds || [];
+  const numericCli = new Set(cliFilter.filter(x => x !== 'GENERICO').map(x => parseInt(x)));
+  const includesGenerico = cliFilter.includes('GENERICO');
+  let candidatos = conjuntos.slice();
+  // Filtrar por cliente. Conjuntos genericos NO existen (todo conjunto pertenece a un cliente).
+  if (cliFilter.length > 0) {
+    candidatos = candidatos.filter(c => numericCli.has(c.cliente_id));
+  }
+  // Filtrar por busqueda
+  if (f.search && f.search.trim()) {
+    const q = f.search.trim().toLowerCase();
+    candidatos = candidatos.filter(c => (c.nombre || '').toLowerCase().includes(q));
+  }
+  // Ordenar
+  candidatos.sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+  if (candidatos.length === 0) {
+    return '<div style="padding:20px;text-align:center;color:#888;font-size:12px;font-style:italic">No hay conjuntos que coincidan con los filtros.</div>';
+  }
+  let h = '';
+  candidatos.forEach(con => {
+    const cliLbl = clN(con.cliente_id);
+    const expansion = _expandirConjunto(con.id, 1);  // {productos: [{prodId, cant}], problemas: [...]}
+    const totalProd = expansion.productos.reduce((acc, x) => acc + x.cant, 0);
+    const numUnicos = expansion.productos.length;
+    const warn = expansion.problemas.length > 0 ? _warningIconHtml('Contiene productos incompletos o desactualizados') : '';
+    h += '<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid #E8E6DF;cursor:pointer" onclick="afmSeleccionarConjunto(' + con.id + ')">';
+    h += '<div style="width:40px;height:40px;background:#E8E6DF;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:18px;flex:0 0 auto">📦</div>';
+    h += '<div style="flex:1;min-width:0">';
+    h += '<div style="font-weight:600;font-size:12px">' + escapeHtml(con.nombre || '') + warn + '</div>';
+    h += '<div style="color:#888;font-size:10px;margin-top:1px">' + escapeHtml(cliLbl) + ' · ' + numUnicos + ' tipo(s) de producto · ' + totalProd + ' unidad(es) total</div>';
+    h += '</div>';
+    const btnLabel = (state.modo === 'newProject') ? 'Elegir todo' : 'Importar todo';
+    h += '<button class="b b-p" style="padding:4px 10px;font-size:11px">' + btnLabel + '</button>';
+    h += '</div>';
+  });
+  return h;
+}
+
+function _afmListaSubconjuntosHtml() {
+  const state = agregarDesdeMatrizState;
+  const f = state.filters;
+  const cliFilter = f.clienteIds || [];
+  const numericCli = new Set(cliFilter.filter(x => x !== 'GENERICO').map(x => parseInt(x)));
+  let candidatos = subconjuntos.slice();
+  if (cliFilter.length > 0) {
+    candidatos = candidatos.filter(s => numericCli.has(s.cliente_id));
+  }
+  if (f.search && f.search.trim()) {
+    const q = f.search.trim().toLowerCase();
+    candidatos = candidatos.filter(s => (s.nombre || '').toLowerCase().includes(q));
+  }
+  candidatos.sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+  if (candidatos.length === 0) {
+    return '<div style="padding:20px;text-align:center;color:#888;font-size:12px;font-style:italic">No hay subconjuntos que coincidan con los filtros.</div>';
+  }
+  let h = '';
+  candidatos.forEach(sub => {
+    const cliLbl = clN(sub.cliente_id);
+    const expansion = _expandirSubconjunto(sub.id, 1);
+    const totalProd = expansion.productos.reduce((acc, x) => acc + x.cant, 0);
+    const numUnicos = expansion.productos.length;
+    const warn = expansion.problemas.length > 0 ? _warningIconHtml('Contiene productos incompletos o desactualizados') : '';
+    h += '<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid #E8E6DF;cursor:pointer" onclick="afmSeleccionarSubconjunto(' + sub.id + ')">';
+    h += '<div style="width:40px;height:40px;background:#E8E6DF;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:18px;flex:0 0 auto">🔧</div>';
+    h += '<div style="flex:1;min-width:0">';
+    h += '<div style="font-weight:600;font-size:12px">' + escapeHtml(sub.nombre || '') + warn + '</div>';
+    h += '<div style="color:#888;font-size:10px;margin-top:1px">' + escapeHtml(cliLbl) + ' · ' + numUnicos + ' tipo(s) de producto · ' + totalProd + ' unidad(es) total</div>';
+    h += '</div>';
+    const btnLabel = (state.modo === 'newProject') ? 'Elegir todo' : 'Importar todo';
+    h += '<button class="b b-p" style="padding:4px 10px;font-size:11px">' + btnLabel + '</button>';
+    h += '</div>';
+  });
+  return h;
+}
+
+// =============================================================================
+// EXPANSION RECURSIVA DE CONJUNTOS / SUBCONJUNTOS
+// =============================================================================
+// _expandirConjunto(conjuntoId, multiplicador) -> { productos: [{prodId, cant}], problemas: [productoId, ...] }
+// Recorre recursivamente: subconjuntos del conjunto + productos directos del conjunto.
+// Las cantidades se MULTIPLICAN por el multiplicador externo.
+// Productos repetidos se SUMAN (mismo producto desde 2 lugares = sumas las cantidades).
+// =============================================================================
+
+function _expandirConjunto(conjuntoId, multiplicador) {
+  const productosMap = new Map();  // prodId -> cantidad total
+  const problemas = new Set();
+  // 1. Productos cuya ubicacion termina en este conjunto (sin subconjunto)
+  const ubicsDirect = productosMatrizUbicaciones.filter(u =>
+    u.conjunto_id === conjuntoId && !u.subconjunto_id);
+  // Como un producto puede tener varias ubicaciones distintas a este conjunto
+  // (por diferentes equipos), usamos un Set de productos ya contados para no
+  // duplicar. La cantidad por producto se toma de la primera ubicacion que matchee.
+  const productosYaContados = new Set();
+  ubicsDirect.forEach(u => {
+    if (productosYaContados.has(u.producto_id)) return;
+    productosYaContados.add(u.producto_id);
+    const cant = (u.cantidad || 1) * multiplicador;
+    productosMap.set(u.producto_id, (productosMap.get(u.producto_id) || 0) + cant);
+    if (_matrizProductoTieneProblemas(u.producto_id)) problemas.add(u.producto_id);
+  });
+  // 2. Subconjuntos asociados al conjunto via subconjuntos_conjuntos
+  const subRels = subconjuntosConjuntos.filter(sc => sc.conjunto_id === conjuntoId);
+  subRels.forEach(sc => {
+    const subMult = (sc.cantidad || 1) * multiplicador;
+    const subExp = _expandirSubconjunto(sc.subconjunto_id, subMult);
+    subExp.productos.forEach(({ prodId, cant }) => {
+      productosMap.set(prodId, (productosMap.get(prodId) || 0) + cant);
+    });
+    subExp.problemas.forEach(p => problemas.add(p));
+  });
+  return {
+    productos: [...productosMap.entries()].map(([prodId, cant]) => ({ prodId, cant })),
+    problemas: [...problemas]
+  };
+}
+
+function _expandirSubconjunto(subconjuntoId, multiplicador) {
+  const productosMap = new Map();
+  const problemas = new Set();
+  // Productos cuya ubicacion termina en este subconjunto
+  const ubics = productosMatrizUbicaciones.filter(u => u.subconjunto_id === subconjuntoId);
+  const productosYaContados = new Set();
+  ubics.forEach(u => {
+    if (productosYaContados.has(u.producto_id)) return;
+    productosYaContados.add(u.producto_id);
+    const cant = (u.cantidad || 1) * multiplicador;
+    productosMap.set(u.producto_id, (productosMap.get(u.producto_id) || 0) + cant);
+    if (_matrizProductoTieneProblemas(u.producto_id)) problemas.add(u.producto_id);
+  });
+  return {
+    productos: [...productosMap.entries()].map(([prodId, cant]) => ({ prodId, cant })),
+    problemas: [...problemas]
+  };
+}
+
+function afmCambiarTab(tabKey) {
+  if (!agregarDesdeMatrizState) return;
+  agregarDesdeMatrizState.tab = tabKey;
+  _renderAgregarDesdeMatrizModal();
 }
 
 // ----- Helpers de filtros del modal "Agregar desde Matriz" -----
@@ -3119,35 +3298,9 @@ function afmSubSearchInput() {
 
 function _afmRerenderList() {
   // Re-renderiza solo la lista para no perder el foco de los inputs
-  const candidatos = afmGetFilteredProductos();
   const list = document.getElementById('afm-list');
   if (!list) return;
-  let h = '';
-  if (candidatos.length === 0) {
-    h += '<div style="padding:20px;text-align:center;color:#888;font-size:12px;font-style:italic">No hay productos que coincidan con los filtros.</div>';
-  } else {
-    const state = agregarDesdeMatrizState;
-    candidatos.forEach(p => {
-      const procsCnt = productosMatrizProcesos.filter(pr => pr.producto_id === p.id).length;
-      const cliLbl = p.cliente_id ? clN(p.cliente_id) : 'Genérico';
-      const matLbl = p.material_id ? ((materiales.find(x => x.id === p.material_id) || {}).nombre || '') : '';
-      h += '<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid #E8E6DF;cursor:pointer" onclick="afmSeleccionarProducto(' + p.id + ')">';
-      if (p.foto_url) {
-        h += '<img src="' + escapeHtml(p.foto_url) + '" style="width:40px;height:40px;object-fit:cover;border-radius:4px;flex:0 0 auto">';
-      } else {
-        h += '<div style="width:40px;height:40px;background:#E8E6DF;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:18px;flex:0 0 auto">📦</div>';
-      }
-      h += '<div style="flex:1;min-width:0">';
-      h += '<div style="font-weight:600;font-size:12px">' + escapeHtml(p.descripcion || '') + '</div>';
-      const meta = [cliLbl, p.codigo_cliente, matLbl, procsCnt + ' proceso(s)'].filter(Boolean).join(' · ');
-      h += '<div style="color:#888;font-size:10px;margin-top:1px">' + escapeHtml(meta) + '</div>';
-      h += '</div>';
-      const btnLabel = (state.modo === 'newProject') ? 'Elegir' : 'Importar';
-      h += '<button class="b b-p" style="padding:4px 10px;font-size:11px">' + btnLabel + '</button>';
-      h += '</div>';
-    });
-  }
-  list.innerHTML = h;
+  list.innerHTML = _afmListaHtml();
 }
 
 // Handler unificado: si modo newProject -> guarda en state global y vuelve al form.
@@ -3217,6 +3370,176 @@ function afmSeleccionarProducto(productoId) {
     // Modo project: importar directo
     importarProductoAlProyecto(productoId);
   }
+}
+
+// =============================================================================
+// IMPORTAR CONJUNTO COMPLETO
+// =============================================================================
+function afmSeleccionarConjunto(conjuntoId) {
+  const state = agregarDesdeMatrizState;
+  if (!state) return;
+  const con = conjuntos.find(c => c.id === conjuntoId);
+  if (!con) return;
+  // Expandir con multiplicador 1 para mostrar resumen
+  const expansion = _expandirConjunto(conjuntoId, 1);
+  if (expansion.productos.length === 0) {
+    toast('Este conjunto no tiene productos.', true);
+    return;
+  }
+  _mostrarModalImportarGrupal({
+    tipo: 'conjunto',
+    nombreGrupo: con.nombre,
+    grupoId: conjuntoId,
+    expansion: expansion
+  });
+}
+
+function afmSeleccionarSubconjunto(subconjuntoId) {
+  const state = agregarDesdeMatrizState;
+  if (!state) return;
+  const sub = subconjuntos.find(s => s.id === subconjuntoId);
+  if (!sub) return;
+  const expansion = _expandirSubconjunto(subconjuntoId, 1);
+  if (expansion.productos.length === 0) {
+    toast('Este subconjunto no tiene productos.', true);
+    return;
+  }
+  _mostrarModalImportarGrupal({
+    tipo: 'subconjunto',
+    nombreGrupo: sub.nombre,
+    grupoId: subconjuntoId,
+    expansion: expansion
+  });
+}
+
+// Modal de import grupal: pide cantidad (multiplicador), fecha y estado.
+// Aplica a TODOS los productos del grupo. Si hay productos con problemas,
+// muestra el botón rojo "Cargar igualmente".
+function _mostrarModalImportarGrupal(opts) {
+  const existing = document.getElementById('import-grupo-modal');
+  if (existing) existing.remove();
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'import-grupo-modal';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '600px'; m.style.zIndex = '1100';
+
+  const totalUnidades = opts.expansion.productos.reduce((acc, x) => acc + x.cant, 0);
+  const hayProblemas = opts.expansion.problemas.length > 0;
+  const labelTipo = opts.tipo === 'conjunto' ? 'Conjunto' : 'Subconjunto';
+
+  let h = '<div class="md-t">Importar ' + labelTipo.toLowerCase() + ' "' + escapeHtml(opts.nombreGrupo) + '"</div>';
+
+  h += '<div style="background:#E8F2FC;color:#0C447C;padding:10px 14px;border-radius:5px;margin-bottom:12px;font-size:12px;border:1px solid #A8C8E8">';
+  h += '<b>Resumen:</b><br>Se van a importar <b>' + opts.expansion.productos.length + '</b> tipo(s) de producto, <b>' + totalUnidades + '</b> unidad(es) total (cantidades base por unidad del ' + labelTipo.toLowerCase() + ').';
+  h += '</div>';
+
+  // Detalle por producto
+  h += '<div style="max-height:200px;overflow-y:auto;border:1px solid #E8E6DF;border-radius:5px;padding:6px 10px;margin-bottom:12px;font-size:11px">';
+  opts.expansion.productos.forEach(({ prodId, cant }) => {
+    const p = productosMatriz.find(x => x.id === prodId);
+    if (!p) return;
+    const v = validarProductoMatriz(prodId);
+    const warn = v.ok ? '' : ' <span title="' + escapeHtml(v.problemas.join('\n')) + '">⚠️</span>';
+    h += '<div style="display:flex;justify-content:space-between;padding:2px 0">';
+    h += '<span>' + escapeHtml(p.descripcion) + warn + '</span>';
+    h += '<span style="color:#0C447C;font-weight:600">x' + cant + '</span>';
+    h += '</div>';
+  });
+  h += '</div>';
+
+  if (hayProblemas) {
+    h += '<div style="background:#FEF5E7;color:#854F0B;padding:10px 14px;border-radius:5px;margin-bottom:12px;font-size:12px;border:1px solid #F5C842">';
+    h += '<b>⚠️ Hay ' + opts.expansion.problemas.length + ' producto(s) con campos pendientes o desactualizados.</b> Se importarán con esos campos en blanco si elegís "Cargar igualmente".';
+    h += '</div>';
+  }
+
+  // Campos
+  h += '<div class="row">';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Cantidad de ' + labelTipo.toLowerCase() + 's <span style="color:#A32D2D">*</span></div>';
+  h += '<input type="number" class="ef-i" id="impg-cant" value="1" min="1" step="1">';
+  h += '<div class="ef-help">Multiplica las cantidades base. Ej. si el ' + labelTipo.toLowerCase() + ' tiene 2 piezas iguales y cantidad=3, se importan 6.</div></div>';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Fecha de fin estipulada <span style="color:#A32D2D">*</span></div>';
+  h += '<input type="date" class="ef-i" id="impg-fechafin">';
+  h += '<div class="ef-help">Se aplica a todos los items.</div></div>';
+  h += '</div>';
+
+  h += '<div class="ef" style="background:#FFF4D5;padding:8px 10px;border-radius:5px;border:1px solid #F5C842">';
+  h += '<div class="ef-l" style="color:#854F0B">Estado de los items</div>';
+  h += '<select class="ef-i" id="impg-estado">';
+  ITEM_STATES.forEach(st => {
+    h += '<option value="' + st + '"' + (st === 'Espera MP' ? ' selected' : '') + '>' + st + '</option>';
+  });
+  h += '</select>';
+  h += '<div class="ef-help" style="color:#854F0B">Se aplica a todos los items.</div></div>';
+
+  h += '<div class="actions">';
+  h += '<button class="b" onclick="document.getElementById(\'import-grupo-modal\').remove()">Cancelar</button>';
+  if (hayProblemas) {
+    h += '<button class="b" style="background:#A32D2D;color:#fff;border-color:#A32D2D" onclick="_confirmarImportGrupal(\'force\')">Cargar igualmente</button>';
+    h += '<button class="b b-p" disabled title="Hay productos con validaciones fallidas. Actualizá los productos en Matriz." style="opacity:.5;cursor:not-allowed">Importar</button>';
+  } else {
+    h += '<button class="b b-p" onclick="_confirmarImportGrupal(\'ok\')">Importar</button>';
+  }
+  h += '</div>';
+
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
+  window._importarGrupoPendingOpts = opts;
+}
+
+function _confirmarImportGrupal(mode) {
+  const opts = window._importarGrupoPendingOpts;
+  if (!opts) return;
+  const cant = parseInt(document.getElementById('impg-cant').value) || 0;
+  const fechaFin = document.getElementById('impg-fechafin').value || null;
+  const estado = document.getElementById('impg-estado').value;
+  if (cant < 1) { toast('La cantidad debe ser ≥ 1', true); return; }
+  if (!fechaFin) { toast('Ingresá la fecha de fin estipulada', true); return; }
+  document.getElementById('import-grupo-modal').remove();
+  window._importarGrupoPendingOpts = null;
+  const force = (mode === 'force');
+  // Re-expandir con el multiplicador
+  let expansion;
+  if (opts.tipo === 'conjunto') {
+    expansion = _expandirConjunto(opts.grupoId, cant);
+  } else {
+    expansion = _expandirSubconjunto(opts.grupoId, cant);
+  }
+  // Ejecutar import segun el modo (project / newProject)
+  const stateAfm = agregarDesdeMatrizState;
+  if (stateAfm && stateAfm.modo === 'newProject') {
+    _seleccionarGrupoParaNewProject(opts, expansion, fechaFin, estado, force);
+  } else {
+    _ejecutarImportGrupalProyecto(expansion, fechaFin, estado, force, opts.nombreGrupo);
+  }
+}
+
+async function _ejecutarImportGrupalProyecto(expansion, fechaFin, estado, ignorarValidaciones, nombreGrupo) {
+  const proj = getProject(nav.projectId);
+  if (!proj) return;
+  let importados = 0;
+  let totalUnidades = 0;
+  for (const { prodId, cant } of expansion.productos) {
+    const valores = {
+      cantidad: cant,
+      fecha_fin_estipulada: fechaFin,
+      estado: estado,
+      // Presentacion: la del producto (no la editamos en modo grupal por simplicidad)
+      presentacion_mat_prima: (productosMatriz.find(p => p.id === prodId) || {}).presentacion_mat_prima || null
+    };
+    await _ejecutarImportProyecto(prodId, valores, ignorarValidaciones);
+    importados++;
+    totalUnidades += cant;
+  }
+  const modalAfm = document.getElementById('add-from-matriz-modal');
+  if (modalAfm) modalAfm.remove();
+  toast('Importado(s) ' + importados + ' producto(s) de "' + nombreGrupo + '" (' + totalUnidades + ' unidad(es) total)');
+}
+
+// Para modo newProject solo se puede elegir UN producto base (el form de
+// Nuevo Proyecto carga un primer item, no varios). Por simplicidad, en modo
+// newProject NO permitimos importar conjuntos/subconjuntos: avisamos al
+// usuario que primero cree el proyecto y luego importe el grupo desde la
+// vista de proyecto.
+function _seleccionarGrupoParaNewProject(opts, expansion, fechaFin, estado, force) {
+  toast('Para importar un ' + opts.tipo + ' completo, primero creá el proyecto con un item base; luego, desde la vista del proyecto, usá "+ Agregar desde Matriz" y elegí el ' + opts.tipo + '.', true);
 }
 
 // Importar producto matriz al proyecto: abre primero un modal para que el
@@ -4671,7 +4994,6 @@ function renderMaterialesTab() {
       h += '<div style="font-weight:600;font-size:13px">' + escapeHtml(m.nombre) + '</div>';
       const subInfo = [];
       if (m.descripcion) subInfo.push(escapeHtml(m.descripcion));
-      if (m.presentacion_recomendada) subInfo.push('Presentación rec.: ' + escapeHtml(m.presentacion_recomendada));
       const usosInfo = [];
       if (usosProd > 0) usosInfo.push(usosProd + ' producto(s) matriz');
       if (usosItem > 0) usosInfo.push(usosItem + ' item(s) de proyecto');
@@ -4723,7 +5045,6 @@ function materialesSearchInput(e) {
       h += '<div style="font-weight:600;font-size:13px">' + escapeHtml(m.nombre) + '</div>';
       const subInfo = [];
       if (m.descripcion) subInfo.push(escapeHtml(m.descripcion));
-      if (m.presentacion_recomendada) subInfo.push('Presentación rec.: ' + escapeHtml(m.presentacion_recomendada));
       const usosInfo = [];
       if (usosProd > 0) usosInfo.push(usosProd + ' producto(s) matriz');
       if (usosItem > 0) usosInfo.push(usosItem + ' item(s) de proyecto');
@@ -4754,9 +5075,6 @@ function showMaterialForm(materialId) {
   h += '<input type="text" class="ef-i" id="mat-nombre" value="' + escapeHtml(mat ? mat.nombre : '') + '" placeholder="Ej. SAE 1045"></div>';
   h += '<div class="ef"><div class="ef-l">Descripción (opcional)</div>';
   h += '<textarea class="ef-i" id="mat-desc" rows="2" placeholder="Características o notas sobre el material">' + escapeHtml(mat && mat.descripcion ? mat.descripcion : '') + '</textarea></div>';
-  h += '<div class="ef"><div class="ef-l">Presentación recomendada (opcional)</div>';
-  h += '<input type="text" class="ef-i" id="mat-pres" value="' + escapeHtml(mat && mat.presentacion_recomendada ? mat.presentacion_recomendada : '') + '" placeholder="Ej. Barra Ø50 x 6mts">';
-  h += '<div class="ef-help">Default sugerido cuando un producto matriz use este material sin especificar.</div></div>';
   h += '<div class="actions">';
   h += '<button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button>';
   h += '<button class="b b-p" onclick="saveMaterial(' + (materialId || 'null') + ')">' + (isNew ? 'Crear' : 'Guardar') + '</button>';
@@ -4767,18 +5085,10 @@ function showMaterialForm(materialId) {
 async function saveMaterial(materialId) {
   const nombre = document.getElementById('mat-nombre').value.trim();
   const desc = document.getElementById('mat-desc').value.trim() || null;
-  const pres = document.getElementById('mat-pres').value.trim() || null;
   if (!nombre) { toast('Nombre obligatorio', true); return; }
-  // Chequear unico
   const dup = materiales.find(m => m.nombre.toLowerCase() === nombre.toLowerCase() && m.id !== materialId);
   if (dup) { toast('Ya existe un material con ese nombre', true); return; }
-  // Probamos guardar con presentacion_recomendada y descripcion. Si la columna
-  // no existe en el schema, hacemos retry con solo nombre.
-  const payload = { nombre: nombre };
-  // Intento incluir descripcion y presentacion. Si fallan por columnas faltantes,
-  // hacemos fallback. Como no sabemos a priori si las columnas existen, hacemos
-  // try/catch.
-  const fullPayload = { nombre: nombre, descripcion: desc, presentacion_recomendada: pres };
+  const fullPayload = { nombre: nombre, descripcion: desc };
   let result;
   if (materialId) {
     result = await sb.from('materiales').update(fullPayload).eq('id', materialId);
@@ -4786,14 +5096,15 @@ async function saveMaterial(materialId) {
     result = await sb.from('materiales').insert(fullPayload);
   }
   if (result.error && /column.*does not exist/i.test(result.error.message || '')) {
-    // Reintento con solo nombre
+    // Reintento con solo nombre (si la columna descripcion no existe aun)
+    const minPayload = { nombre: nombre };
     if (materialId) {
-      result = await sb.from('materiales').update(payload).eq('id', materialId);
+      result = await sb.from('materiales').update(minPayload).eq('id', materialId);
     } else {
-      result = await sb.from('materiales').insert(payload);
+      result = await sb.from('materiales').insert(minPayload);
     }
     if (!result.error) {
-      toast('Material guardado (solo nombre; descripción y presentación requieren migración pendiente)');
+      toast('Material guardado (descripción requiere migración pendiente)');
     }
   }
   if (result.error) { toast('Error: ' + result.error.message, true); return; }
@@ -6599,17 +6910,16 @@ function showProductoMatrizForm(productoId) {
   if (!isNew && !prod) return;
 
   // Cargar ubicaciones existentes (si edicion) en estado pendiente.
-  // Estas se editan en memoria y se sincronizan a la DB al guardar.
   let ubicaciones = [];
   if (prod) {
     ubicaciones = productosMatrizUbicaciones.filter(u => u.producto_id === prod.id).map(u => ({
-      // id solo para entradas que ya existian en DB. Los nuevos no tienen id.
       id: u.id,
       cliente_id: u.cliente_id,
       sector_id: u.sector_id,
       equipo_id: u.equipo_id,
       conjunto_id: u.conjunto_id,
-      subconjunto_id: u.subconjunto_id
+      subconjunto_id: u.subconjunto_id,
+      cantidad: (u.cantidad === undefined || u.cantidad === null) ? 1 : u.cantidad
     }));
   }
 
@@ -6719,19 +7029,37 @@ function _pmCaptureFormValues() {
   };
 }
 
-// Render de la lista de ubicaciones pendientes (chips con boton de eliminar)
+// Render de la lista de ubicaciones pendientes (chips con boton de eliminar
+// y campo de cantidad editable)
 function _pmUbicacionesListHtml() {
   if (!pmFormState || !pmFormState.ubicacionesPendientes || pmFormState.ubicacionesPendientes.length === 0) {
     return '<div style="font-size:11px;color:#888;font-style:italic;padding:6px 0">Sin equipos compatibles asignados.</div>';
   }
   let h = '';
   pmFormState.ubicacionesPendientes.forEach((u, idx) => {
+    const cantVal = (u.cantidad === undefined || u.cantidad === null) ? 1 : u.cantidad;
     h += '<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:#F5F3EC;border:1px solid #C8C6BE;border-radius:5px;margin-bottom:5px;font-size:12px">';
     h += '<span style="flex:1">' + _pmUbicacionRoute(u) + '</span>';
+    h += '<label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#5F5E5A;flex:0 0 auto">';
+    h += 'Cant.: <input type="number" min="1" step="1" value="' + cantVal + '" onchange="pmCambiarCantidadUbicacion(' + idx + ', this.value)" style="width:55px;padding:2px 4px;border:1px solid #C8C6BE;border-radius:3px;font-size:11px">';
+    h += '</label>';
     h += '<button class="b b-icon b-d" onclick="pmQuitarUbicacion(' + idx + ')" title="Quitar esta ubicación" style="padding:2px 8px;font-size:11px">×</button>';
     h += '</div>';
   });
   return h;
+}
+
+function pmCambiarCantidadUbicacion(idx, value) {
+  if (!pmFormState) return;
+  const n = parseInt(value);
+  if (!n || n < 1) {
+    toast('La cantidad debe ser ≥ 1', true);
+    // Restaurar valor anterior
+    const list = document.getElementById('pm-ubicaciones-list');
+    if (list) list.innerHTML = _pmUbicacionesListHtml();
+    return;
+  }
+  pmFormState.ubicacionesPendientes[idx].cantidad = n;
 }
 
 // Devuelve string "Cliente > Sector > Equipo > Conjunto > Subconjunto"
@@ -6982,7 +7310,8 @@ function pmGuardarCompatibilidad() {
     sector_id: pmCompatState.sectorId,
     equipo_id: pmCompatState.equipoId,
     conjunto_id: pmCompatState.conjuntoId,
-    subconjunto_id: pmCompatState.subconjuntoId
+    subconjunto_id: pmCompatState.subconjuntoId,
+    cantidad: 1
   });
   document.getElementById('pm-compat-modal').remove();
   // Re-renderizar la lista de ubicaciones del modal padre
@@ -7022,8 +7351,7 @@ async function saveProductoMatriz(productoId) {
     savedProductoId = data.id;
   }
 
-  // Sincronizar ubicaciones: borrar las viejas, insertar las nuevas.
-  // (Es mas simple que diff-ear; las ubicaciones son baratas.)
+  // Sincronizar ubicaciones: borrar las viejas, insertar las nuevas con cantidad.
   await sb.from('productos_matriz_ubicaciones').delete().eq('producto_id', savedProductoId);
   if (pmFormState && pmFormState.ubicacionesPendientes && pmFormState.ubicacionesPendientes.length > 0) {
     const inserts = pmFormState.ubicacionesPendientes.map(u => ({
@@ -7032,7 +7360,8 @@ async function saveProductoMatriz(productoId) {
       sector_id: u.sector_id,
       equipo_id: u.equipo_id,
       conjunto_id: u.conjunto_id,
-      subconjunto_id: u.subconjunto_id
+      subconjunto_id: u.subconjunto_id,
+      cantidad: u.cantidad || 1
     }));
     const { error: errU } = await sb.from('productos_matriz_ubicaciones').insert(inserts);
     if (errU) { toast('Producto guardado pero error en ubicaciones: ' + errU.message, true); console.error(errU); }
