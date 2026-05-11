@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v49</title>
+<title>Velasco App 2.0 — Proyectos v50</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -1493,6 +1493,11 @@ function setProjectFilters(all) {
 }
 
 // ========== NEW PROJECT ==========
+// Estado del Nuevo Proyecto: si se eligio un producto matriz como primer item,
+// se guarda aca para usar al guardar (copiar ubicaciones, procesos y
+// correlatividades). null = item desde cero.
+let newProjectMatrizSelection = null;
+
 function renderNewProjectForm() {
   const main = document.getElementById('main');
   const clientesOpts = clientes.map(c => '<option value="' + c.id + '">' + escapeHtml(c.nombre) + '</option>').join('');
@@ -1516,7 +1521,6 @@ function renderNewProjectForm() {
     h += '<option value="' + st + '"' + (st === 'Proyectando' ? ' selected' : '') + '>' + st + '</option>';
   });
   h += '</select></div></div>';
-  // Cliente final justo debajo de Cliente, antes que el resto del form
   h += '<div class="ef"><div class="ef-l">Cliente final (opcional)</div>';
   h += '<input type="text" class="ef-i" id="f-clifinal" placeholder="Ej. GDLP">';
   h += '<div class="ef-help">Para casos como stock interno donde el destinatario real es otro.</div></div>';
@@ -1538,16 +1542,50 @@ function renderNewProjectForm() {
   h += '<div class="ef" style="flex:1"><div class="ef-l">Fecha de entrega <span style="color:#A32D2D">*</span></div>';
   h += '<input type="date" class="ef-i" id="f-fechaentrega" value=""><div class="ef-help">Fecha comprometida al cliente.</div></div></div>';
   h += '</div></div>';
-  h += '<div class="section-t" style="margin-top:24px">Primer item del proyecto <span style="font-size:11px;color:#A32D2D;font-weight:500">* obligatorio</span></div>';
+
+  // Primer item: header con botón "+ Agregar desde Matriz" a la derecha
+  h += '<div class="section-t" style="margin-top:24px">';
+  h += '<span>Primer item del proyecto <span style="font-size:11px;color:#A32D2D;font-weight:500">* obligatorio</span></span>';
+  h += '<button type="button" class="b b-p" onclick="newProjectAbrirMatriz()">+ Agregar desde Matriz</button>';
+  h += '</div>';
+
+  // Si ya se eligio un producto matriz, mostrar el cartel informativo arriba
+  if (newProjectMatrizSelection) {
+    const prod = productosMatriz.find(p => p.id === newProjectMatrizSelection.productoId);
+    if (prod) {
+      h += '<div style="background:#E8F2FC;color:#0C447C;padding:10px 14px;border-radius:5px;margin-bottom:8px;font-size:12px;border:1px solid #A8C8E8;display:flex;align-items:center;justify-content:space-between">';
+      h += '<div><b>Item importado de matriz:</b> ' + escapeHtml(prod.descripcion) + '. Los campos heredados (código del cliente, material) están bloqueados. Se copiarán también las ubicaciones y procesos al crear el proyecto.</div>';
+      h += '<button type="button" class="b" onclick="newProjectQuitarMatriz()" style="margin-left:10px;padding:3px 8px;font-size:11px">Quitar</button>';
+      h += '</div>';
+    }
+  }
+
   h += '<div style="background:#FAFAF7;border:1px solid #E8E6DF;border-radius:6px;padding:14px">';
   h += '<div style="display:flex;gap:14px;margin-bottom:8px">';
-  h += '<div style="flex-shrink:0"><div class="ef-l">Foto del item</div>' + buildPhotoWrapHtml(null, 'item') + '<div class="ef-help" style="max-width:120px">Si la dejas vacia, se usa la del proyecto en el tablero.</div></div>';
+  h += '<div style="flex-shrink:0"><div class="ef-l">Foto del item</div>' + buildPhotoWrapHtml(newProjectMatrizSelection ? newProjectMatrizSelection.foto_url : null, 'item') + '<div class="ef-help" style="max-width:120px">Si la dejas vacia, se usa la del proyecto en el tablero.</div></div>';
   h += '<div style="flex:1">';
+
+  // Pre-llenar valores si hay seleccion de matriz
+  const matriz = newProjectMatrizSelection;
+  const itDescVal = matriz ? escapeHtml(matriz.descripcion) : '';
+  const itCantVal = '1';  // cantidad siempre se ingresa nueva, no viene de matriz
+  const itCodCliVal = matriz ? escapeHtml(matriz.codigo_cliente || '') : '';
+  const itMatId = matriz && matriz.material_id ? matriz.material_id : '';
+  const itMatLabel = matriz && matriz.material_id ? ((materiales.find(m => m.id === matriz.material_id) || {}).nombre || '') : '';
+  const itPresVal = matriz ? escapeHtml(matriz.presentacion_mat_prima || '') : '';
+
+  // Descripción + Cantidad
   h += '<div class="row">';
   h += '<div class="ef" style="flex:3"><div class="ef-l">Descripcion del item <span style="color:#A32D2D">*</span></div>';
-  h += '<input type="text" class="ef-i" id="f-item-desc" placeholder="Ej. Eje principal"></div>';
+  if (matriz) {
+    h += '<input type="text" class="ef-i" id="f-item-desc" value="' + itDescVal + '" disabled style="background:#F5F3EC;color:#888"></div>';
+  } else {
+    h += '<input type="text" class="ef-i" id="f-item-desc" placeholder="Ej. Eje principal"></div>';
+  }
   h += '<div class="ef" style="flex:1"><div class="ef-l">Cantidad</div>';
-  h += '<input type="number" class="ef-i" id="f-item-cant" value="1" min="1" step="1"></div></div>';
+  h += '<input type="number" class="ef-i" id="f-item-cant" value="' + itCantVal + '" min="1" step="1"></div></div>';
+
+  // Estado del item
   h += '<div class="ef" style="background:#FFF4D5;padding:8px 10px;border-radius:5px;border:1px solid #F5C842"><div class="ef-l" style="color:#854F0B">Estado del item</div>';
   h += '<select class="ef-i" id="f-item-estado">';
   ITEM_STATES.forEach(st => {
@@ -1555,14 +1593,65 @@ function renderNewProjectForm() {
   });
   h += '</select>';
   h += '<div class="ef-help" style="color:#854F0B">Si la materia prima ya esta en el taller, podes setearlo en "Llego MP" o el estado real.</div></div>';
+
+  // Codigo cliente + Material (solo lectura si vino de matriz)
   h += '<div class="row">';
-  h += '<div class="ef" style="flex:1"><div class="ef-l">Material</div>';
-  h += '<input type="text" class="ef-i" id="f-item-mat" placeholder="Ej. SAE 1010"></div>';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Código del cliente' + (matriz ? ' <span style="font-size:10px;color:#888">(heredado de matriz)</span>' : '') + '</div>';
+  if (matriz) {
+    h += '<input type="text" class="ef-i" id="f-item-codcli" value="' + itCodCliVal + '" disabled style="background:#F5F3EC;color:#888">';
+  } else {
+    h += '<input type="text" class="ef-i" id="f-item-codcli" placeholder="Ej. 4517-AB">';
+  }
+  h += '</div>';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Material' + (matriz ? ' <span style="font-size:10px;color:#888">(heredado de matriz)</span>' : '') + '</div>';
+  if (matriz) {
+    h += '<input type="text" class="ef-i" value="' + escapeHtml(itMatLabel) + '" disabled style="background:#F5F3EC;color:#888">';
+    h += '<input type="hidden" id="f-item-material-value" value="' + (itMatId || '') + '">';
+  } else {
+    h += renderPicker({
+      id: 'f-item-material',
+      value: itMatId,
+      valueLabel: itMatLabel,
+      placeholder: 'Buscar o cargar nuevo...',
+      options: materiales.map(x => ({ id: x.id, label: x.nombre })),
+      onCreateLabel: '+ Cargar nuevo material',
+      onCreateFnName: 'newProjectCargarMaterial'
+    });
+  }
+  h += '</div>';
+  h += '</div>';
+
+  // Presentación + Fecha fin
+  h += '<div class="row">';
   h += '<div class="ef" style="flex:1"><div class="ef-l">Presentacion materia prima</div>';
-  h += '<input type="text" class="ef-i" id="f-item-pres" placeholder="Ej. \u00d8290 x 1 1/2 pulg"></div></div>';
-  h += '<div class="ef"><div class="ef-l">Fecha de fin estipulada</div>';
+  if (matriz) {
+    h += '<input type="text" class="ef-i" id="f-item-pres" value="' + itPresVal + '" disabled style="background:#F5F3EC;color:#888">';
+  } else {
+    h += '<input type="text" class="ef-i" id="f-item-pres" placeholder="Ej. \u00d8290 x 1 1/2 pulg">';
+  }
+  h += '</div>';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Fecha de fin estipulada</div>';
   h += '<input type="date" class="ef-i" id="f-item-fechafin" style="max-width:200px">';
-  h += '<div class="ef-help">Estimacion de oficina tecnica para cumplir el plazo.</div></div>';
+  h += '<div class="ef-help">Estimacion de oficina tecnica.</div></div></div>';
+
+  // Si hay seleccion de matriz, mostrar resumen de ubicaciones y procesos heredados
+  if (matriz && matriz.ubicaciones && matriz.ubicaciones.length > 0) {
+    h += '<div style="margin-top:10px;padding:8px 10px;background:#fff;border:1px solid #E8E6DF;border-radius:5px">';
+    h += '<div style="font-size:11px;font-weight:600;color:#5F5E5A;margin-bottom:4px">Equipos compatibles (heredados de matriz)</div>';
+    matriz.ubicaciones.forEach(u => {
+      h += '<div style="font-size:11px;color:#5F5E5A;padding:2px 0">' + _pmUbicacionRoute(u) + '</div>';
+    });
+    h += '</div>';
+  }
+  if (matriz && matriz.procesos && matriz.procesos.length > 0) {
+    h += '<div style="margin-top:6px;padding:8px 10px;background:#fff;border:1px solid #E8E6DF;border-radius:5px">';
+    h += '<div style="font-size:11px;font-weight:600;color:#5F5E5A;margin-bottom:4px">Procesos a importar (' + matriz.procesos.length + ')</div>';
+    matriz.procesos.forEach((pr, idx) => {
+      h += '<div style="font-size:11px;color:#5F5E5A;padding:2px 0">' + (idx + 1) + '. ' + escapeHtml(pr.proceso || '') + '</div>';
+    });
+    h += '</div>';
+  }
+
   h += '</div></div></div>';
   h += '<div class="actions">';
   h += '<button class="b" onclick="navigate({view:\'projects\'})">Cancelar</button>';
@@ -1570,6 +1659,34 @@ function renderNewProjectForm() {
   h += '</div></div>';
   main.innerHTML = h;
   setupPhotoPaste();
+}
+
+// "+ Agregar desde Matriz" en form de Nuevo Proyecto.
+// Reusa el mismo modal que en proyecto existente, pero con flag distinto:
+// "modo Nuevo Proyecto". Cuando el usuario elige producto, se guarda en
+// newProjectMatrizSelection y se re-renderiza el form (no se importa
+// inmediatamente porque el proyecto todavia no existe).
+function newProjectAbrirMatriz() {
+  // Necesitamos cliente_id elegido para filtrar por defecto. Si todavia no
+  // se eligio, mostramos un mensaje.
+  const cliId = document.getElementById('f-cliente').value;
+  if (!cliId) {
+    toast('Primero seleccioná el cliente del proyecto', true);
+    return;
+  }
+  // Pre-llenar filtros del modal con cliente del proyecto + GENERICO
+  // Reusamos showAgregarDesdeMatriz pero con flag de modo.
+  showAgregarDesdeMatriz({ modo: 'newProject', clienteProjId: parseInt(cliId) });
+}
+
+function newProjectQuitarMatriz() {
+  newProjectMatrizSelection = null;
+  // Re-render del form para volver al modo "desde cero"
+  renderNewProjectForm();
+}
+
+function newProjectCargarMaterial(initialName) {
+  showCargarMaterial(initialName, 'f-item-material');
 }
 
 function onStateChangeNew() {
@@ -1595,9 +1712,60 @@ function renderClienteCombo() {
   list.style.display = 'block';
 }
 function selectClienteCombo(id, nombre) {
+  // Si cambia el cliente y hay un producto matriz seleccionado, hay que
+  // limpiar la seleccion porque podria no corresponder al nuevo cliente.
+  if (newProjectMatrizSelection) {
+    const currentCliId = parseInt(document.getElementById('f-cliente').value);
+    if (currentCliId !== id) {
+      newProjectMatrizSelection = null;
+    }
+  }
   document.getElementById('f-cliente').value = id;
   document.getElementById('f-cliente-search').value = nombre;
   document.getElementById('f-cliente-list').style.display = 'none';
+  // Si habia una seleccion de matriz y ya no la hay, re-renderizar form
+  if (!newProjectMatrizSelection) {
+    // Solo re-renderizamos si estamos en el form de nuevo proyecto
+    if (nav.view === 'newProject') {
+      // Preservar valores que ya tenia el usuario antes del re-render
+      const _captured = _newProjectCaptureFormValues();
+      renderNewProjectForm();
+      _newProjectRestoreFormValues(_captured);
+    }
+  }
+}
+
+// Captura/restaura valores del form de Nuevo Proyecto (excepto los del primer item
+// que se reconstruyen desde newProjectMatrizSelection si aplica).
+function _newProjectCaptureFormValues() {
+  return {
+    cliente: document.getElementById('f-cliente') ? document.getElementById('f-cliente').value : '',
+    clienteSearch: document.getElementById('f-cliente-search') ? document.getElementById('f-cliente-search').value : '',
+    clifinal: document.getElementById('f-clifinal') ? document.getElementById('f-clifinal').value : '',
+    pedido: document.getElementById('f-pedido') ? document.getElementById('f-pedido').value : '',
+    desc: document.getElementById('f-desc') ? document.getElementById('f-desc').value : '',
+    urg: document.getElementById('f-urg') ? document.getElementById('f-urg').value : '',
+    estado: document.getElementById('f-estado') ? document.getElementById('f-estado').value : '',
+    fechaIng: document.getElementById('f-fechaing') ? document.getElementById('f-fechaing').value : '',
+    fechaEnt: document.getElementById('f-fechaentrega') ? document.getElementById('f-fechaentrega').value : '',
+    projFoto: (document.getElementById('photo-url-proj') || { value: '' }).value
+  };
+}
+function _newProjectRestoreFormValues(v) {
+  if (!v) return;
+  if (document.getElementById('f-cliente')) document.getElementById('f-cliente').value = v.cliente || '';
+  if (document.getElementById('f-cliente-search')) document.getElementById('f-cliente-search').value = v.clienteSearch || '';
+  if (document.getElementById('f-clifinal')) document.getElementById('f-clifinal').value = v.clifinal || '';
+  if (document.getElementById('f-pedido')) document.getElementById('f-pedido').value = v.pedido || '';
+  if (document.getElementById('f-desc')) document.getElementById('f-desc').value = v.desc || '';
+  if (document.getElementById('f-urg')) document.getElementById('f-urg').value = v.urg || '';
+  if (document.getElementById('f-estado')) {
+    document.getElementById('f-estado').value = v.estado || '';
+    onStateChangeNew();
+  }
+  if (document.getElementById('f-fechaing')) document.getElementById('f-fechaing').value = v.fechaIng || '';
+  if (document.getElementById('f-fechaentrega')) document.getElementById('f-fechaentrega').value = v.fechaEnt || '';
+  if (document.getElementById('photo-url-proj')) document.getElementById('photo-url-proj').value = v.projFoto || '';
 }
 function closeClienteCombo() {
   const list = document.getElementById('f-cliente-list');
@@ -1612,12 +1780,15 @@ async function saveNewProject() {
   const estado = document.getElementById('f-estado').value;
   const itemDesc = document.getElementById('f-item-desc').value.trim();
   const itemCant = parseInt(document.getElementById('f-item-cant').value) || 1;
-  const itemMat = document.getElementById('f-item-mat').value.trim() || null;
   const itemPres = document.getElementById('f-item-pres').value.trim() || null;
   const itemFechaFin = document.getElementById('f-item-fechafin').value || null;
   const itemFotoUrl = document.getElementById('photo-url-item').value.trim() || null;
   const itemEstadoEl = document.getElementById('f-item-estado');
   const itemEstado = itemEstadoEl ? itemEstadoEl.value : 'Espera MP';
+  const itemCodCli = (document.getElementById('f-item-codcli') || { value: '' }).value.trim() || null;
+  // Material: lo leo del hidden value (existe tanto en modo matriz como en modo libre via picker)
+  const itemMatValEl = document.getElementById('f-item-material-value');
+  const itemMaterialId = itemMatValEl && itemMatValEl.value ? parseInt(itemMatValEl.value) : null;
   const fotoUrl = document.getElementById('photo-url-proj').value.trim() || null;
   const fechaIngreso = document.getElementById('f-fechaing').value || null;
   const fechaEntrega = document.getElementById('f-fechaentrega').value || null;
@@ -1632,20 +1803,93 @@ async function saveNewProject() {
     const dup = proyectos.find(p => p.pedido_nro === pedido_nro);
     if (dup) { errPedido.textContent = 'Ya existe un proyecto con el pedido ' + pedido_nro + ' (cliente: ' + clN(dup.cliente_id) + ')'; errPedido.style.display = 'block'; return; }
   }
+
+  // 1. Crear proyecto
   const { data: newProj, error: projErr } = await sb.from('proyectos').insert({
     cliente_id, pedido_nro, descripcion, urgencia, foto_url: fotoUrl,
     fecha_ingreso: fechaIngreso, fecha_entrega: fechaEntrega,
     cliente_final: clienteFinal, estado
   }).select().single();
   if (projErr) { toast('Error creando proyecto: ' + projErr.message, true); return; }
-  const { error: itemErr } = await sb.from('items').insert({
+
+  // 2. Crear primer item
+  const itemPayload = {
     proyecto_id: newProj.id, cliente_id, pedido_nro,
     descripcion: itemDesc, cantidad: itemCant,
-    foto_url: itemFotoUrl, material: itemMat,
+    foto_url: itemFotoUrl,
+    material_id: itemMaterialId,
+    codigo_cliente: itemCodCli,
     presentacion_mat_prima: itemPres, fecha_fin_estipulada: itemFechaFin,
     estado: itemEstado
-  });
+  };
+  // Si es desde matriz, marcar imported_from_matriz_id
+  if (newProjectMatrizSelection) {
+    itemPayload.imported_from_matriz_id = newProjectMatrizSelection.productoId;
+  }
+  const { data: newItem, error: itemErr } = await sb.from('items').insert(itemPayload).select().single();
   if (itemErr) { toast('Error creando item: ' + itemErr.message, true); return; }
+
+  // 3. Si hay matriz, copiar ubicaciones, procesos y correlatividades
+  if (newProjectMatrizSelection) {
+    const matriz = newProjectMatrizSelection;
+    // Ubicaciones
+    if (matriz.ubicaciones && matriz.ubicaciones.length > 0) {
+      const ubicInserts = matriz.ubicaciones.map(u => ({
+        item_id: newItem.id,
+        cliente_id: u.cliente_id,
+        sector_id: u.sector_id,
+        equipo_id: u.equipo_id,
+        conjunto_id: u.conjunto_id,
+        subconjunto_id: u.subconjunto_id
+      }));
+      await sb.from('items_ubicaciones').insert(ubicInserts);
+    }
+    // Procesos + correlatividades secuenciales
+    const newActIds = [];
+    for (let i = 0; i < matriz.procesos.length; i++) {
+      const pp = matriz.procesos[i];
+      const actPayload = {
+        item_id: newItem.id,
+        cliente_id, pedido_nro,
+        descripcion: itemDesc + ' - ' + (pp.proceso || ''),
+        descripcion_proyecto: descripcion,
+        descripcion_trabajo: pp.trabajo_a_realizar || null,
+        proceso: pp.proceso,
+        duracion_estimada_min: pp.duracion_estimada_min,
+        duracion_margen_min: pp.duracion_margen_min || 0,
+        duracion_operario_min: pp.duracion_operario_min,
+        duracion_planificador_min: (pp.duracion_estimada_min || 0) + (pp.duracion_margen_min || 0),
+        tipo: pp.tipo,
+        maquina_ideal_id: pp.maquina_ideal_id,
+        maquina_ideal_nombre: pp.maquina_ideal_nombre,
+        maquinas_suplentes_ids: pp.maquinas_suplentes,
+        operario_ideal_id: pp.operario_ideal_id,
+        operarios_suplentes_ids: pp.operarios_suplentes,
+        urgencia,
+        foto_proyecto_url: fotoUrl,
+        foto_url: itemFotoUrl,
+        fecha_ingreso: fechaIngreso,
+        cliente_final: clienteFinal,
+        orden: i + 1,
+        estado: 'sin_planificar',
+        fecha: '1900-01-01',
+        hora_inicio: '06:00:00',
+        estado_proceso: 'Planificación Pendiente'
+      };
+      const { data: newAct, error: actErr } = await sb.from('actividades_tablero').insert(actPayload).select().single();
+      if (actErr) { console.error('Error creando proceso:', actErr); continue; }
+      newActIds.push(newAct.id);
+    }
+    for (let i = 0; i < newActIds.length - 1; i++) {
+      await sb.from('correlatividades').insert({
+        predecesor_id: newActIds[i],
+        sucesor_id: newActIds[i + 1]
+      });
+    }
+  }
+
+  // Limpiar estado de matriz para proximo proyecto
+  newProjectMatrizSelection = null;
   await loadAll();
   toast('Proyecto creado');
   navigate({ view: 'project', projectId: newProj.id });
@@ -1724,7 +1968,7 @@ function renderProjectDetail() {
   h += '<button class="b b-d" onclick="confirmDeleteProject()">Eliminar proyecto</button>';
   h += '<button class="b b-p" onclick="saveProjectMeta()">Guardar cambios</button></div>';
 
-  h += '<div class="section-t">Items del proyecto <button class="b b-p" onclick="showItemForm(null)">+ Agregar item</button> <button class="b" onclick="showAgregarDesdeMatriz()" style="padding:4px 10px;font-size:11px;margin-left:4px">+ Desde Matriz</button></div>';
+  h += '<div class="section-t">Items del proyecto <div style="display:flex;gap:6px"><button class="b b-p" onclick="showItemForm(null)">+ Agregar item</button> <button class="b b-p" onclick="showAgregarDesdeMatriz()">+ Agregar desde Matriz</button></div></div>';
   if (proj.items.length > 0) {
     // Header row with column titles
     h += '<div style="display:flex;gap:10px;align-items:center;padding:4px 12px;font-size:10px;font-weight:700;color:#5F5E5A;text-transform:uppercase;letter-spacing:0.5px">';
@@ -2453,53 +2697,145 @@ async function saveItem(itemId) {
 // incluyendo descripcion, codigo del cliente, material, presentacion, foto,
 // ubicaciones y procesos. Usa imported_from_matriz_id para marcar el origen.
 
-let agregarDesdeMatrizState = { habilitarTodos: false, search: '' };
+// Estado del modal "+ Agregar desde Matriz". Tiene los mismos filtros que la
+// pagina de Matriz, mas dos campos de modo:
+//   - modo: 'project' | 'newProject'
+//   - clienteProjId: cliente del proyecto (para pre-llenar filtros)
+//
+// Los filtros del modal son INDEPENDIENTES de los de la pagina de Matriz.
+let agregarDesdeMatrizState = null;
 
-function showAgregarDesdeMatriz() {
-  const proj = getProject(nav.projectId);
-  if (!proj) return;
-  agregarDesdeMatrizState = { habilitarTodos: false, search: '' };
+function showAgregarDesdeMatriz(opts) {
+  // opts es opcional. Si no viene, asume modo 'project' usando nav.projectId.
+  let cliId = null;
+  let modo = 'project';
+  if (opts && opts.modo === 'newProject') {
+    modo = 'newProject';
+    cliId = opts.clienteProjId;
+  } else {
+    const proj = getProject(nav.projectId);
+    if (!proj) return;
+    cliId = proj.cliente_id;
+  }
+  if (!cliId) { toast('Falta cliente del proyecto', true); return; }
+
+  // Pre-llenar filtros: cliente del proyecto + Genericos por default
+  agregarDesdeMatrizState = {
+    modo: modo,
+    clienteProjId: cliId,
+    filters: {
+      search: '',
+      codigos: '',
+      clienteIds: [cliId, 'GENERICO'],
+      sectorIds: [],
+      equipoIds: [],
+      conjuntoIds: [],
+      subconjuntoIds: []
+    },
+    sort: { by: 'descripcion', dir: 'asc' }
+  };
   _renderAgregarDesdeMatrizModal();
 }
 
 function _renderAgregarDesdeMatrizModal() {
   const existing = document.getElementById('add-from-matriz-modal');
   if (existing) existing.remove();
-  const proj = getProject(nav.projectId);
-  if (!proj) return;
+  const state = agregarDesdeMatrizState;
+  if (!state) return;
+
   const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'add-from-matriz-modal';
-  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '720px';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '900px'; m.style.maxHeight = '90vh'; m.style.overflowY = 'auto';
   let h = '<div class="md-t">Agregar item desde Matriz de Productos</div>';
-  h += '<div style="font-size:11px;color:#5F5E5A;margin-bottom:10px">Cliente del proyecto: <b>' + escapeHtml(clN(proj.cliente_id)) + '</b></div>';
-  // Controles
-  h += '<div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap">';
-  h += '<input type="text" id="afm-search" value="' + escapeHtml(agregarDesdeMatrizState.search) + '" placeholder="Buscar producto..." style="padding:5px 8px;border:1px solid #C8C6BE;border-radius:5px;font-size:12px;width:240px" oninput="afmSearchInput(event)">';
-  h += '<label style="display:flex;align-items:center;gap:6px;font-size:11px;cursor:pointer">';
-  h += '<input type="checkbox" id="afm-todos"' + (agregarDesdeMatrizState.habilitarTodos ? ' checked' : '') + ' onchange="afmToggleTodos()"> Habilitar todos los clientes';
-  h += '</label>';
+  const cliLblProj = clN(state.clienteProjId);
+  h += '<div style="font-size:11px;color:#5F5E5A;margin-bottom:10px">Cliente del proyecto: <b>' + escapeHtml(cliLblProj) + '</b>. Por defecto se filtran productos de este cliente y los genéricos. Modificá los filtros para ver más opciones.</div>';
+
+  // ===== BARRA DE FILTROS (igual a la pagina de Matriz) =====
+  h += '<div style="background:#F5F3EC;border:1px solid #C8C6BE;border-radius:6px;padding:10px 14px;margin-bottom:12px">';
+
+  // Fila 1: Buscar + Códigos + Ordenar
+  h += '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">';
+  h += '<div style="font-size:11px;font-weight:600;color:#5F5E5A">Buscar:</div>';
+  h += '<input type="text" id="afm-search" value="' + escapeHtml(state.filters.search || '') + '" placeholder="Descripción del producto" style="padding:5px 8px;border:1px solid #C8C6BE;border-radius:5px;font-size:12px;width:200px" oninput="afmSearchInput(event)">';
+  h += '<div style="font-size:11px;font-weight:600;color:#5F5E5A;margin-left:6px">Códigos:</div>';
+  h += '<input type="text" id="afm-codigos" value="' + escapeHtml(state.filters.codigos || '') + '" placeholder="Cliente / Equipo / Producto / ID" title="Busca en códigos del cliente, equipo, producto e ID" style="padding:5px 8px;border:1px solid #C8C6BE;border-radius:5px;font-size:12px;width:200px" oninput="afmCodigosInput(event)">';
+  h += '<div style="margin-left:auto;display:flex;align-items:center;gap:6px">';
+  h += '<div style="font-size:11px;font-weight:600;color:#5F5E5A">Ordenar:</div>';
+  h += '<select id="afm-sort-by" onchange="afmSortByChange()" style="padding:3px 8px;border:1px solid #C8C6BE;border-radius:5px;font-size:11px">';
+  [['descripcion','Descripción'],['cliente','Cliente'],['created','Fecha de creación'],['cant_procesos','Cantidad de procesos']].forEach(([v,lbl]) => {
+    h += '<option value="' + v + '"' + (state.sort.by === v ? ' selected' : '') + '>' + lbl + '</option>';
+  });
+  h += '</select>';
+  const arrow = state.sort.dir === 'asc' ? '↑' : '↓';
+  h += '<button class="b" onclick="afmToggleSortDir()" style="padding:3px 8px;font-size:13px;font-weight:700;line-height:1">' + arrow + '</button>';
+  h += '</div>';
   h += '</div>';
 
-  // Lista de productos
-  let candidatos = productosMatriz.slice();
-  if (!agregarDesdeMatrizState.habilitarTodos) {
-    // Por defecto, productos del cliente del proyecto + productos genericos (sin cliente).
-    candidatos = candidatos.filter(p => p.cliente_id === proj.cliente_id || !p.cliente_id);
-  }
-  if (agregarDesdeMatrizState.search.trim()) {
-    const q = agregarDesdeMatrizState.search.trim().toLowerCase();
-    candidatos = candidatos.filter(p => (p.descripcion || '').toLowerCase().includes(q));
-  }
-  candidatos.sort((a, b) => (a.descripcion || '').localeCompare(b.descripcion || ''));
+  // Fila 2: Clientes + Sectores
+  h += '<div style="margin-top:8px;display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap">';
+  const cliSelectedItems = (state.filters.clienteIds || []).map(cId => {
+    return { key: cId, label: (cId === 'GENERICO') ? 'Productos Genéricos' : clN(cId) };
+  });
+  h += _buildMultiFilter({
+    id: 'afm-cli', label: 'Clientes', selectedItems: cliSelectedItems,
+    placeholder: 'Buscar cliente...', onToggleFn: 'afmToggleCliente', onSearchFn: 'afmCliSearchInput'
+  });
+  const secSelectedItems = (state.filters.sectorIds || []).map(sId => {
+    const s = sectores.find(x => x.id === parseInt(sId));
+    return { key: sId, label: s ? s.nombre : '?' };
+  });
+  h += _buildMultiFilter({
+    id: 'afm-sec', label: 'Sectores', selectedItems: secSelectedItems,
+    placeholder: 'Buscar sector...', onToggleFn: 'afmToggleSector', onSearchFn: 'afmSecSearchInput'
+  });
+  h += '</div>';
 
+  // Fila 3: Equipos + Conjuntos
+  h += '<div style="margin-top:8px;display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap">';
+  const eqSelectedItems = (state.filters.equipoIds || []).map(eId => {
+    const e = equipos.find(x => x.id === parseInt(eId));
+    return { key: eId, label: e ? e.nombre : '?' };
+  });
+  h += _buildMultiFilter({
+    id: 'afm-eq', label: 'Equipos', selectedItems: eqSelectedItems,
+    placeholder: 'Buscar equipo...', onToggleFn: 'afmToggleEquipo', onSearchFn: 'afmEqSearchInput'
+  });
+  const conSelectedItems = (state.filters.conjuntoIds || []).map(cId => {
+    const c = conjuntos.find(x => x.id === parseInt(cId));
+    return { key: cId, label: c ? c.nombre : '?' };
+  });
+  h += _buildMultiFilter({
+    id: 'afm-con', label: 'Conjuntos', selectedItems: conSelectedItems,
+    placeholder: 'Buscar conjunto...', onToggleFn: 'afmToggleConjunto', onSearchFn: 'afmConSearchInput'
+  });
+  h += '</div>';
+
+  // Fila 4: Subconjuntos + Limpiar
+  h += '<div style="margin-top:8px;display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap">';
+  const subSelectedItems = (state.filters.subconjuntoIds || []).map(sId => {
+    const s = subconjuntos.find(x => x.id === parseInt(sId));
+    return { key: sId, label: s ? s.nombre : '?' };
+  });
+  h += _buildMultiFilter({
+    id: 'afm-sub', label: 'Subconjuntos', selectedItems: subSelectedItems,
+    placeholder: 'Buscar subconjunto...', onToggleFn: 'afmToggleSubconjunto', onSearchFn: 'afmSubSearchInput'
+  });
+  if (afmCountActiveFilters() > 0) {
+    h += '<button class="b" onclick="afmClearFilters()" style="padding:5px 10px;font-size:11px;background:#fff;color:#5F5E5A;border:1px solid #C8C6BE;flex:0 0 auto;align-self:flex-start;margin-top:5px">✕ Limpiar (' + afmCountActiveFilters() + ')</button>';
+  }
+  h += '</div>';
+  h += '</div>';
+
+  // ===== LISTA =====
+  const candidatos = afmGetFilteredProductos();
   h += '<div id="afm-list" style="max-height:400px;overflow-y:auto;border:1px solid #C8C6BE;border-radius:5px">';
   if (candidatos.length === 0) {
-    h += '<div style="padding:20px;text-align:center;color:#888;font-size:12px;font-style:italic">No hay productos para mostrar.</div>';
+    h += '<div style="padding:20px;text-align:center;color:#888;font-size:12px;font-style:italic">No hay productos que coincidan con los filtros.</div>';
   } else {
     candidatos.forEach(p => {
       const procsCnt = productosMatrizProcesos.filter(pr => pr.producto_id === p.id).length;
       const cliLbl = p.cliente_id ? clN(p.cliente_id) : 'Genérico';
       const matLbl = p.material_id ? ((materiales.find(x => x.id === p.material_id) || {}).nombre || '') : '';
-      h += '<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid #E8E6DF;cursor:pointer" onclick="importarProductoAlProyecto(' + p.id + ')">';
+      h += '<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid #E8E6DF;cursor:pointer" onclick="afmSeleccionarProducto(' + p.id + ')">';
       if (p.foto_url) {
         h += '<img src="' + escapeHtml(p.foto_url) + '" style="width:40px;height:40px;object-fit:cover;border-radius:4px;flex:0 0 auto">';
       } else {
@@ -2510,7 +2846,8 @@ function _renderAgregarDesdeMatrizModal() {
       const meta = [cliLbl, p.codigo_cliente, matLbl, procsCnt + ' proceso(s)'].filter(Boolean).join(' · ');
       h += '<div style="color:#888;font-size:10px;margin-top:1px">' + escapeHtml(meta) + '</div>';
       h += '</div>';
-      h += '<button class="b b-p" style="padding:4px 10px;font-size:11px">Importar</button>';
+      const btnLabel = (state.modo === 'newProject') ? 'Elegir' : 'Importar';
+      h += '<button class="b b-p" style="padding:4px 10px;font-size:11px">' + btnLabel + '</button>';
       h += '</div>';
     });
   }
@@ -2522,23 +2859,324 @@ function _renderAgregarDesdeMatrizModal() {
   m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
 }
 
-function afmSearchInput(e) {
-  agregarDesdeMatrizState.search = e.target.value;
-  _renderAgregarDesdeMatrizModal();
-  setTimeout(() => {
-    const inp = document.getElementById('afm-search');
-    if (inp) {
-      inp.focus();
-      inp.setSelectionRange(inp.value.length, inp.value.length);
-    }
-  }, 0);
+// ----- Helpers de filtros del modal "Agregar desde Matriz" -----
+// Reusan la logica de applyMatrizFilters pero leyendo de state.filters
+// en lugar de matrizFilters global.
+function afmCountActiveFilters() {
+  const f = agregarDesdeMatrizState && agregarDesdeMatrizState.filters;
+  if (!f) return 0;
+  let n = 0;
+  if (f.search && f.search.trim()) n++;
+  if (f.codigos && f.codigos.trim()) n++;
+  // Cliente: contamos solo si NO es exactamente el default (cliProj + GENERICO)
+  // Para simplicidad, contamos si tiene mas de 2 elementos o si no incluye exactamente esos dos.
+  if (f.clienteIds && f.clienteIds.length > 0) {
+    const def = new Set([agregarDesdeMatrizState.clienteProjId, 'GENERICO']);
+    const cur = new Set(f.clienteIds);
+    if (cur.size !== def.size || ![...def].every(x => cur.has(x))) n++;
+  }
+  if (f.sectorIds && f.sectorIds.length > 0) n++;
+  if (f.equipoIds && f.equipoIds.length > 0) n++;
+  if (f.conjuntoIds && f.conjuntoIds.length > 0) n++;
+  if (f.subconjuntoIds && f.subconjuntoIds.length > 0) n++;
+  return n;
 }
 
-function afmToggleTodos() {
-  const cb = document.getElementById('afm-todos');
-  if (!cb) return;
-  agregarDesdeMatrizState.habilitarTodos = cb.checked;
+function afmGetFilteredProductos() {
+  const state = agregarDesdeMatrizState;
+  if (!state) return [];
+  const f = state.filters;
+  let out = productosMatriz.slice();
+
+  // 1. Busqueda
+  if (f.search && f.search.trim()) {
+    const q = f.search.trim().toLowerCase();
+    out = out.filter(p => (p.descripcion || '').toLowerCase().includes(q));
+  }
+  // 2. Cliente (multi OR, con GENERICO)
+  if (f.clienteIds && f.clienteIds.length > 0) {
+    const includesGenerico = f.clienteIds.includes('GENERICO');
+    const numericIds = new Set(f.clienteIds.filter(x => x !== 'GENERICO').map(x => parseInt(x)));
+    out = out.filter(p => {
+      if (!p.cliente_id) return includesGenerico;
+      return numericIds.has(p.cliente_id);
+    });
+  }
+  // 3. Jerarquia
+  const sectIds = new Set((f.sectorIds || []).map(x => parseInt(x)));
+  const eqIds = new Set((f.equipoIds || []).map(x => parseInt(x)));
+  const conIds = new Set((f.conjuntoIds || []).map(x => parseInt(x)));
+  const subIds = new Set((f.subconjuntoIds || []).map(x => parseInt(x)));
+  if (sectIds.size > 0 || eqIds.size > 0 || conIds.size > 0 || subIds.size > 0) {
+    out = out.filter(p => {
+      const ubics = productosMatrizUbicaciones.filter(u => u.producto_id === p.id);
+      return ubics.some(u => {
+        if (sectIds.size > 0 && !sectIds.has(u.sector_id)) return false;
+        if (eqIds.size > 0 && !eqIds.has(u.equipo_id)) return false;
+        if (conIds.size > 0 && !conIds.has(u.conjunto_id)) return false;
+        if (subIds.size > 0 && !subIds.has(u.subconjunto_id)) return false;
+        return true;
+      });
+    });
+  }
+  // 4. Codigos transversal
+  if (f.codigos && f.codigos.trim()) {
+    const q = f.codigos.trim().toLowerCase();
+    out = out.filter(p => {
+      const cli = p.cliente_id ? clientes.find(c => c.id === p.cliente_id) : null;
+      if (cli && cli.codigo && cli.codigo.toLowerCase().includes(q)) return true;
+      if (p.codigo_cliente && p.codigo_cliente.toLowerCase().includes(q)) return true;
+      if (String(p.id).includes(q)) return true;
+      const ubics = productosMatrizUbicaciones.filter(u => u.producto_id === p.id);
+      for (const u of ubics) {
+        if (u.equipo_id) {
+          const eq = equipos.find(e => e.id === u.equipo_id);
+          if (eq && eq.codigo_cliente && eq.codigo_cliente.toLowerCase().includes(q)) return true;
+        }
+        if (u.cliente_id) {
+          const cu = clientes.find(c => c.id === u.cliente_id);
+          if (cu && cu.codigo && cu.codigo.toLowerCase().includes(q)) return true;
+        }
+      }
+      return false;
+    });
+  }
+  // 5. Ordenamiento
+  out.sort((a, b) => {
+    let cmp = 0;
+    if (state.sort.by === 'descripcion') cmp = (a.descripcion || '').localeCompare(b.descripcion || '');
+    else if (state.sort.by === 'cliente') {
+      const ca = a.cliente_id ? clN(a.cliente_id) : 'Productos Genéricos';
+      const cb = b.cliente_id ? clN(b.cliente_id) : 'Productos Genéricos';
+      cmp = ca.localeCompare(cb);
+    } else if (state.sort.by === 'created') {
+      const ta = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const tb = b.created_at ? new Date(b.created_at).getTime() : 0;
+      cmp = ta - tb;
+    } else if (state.sort.by === 'cant_procesos') {
+      const ca = productosMatrizProcesos.filter(pr => pr.producto_id === a.id).length;
+      const cb = productosMatrizProcesos.filter(pr => pr.producto_id === b.id).length;
+      cmp = ca - cb;
+    }
+    if (cmp === 0) cmp = (a.id || 0) - (b.id || 0);
+    return state.sort.dir === 'asc' ? cmp : -cmp;
+  });
+  return out;
+}
+
+// Handlers
+function afmSearchInput(e) {
+  agregarDesdeMatrizState.filters.search = e.target.value;
+  _afmRerenderList();
+}
+function afmCodigosInput(e) {
+  agregarDesdeMatrizState.filters.codigos = e.target.value;
+  _afmRerenderList();
+}
+function afmSortByChange() {
+  const sel = document.getElementById('afm-sort-by');
+  if (!sel) return;
+  agregarDesdeMatrizState.sort.by = sel.value;
+  _afmRerenderList();
+}
+function afmToggleSortDir() {
+  agregarDesdeMatrizState.sort.dir = agregarDesdeMatrizState.sort.dir === 'asc' ? 'desc' : 'asc';
   _renderAgregarDesdeMatrizModal();
+}
+function afmClearFilters() {
+  // "Limpiar" = volver al default: cliente del proyecto + GENERICO, resto vacio.
+  agregarDesdeMatrizState.filters = {
+    search: '', codigos: '',
+    clienteIds: [agregarDesdeMatrizState.clienteProjId, 'GENERICO'],
+    sectorIds: [], equipoIds: [], conjuntoIds: [], subconjuntoIds: []
+  };
+  _renderAgregarDesdeMatrizModal();
+}
+
+function afmToggleFilter(fieldName, v) {
+  const norm = (v === 'GENERICO') ? 'GENERICO' : parseInt(v);
+  const list = (agregarDesdeMatrizState.filters[fieldName] || []).slice();
+  const idx = list.findIndex(x => x === norm);
+  if (idx >= 0) list.splice(idx, 1);
+  else list.push(norm);
+  agregarDesdeMatrizState.filters[fieldName] = list;
+  _renderAgregarDesdeMatrizModal();
+}
+function afmToggleCliente(v) { afmToggleFilter('clienteIds', v); }
+function afmToggleSector(v) { afmToggleFilter('sectorIds', v); }
+function afmToggleEquipo(v) { afmToggleFilter('equipoIds', v); }
+function afmToggleConjunto(v) { afmToggleFilter('conjuntoIds', v); }
+function afmToggleSubconjunto(v) { afmToggleFilter('subconjuntoIds', v); }
+
+// Dropdowns buscables (mismo patron que pagina de Matriz)
+function afmCliSearchInput() {
+  const input = document.getElementById('afm-cli-search');
+  if (!input) return;
+  const selected = new Set(agregarDesdeMatrizState.filters.clienteIds || []);
+  const candidates = [];
+  if (!selected.has('GENERICO')) candidates.push({ key: 'GENERICO', label: 'Productos Genéricos' });
+  clientes.forEach(c => {
+    if (!selected.has(c.id)) candidates.push({ key: c.id, label: c.nombre, sublabel: c.codigo || '' });
+  });
+  _renderMultiDropdown('afm-cli', input.value, candidates, 'afmToggleCliente');
+}
+function afmSecSearchInput() {
+  const input = document.getElementById('afm-sec-search');
+  if (!input) return;
+  const f = agregarDesdeMatrizState.filters;
+  const selected = new Set((f.sectorIds || []).map(x => parseInt(x)));
+  const cliFilter = f.clienteIds || [];
+  const numericCli = new Set(cliFilter.filter(x => x !== 'GENERICO').map(x => parseInt(x)));
+  let candidatos = sectores.slice();
+  if (cliFilter.length > 0 && numericCli.size > 0) {
+    candidatos = candidatos.filter(s => numericCli.has(s.cliente_id));
+  }
+  const showPrefix = numericCli.size === 0;
+  const candidates = candidatos.filter(s => !selected.has(s.id)).map(s => {
+    const cli = clientes.find(c => c.id === s.cliente_id);
+    return {
+      key: s.id,
+      label: showPrefix ? (cli ? cli.nombre + ' > ' + s.nombre : s.nombre) : s.nombre
+    };
+  });
+  _renderMultiDropdown('afm-sec', input.value, candidates, 'afmToggleSector');
+}
+function afmEqSearchInput() {
+  const input = document.getElementById('afm-eq-search');
+  if (!input) return;
+  const f = agregarDesdeMatrizState.filters;
+  const selected = new Set((f.equipoIds || []).map(x => parseInt(x)));
+  const sectFilter = (f.sectorIds || []).map(x => parseInt(x));
+  const cliFilter = f.clienteIds || [];
+  const numericCli = new Set(cliFilter.filter(x => x !== 'GENERICO').map(x => parseInt(x)));
+  let candidatos = equipos.slice();
+  if (sectFilter.length > 0) {
+    const sectSet = new Set(sectFilter);
+    candidatos = candidatos.filter(e => sectSet.has(e.sector_id));
+  } else if (numericCli.size > 0) {
+    const sectsCli = new Set(sectores.filter(s => numericCli.has(s.cliente_id)).map(s => s.id));
+    candidatos = candidatos.filter(e => sectsCli.has(e.sector_id));
+  }
+  const showPrefix = numericCli.size === 0 && sectFilter.length === 0;
+  const candidates = candidatos.filter(e => !selected.has(e.id)).map(e => {
+    const sec = sectores.find(s => s.id === e.sector_id);
+    const cli = sec ? clientes.find(c => c.id === sec.cliente_id) : null;
+    return {
+      key: e.id,
+      label: showPrefix ? ((cli ? cli.nombre + ' > ' : '') + (sec ? sec.nombre + ' > ' : '') + e.nombre) : e.nombre,
+      sublabel: e.codigo_cliente || ''
+    };
+  });
+  _renderMultiDropdown('afm-eq', input.value, candidates, 'afmToggleEquipo');
+}
+function afmConSearchInput() {
+  const input = document.getElementById('afm-con-search');
+  if (!input) return;
+  const f = agregarDesdeMatrizState.filters;
+  const selected = new Set((f.conjuntoIds || []).map(x => parseInt(x)));
+  const cliFilter = f.clienteIds || [];
+  const numericCli = new Set(cliFilter.filter(x => x !== 'GENERICO').map(x => parseInt(x)));
+  let candidatos = conjuntos.slice();
+  if (numericCli.size > 0) {
+    candidatos = candidatos.filter(c => numericCli.has(c.cliente_id));
+  }
+  const showPrefix = numericCli.size === 0;
+  const candidates = candidatos.filter(c => !selected.has(c.id)).map(c => {
+    const cli = clientes.find(x => x.id === c.cliente_id);
+    return {
+      key: c.id,
+      label: showPrefix ? (cli ? cli.nombre + ' > ' + c.nombre : c.nombre) : c.nombre
+    };
+  });
+  _renderMultiDropdown('afm-con', input.value, candidates, 'afmToggleConjunto');
+}
+function afmSubSearchInput() {
+  const input = document.getElementById('afm-sub-search');
+  if (!input) return;
+  const f = agregarDesdeMatrizState.filters;
+  const selected = new Set((f.subconjuntoIds || []).map(x => parseInt(x)));
+  const cliFilter = f.clienteIds || [];
+  const numericCli = new Set(cliFilter.filter(x => x !== 'GENERICO').map(x => parseInt(x)));
+  let candidatos = subconjuntos.slice();
+  if (numericCli.size > 0) {
+    candidatos = candidatos.filter(s => numericCli.has(s.cliente_id));
+  }
+  const showPrefix = numericCli.size === 0;
+  const candidates = candidatos.filter(s => !selected.has(s.id)).map(s => {
+    const cli = clientes.find(x => x.id === s.cliente_id);
+    return {
+      key: s.id,
+      label: showPrefix ? (cli ? cli.nombre + ' > ' + s.nombre : s.nombre) : s.nombre
+    };
+  });
+  _renderMultiDropdown('afm-sub', input.value, candidates, 'afmToggleSubconjunto');
+}
+
+function _afmRerenderList() {
+  // Re-renderiza solo la lista para no perder el foco de los inputs
+  const candidatos = afmGetFilteredProductos();
+  const list = document.getElementById('afm-list');
+  if (!list) return;
+  let h = '';
+  if (candidatos.length === 0) {
+    h += '<div style="padding:20px;text-align:center;color:#888;font-size:12px;font-style:italic">No hay productos que coincidan con los filtros.</div>';
+  } else {
+    const state = agregarDesdeMatrizState;
+    candidatos.forEach(p => {
+      const procsCnt = productosMatrizProcesos.filter(pr => pr.producto_id === p.id).length;
+      const cliLbl = p.cliente_id ? clN(p.cliente_id) : 'Genérico';
+      const matLbl = p.material_id ? ((materiales.find(x => x.id === p.material_id) || {}).nombre || '') : '';
+      h += '<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid #E8E6DF;cursor:pointer" onclick="afmSeleccionarProducto(' + p.id + ')">';
+      if (p.foto_url) {
+        h += '<img src="' + escapeHtml(p.foto_url) + '" style="width:40px;height:40px;object-fit:cover;border-radius:4px;flex:0 0 auto">';
+      } else {
+        h += '<div style="width:40px;height:40px;background:#E8E6DF;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:18px;flex:0 0 auto">📦</div>';
+      }
+      h += '<div style="flex:1;min-width:0">';
+      h += '<div style="font-weight:600;font-size:12px">' + escapeHtml(p.descripcion || '') + '</div>';
+      const meta = [cliLbl, p.codigo_cliente, matLbl, procsCnt + ' proceso(s)'].filter(Boolean).join(' · ');
+      h += '<div style="color:#888;font-size:10px;margin-top:1px">' + escapeHtml(meta) + '</div>';
+      h += '</div>';
+      const btnLabel = (state.modo === 'newProject') ? 'Elegir' : 'Importar';
+      h += '<button class="b b-p" style="padding:4px 10px;font-size:11px">' + btnLabel + '</button>';
+      h += '</div>';
+    });
+  }
+  list.innerHTML = h;
+}
+
+// Handler unificado: si modo newProject -> guarda en state global y vuelve al form.
+// Si modo project -> importa al proyecto directamente (mismo flujo de antes).
+function afmSeleccionarProducto(productoId) {
+  const state = agregarDesdeMatrizState;
+  if (!state) return;
+  if (state.modo === 'newProject') {
+    // Guardar seleccion para que renderNewProjectForm muestre los datos
+    const prod = productosMatriz.find(p => p.id === productoId);
+    if (!prod) return;
+    const ubics = productosMatrizUbicaciones.filter(u => u.producto_id === productoId);
+    const procs = productosMatrizProcesos.filter(pr => pr.producto_id === productoId)
+      .sort((a, b) => (a.orden || 999999) - (b.orden || 999999));
+    newProjectMatrizSelection = {
+      productoId: prod.id,
+      descripcion: prod.descripcion,
+      codigo_cliente: prod.codigo_cliente,
+      material_id: prod.material_id,
+      presentacion_mat_prima: prod.presentacion_mat_prima,
+      foto_url: prod.foto_url,
+      ubicaciones: ubics,
+      procesos: procs
+    };
+    // Capturar valores actuales del form antes de re-renderizar (para no perder)
+    const _captured = _newProjectCaptureFormValues();
+    document.getElementById('add-from-matriz-modal').remove();
+    renderNewProjectForm();
+    _newProjectRestoreFormValues(_captured);
+    toast('Producto seleccionado: ' + prod.descripcion);
+  } else {
+    // Modo project: importar directo
+    importarProductoAlProyecto(productoId);
+  }
 }
 
 async function importarProductoAlProyecto(productoId) {
