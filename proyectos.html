@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v50</title>
+<title>Velasco App 2.0 — Proyectos v51</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -1568,11 +1568,15 @@ function renderNewProjectForm() {
   // Pre-llenar valores si hay seleccion de matriz
   const matriz = newProjectMatrizSelection;
   const itDescVal = matriz ? escapeHtml(matriz.descripcion) : '';
-  const itCantVal = '1';  // cantidad siempre se ingresa nueva, no viene de matriz
+  // Cantidad: viene del modal de import (default 1) si la matriz se eligio
+  const itCantVal = matriz && matriz.cantidad ? matriz.cantidad : '1';
   const itCodCliVal = matriz ? escapeHtml(matriz.codigo_cliente || '') : '';
   const itMatId = matriz && matriz.material_id ? matriz.material_id : '';
   const itMatLabel = matriz && matriz.material_id ? ((materiales.find(m => m.id === matriz.material_id) || {}).nombre || '') : '';
+  // Presentación: la editada en el modal de import (default era la del producto matriz)
   const itPresVal = matriz ? escapeHtml(matriz.presentacion_mat_prima || '') : '';
+  // Fecha fin: la del modal de import
+  const itFechaFinVal = matriz && matriz.fecha_fin_estipulada ? matriz.fecha_fin_estipulada : '';
 
   // Descripción + Cantidad
   h += '<div class="row">';
@@ -1631,7 +1635,7 @@ function renderNewProjectForm() {
   }
   h += '</div>';
   h += '<div class="ef" style="flex:1"><div class="ef-l">Fecha de fin estipulada</div>';
-  h += '<input type="date" class="ef-i" id="f-item-fechafin" style="max-width:200px">';
+  h += '<input type="date" class="ef-i" id="f-item-fechafin" value="' + itFechaFinVal + '" style="max-width:200px">';
   h += '<div class="ef-help">Estimacion de oficina tecnica.</div></div></div>';
 
   // Si hay seleccion de matriz, mostrar resumen de ubicaciones y procesos heredados
@@ -3151,60 +3155,184 @@ function afmSeleccionarProducto(productoId) {
   const state = agregarDesdeMatrizState;
   if (!state) return;
   if (state.modo === 'newProject') {
-    // Guardar seleccion para que renderNewProjectForm muestre los datos
-    const prod = productosMatriz.find(p => p.id === productoId);
-    if (!prod) return;
-    const ubics = productosMatrizUbicaciones.filter(u => u.producto_id === productoId);
-    const procs = productosMatrizProcesos.filter(pr => pr.producto_id === productoId)
-      .sort((a, b) => (a.orden || 999999) - (b.orden || 999999));
-    newProjectMatrizSelection = {
-      productoId: prod.id,
-      descripcion: prod.descripcion,
-      codigo_cliente: prod.codigo_cliente,
-      material_id: prod.material_id,
-      presentacion_mat_prima: prod.presentacion_mat_prima,
-      foto_url: prod.foto_url,
-      ubicaciones: ubics,
-      procesos: procs
-    };
-    // Capturar valores actuales del form antes de re-renderizar (para no perder)
-    const _captured = _newProjectCaptureFormValues();
-    document.getElementById('add-from-matriz-modal').remove();
-    renderNewProjectForm();
-    _newProjectRestoreFormValues(_captured);
-    toast('Producto seleccionado: ' + prod.descripcion);
+    // Mostrar el modal de import (cantidad/fecha/presentación + validaciones).
+    // Al confirmar, guarda en newProjectMatrizSelection con los valores
+    // elegidos y vuelve al form de nuevo proyecto.
+    _mostrarModalImportar({
+      modo: 'newProject',
+      productoId: productoId,
+      onConfirm: (valores, ignorarValidaciones) => {
+        const prod = productosMatriz.find(p => p.id === productoId);
+        if (!prod) return;
+        const ubics = productosMatrizUbicaciones.filter(u => u.producto_id === productoId);
+        const procs = productosMatrizProcesos.filter(pr => pr.producto_id === productoId)
+          .sort((a, b) => (a.orden || 999999) - (b.orden || 999999));
+        // Si force, blanquear maquinas/operarios inactivos en una copia de los procesos
+        const procesosFinales = procs.map(pp => {
+          const copia = Object.assign({}, pp);
+          if (ignorarValidaciones) {
+            if (copia.maquina_ideal_id) {
+              const mq = maquinas.find(m => m.id === copia.maquina_ideal_id);
+              if (mq && mq.activo === false) copia.maquina_ideal_id = null;
+            }
+            if (copia.operario_ideal_id) {
+              const op = operarios.find(o => o.id === copia.operario_ideal_id);
+              if (op && op.activo === false) copia.operario_ideal_id = null;
+            }
+            copia.maquinas_suplentes = (copia.maquinas_suplentes || []).filter(id => {
+              const mq = maquinas.find(m => m.id === parseInt(id));
+              return !mq || mq.activo !== false;
+            });
+            copia.operarios_suplentes = (copia.operarios_suplentes || []).filter(id => {
+              const op = operarios.find(o => o.id === parseInt(id));
+              return !op || op.activo !== false;
+            });
+          }
+          return copia;
+        });
+        newProjectMatrizSelection = {
+          productoId: prod.id,
+          descripcion: prod.descripcion,
+          codigo_cliente: prod.codigo_cliente,
+          material_id: prod.material_id,
+          // Presentación: la que el usuario ingresó en el modal (puede haber editado)
+          presentacion_mat_prima: valores.presentacion_mat_prima,
+          // Cantidad y fecha del modal
+          cantidad: valores.cantidad,
+          fecha_fin_estipulada: valores.fecha_fin_estipulada,
+          foto_url: prod.foto_url,
+          ubicaciones: ubics,
+          procesos: procesosFinales,
+          ignorarValidaciones: ignorarValidaciones
+        };
+        const _captured = _newProjectCaptureFormValues();
+        const modalAfm = document.getElementById('add-from-matriz-modal');
+        if (modalAfm) modalAfm.remove();
+        renderNewProjectForm();
+        _newProjectRestoreFormValues(_captured);
+        toast('Producto seleccionado: ' + prod.descripcion + (ignorarValidaciones ? ' (forzado)' : ''));
+      }
+    });
   } else {
     // Modo project: importar directo
     importarProductoAlProyecto(productoId);
   }
 }
 
+// Importar producto matriz al proyecto: abre primero un modal para que el
+// usuario complete cantidad, fecha de fin estipulada y eventualmente edite
+// la presentación de materia prima. Si el producto tiene validaciones
+// fallidas, muestra las advertencias y un botón rojo "Cargar igualmente".
 async function importarProductoAlProyecto(productoId) {
   const proj = getProject(nav.projectId);
   if (!proj) return;
   const prod = productosMatriz.find(p => p.id === productoId);
   if (!prod) return;
-  if (!confirm('¿Importar "' + prod.descripcion + '" al proyecto?\n\nSe creará un item nuevo con los datos del producto y se copiarán todos sus procesos. El item quedará en modo estricto: los datos heredados no se podrán modificar.')) return;
+  _mostrarModalImportar({
+    modo: 'project',
+    productoId: productoId,
+    onConfirm: (valores, ignorarValidaciones) => {
+      _ejecutarImportProyecto(productoId, valores, ignorarValidaciones);
+    }
+  });
+}
 
-  // 1. Crear item con datos del producto. Cantidad por defecto = 1.
+// Modal compartido: para modo project (importa al proyecto al confirmar) y
+// modo newProject (guarda la seleccion para mostrar en el form).
+function _mostrarModalImportar(opts) {
+  const prod = productosMatriz.find(p => p.id === opts.productoId);
+  if (!prod) return;
+  const validacion = validarProductoMatriz(opts.productoId);
+
+  const existing = document.getElementById('import-prod-modal');
+  if (existing) existing.remove();
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'import-prod-modal';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '520px'; m.style.zIndex = '1100';
+
+  let h = '<div class="md-t">Importar "' + escapeHtml(prod.descripcion) + '"</div>';
+
+  // Si hay validaciones fallidas, mostrar advertencias.
+  if (!validacion.ok) {
+    h += '<div style="background:#FEF5E7;color:#854F0B;padding:10px 14px;border-radius:5px;margin-bottom:12px;font-size:12px;border:1px solid #F5C842">';
+    h += '<b>⚠️ El producto tiene campos pendientes o desactualizados:</b><ul style="margin:6px 0 0 18px;padding:0">';
+    validacion.problemas.forEach(p => {
+      h += '<li style="margin:2px 0">' + escapeHtml(p) + '</li>';
+    });
+    h += '</ul></div>';
+  }
+
+  // Campos a completar al importar
+  h += '<div class="row">';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Cantidad <span style="color:#A32D2D">*</span></div>';
+  h += '<input type="number" class="ef-i" id="imp-cant" value="1" min="1" step="1"></div>';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Fecha de fin estipulada <span style="color:#A32D2D">*</span></div>';
+  h += '<input type="date" class="ef-i" id="imp-fechafin"></div>';
+  h += '</div>';
+
+  // Presentación: default la del producto matriz, editable.
+  h += '<div class="ef"><div class="ef-l">Presentación de materia prima</div>';
+  h += '<input type="text" class="ef-i" id="imp-presentacion" value="' + escapeHtml(prod.presentacion_mat_prima || '') + '" placeholder="Ej. Ø290 x 1 1/2 pulg">';
+  h += '<div class="ef-help">Default = la del producto matriz. Si para este proyecto se usa otra, modificala.</div></div>';
+
+  // Acciones
+  h += '<div class="actions">';
+  h += '<button class="b" onclick="document.getElementById(\'import-prod-modal\').remove()">Cancelar</button>';
+  if (!validacion.ok) {
+    h += '<button class="b" style="background:#A32D2D;color:#fff;border-color:#A32D2D" onclick="_confirmarImport(\'force\')">Cargar igualmente</button>';
+    h += '<button class="b b-p" disabled title="Hay validaciones fallidas. Actualizá el producto en Matriz para habilitar la carga normal." style="opacity:.5;cursor:not-allowed">Importar</button>';
+  } else {
+    h += '<button class="b b-p" onclick="_confirmarImport(\'ok\')">Importar</button>';
+  }
+  h += '</div>';
+
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
+  // Guardar callback en global para que _confirmarImport lo use
+  window._importarPendingOpts = opts;
+}
+
+// Llamado desde los botones del modal. mode = 'ok' | 'force'.
+function _confirmarImport(mode) {
+  const opts = window._importarPendingOpts;
+  if (!opts) return;
+  const cant = parseInt(document.getElementById('imp-cant').value) || 0;
+  const fechaFin = document.getElementById('imp-fechafin').value || null;
+  const presentacion = document.getElementById('imp-presentacion').value.trim() || null;
+  if (cant < 1) { toast('La cantidad debe ser >= 1', true); return; }
+  if (!fechaFin) { toast('Ingresá la fecha de fin estipulada', true); return; }
+  const valores = { cantidad: cant, fecha_fin_estipulada: fechaFin, presentacion_mat_prima: presentacion };
+  document.getElementById('import-prod-modal').remove();
+  window._importarPendingOpts = null;
+  opts.onConfirm(valores, mode === 'force');
+}
+
+async function _ejecutarImportProyecto(productoId, valores, ignorarValidaciones) {
+  const proj = getProject(nav.projectId);
+  if (!proj) return;
+  const prod = productosMatriz.find(p => p.id === productoId);
+  if (!prod) return;
+
+  // Si ignorarValidaciones, los campos faltantes se importan como null/vacío.
+  // Si no, todo se importa tal como está.
+
+  // 1. Crear item con datos del producto + valores del modal
   const itemPayload = {
     proyecto_id: proj.id,
     cliente_id: proj.cliente_id,
     pedido_nro: proj.pedido_nro,
     descripcion: prod.descripcion,
-    cantidad: 1,
+    cantidad: valores.cantidad,
     foto_url: prod.foto_url || null,
     material_id: prod.material_id || null,
     codigo_cliente: prod.codigo_cliente || null,
-    presentacion_mat_prima: prod.presentacion_mat_prima || null,
-    fecha_fin_estipulada: null,  // que el responsable lo cargue despues
+    presentacion_mat_prima: valores.presentacion_mat_prima || null,
+    fecha_fin_estipulada: valores.fecha_fin_estipulada,
     estado: 'Espera MP',
     imported_from_matriz_id: prod.id
   };
   const { data: newItem, error: itErr } = await sb.from('items').insert(itemPayload).select().single();
   if (itErr) { toast('Error creando item: ' + itErr.message, true); console.error(itErr); return; }
 
-  // 2. Copiar ubicaciones del producto al item
+  // 2. Copiar ubicaciones
   const ubics = productosMatrizUbicaciones.filter(u => u.producto_id === productoId);
   if (ubics.length > 0) {
     const ubicInserts = ubics.map(u => ({
@@ -3218,14 +3346,39 @@ async function importarProductoAlProyecto(productoId) {
     await sb.from('items_ubicaciones').insert(ubicInserts);
   }
 
-  // 3. Copiar procesos del producto al item, en actividades_tablero.
-  // Usamos los mismos campos pero adaptados al contexto del item.
+  // 3. Copiar procesos. Si ignorarValidaciones, blanqueamos los campos
+  // referenciados a operarios/máquinas inactivos para que el responsable
+  // los complete a mano.
   const prodProcs = productosMatrizProcesos.filter(pp => pp.producto_id === productoId)
     .sort((a, b) => (a.orden || 999999) - (b.orden || 999999));
 
   const newActIds = [];
   for (let i = 0; i < prodProcs.length; i++) {
     const pp = prodProcs[i];
+    // Resolver maquina/operario considerando "activo"
+    let maq_id = pp.maquina_ideal_id;
+    let op_id = pp.operario_ideal_id;
+    if (ignorarValidaciones && maq_id) {
+      const mq = maquinas.find(m => m.id === maq_id);
+      if (mq && mq.activo === false) maq_id = null;
+    }
+    if (ignorarValidaciones && op_id) {
+      const op = operarios.find(o => o.id === op_id);
+      if (op && op.activo === false) op_id = null;
+    }
+    // Filtrar suplentes inactivos si force
+    let maq_supl = pp.maquinas_suplentes || [];
+    let op_supl = pp.operarios_suplentes || [];
+    if (ignorarValidaciones) {
+      maq_supl = maq_supl.filter(id => {
+        const mq = maquinas.find(m => m.id === parseInt(id));
+        return !mq || mq.activo !== false;
+      });
+      op_supl = op_supl.filter(id => {
+        const op = operarios.find(o => o.id === parseInt(id));
+        return !op || op.activo !== false;
+      });
+    }
     const actPayload = {
       item_id: newItem.id,
       cliente_id: proj.cliente_id,
@@ -3239,11 +3392,11 @@ async function importarProductoAlProyecto(productoId) {
       duracion_operario_min: pp.duracion_operario_min,
       duracion_planificador_min: (pp.duracion_estimada_min || 0) + (pp.duracion_margen_min || 0),
       tipo: pp.tipo,
-      maquina_ideal_id: pp.maquina_ideal_id,
+      maquina_ideal_id: maq_id,
       maquina_ideal_nombre: pp.maquina_ideal_nombre,
-      maquinas_suplentes_ids: pp.maquinas_suplentes,
-      operario_ideal_id: pp.operario_ideal_id,
-      operarios_suplentes_ids: pp.operarios_suplentes,
+      maquinas_suplentes_ids: maq_supl,
+      operario_ideal_id: op_id,
+      operarios_suplentes_ids: op_supl,
       urgencia: proj.urgencia,
       foto_proyecto_url: proj.foto_url,
       foto_url: prod.foto_url,
@@ -3260,7 +3413,7 @@ async function importarProductoAlProyecto(productoId) {
     newActIds.push(newAct.id);
   }
 
-  // 4. Crear correlatividades secuenciales (cada proceso es predecesor del siguiente)
+  // 4. Correlatividades secuenciales
   for (let i = 0; i < newActIds.length - 1; i++) {
     await sb.from('correlatividades').insert({
       predecesor_id: newActIds[i],
@@ -3268,9 +3421,10 @@ async function importarProductoAlProyecto(productoId) {
     });
   }
 
-  document.getElementById('add-from-matriz-modal').remove();
+  const modalAfm = document.getElementById('add-from-matriz-modal');
+  if (modalAfm) modalAfm.remove();
   await loadAll();
-  toast('Item importado de la matriz: ' + prodProcs.length + ' proceso(s)');
+  toast('Item importado de la matriz: ' + prodProcs.length + ' proceso(s)' + (ignorarValidaciones ? ' (forzado)' : ''));
   render();
 }
 
@@ -5616,7 +5770,9 @@ function _matrizProductoCardHtml(p) {
   }
   // Body
   h += '<div style="flex:1;min-width:0">';
-  h += '<div class="card-t">' + escapeHtml(p.descripcion || '(sin descripción)') + '</div>';
+  const validacion = validarProductoMatriz(p.id);
+  const warnIcon = validacion.ok ? '' : _warningIconHtml('Producto incompleto o desactualizado:\n' + validacion.problemas.join('\n'));
+  h += '<div class="card-t">' + escapeHtml(p.descripcion || '(sin descripción)') + warnIcon + '</div>';
   h += '<div class="card-s" style="margin-top:2px">';
   h += '<span style="color:' + (p.cliente_id ? '#0C447C' : '#5F5E5A') + '">' + escapeHtml(clienteLbl) + '</span>';
   if (p.material) h += ' · <span>' + escapeHtml(p.material) + '</span>';
@@ -5742,6 +5898,119 @@ function _matrizProductosEnNivel(opts) {
   });
 }
 
+// =============================================================================
+// VALIDACION DE PRODUCTO MATRIZ
+// =============================================================================
+// validarProductoMatriz(productoId): devuelve {ok, problemas} donde problemas
+// es un array de strings describiendo cada falla. Se usa al importar y al
+// renderizar el indicador ⚠ en las vistas.
+//
+// Reglas:
+// - Material asignado (material_id no null).
+// - Presentacion de materia prima (presentacion_mat_prima no null/vacia).
+// - Al menos un proceso cargado.
+// - Cada proceso debe tener: maquina ideal, operario ideal, duracion estimada,
+//   detalle de tareas (trabajo_a_realizar).
+// - Operarios y maquinas referenciados deben estar activos (activo=true).
+function validarProductoMatriz(productoId) {
+  const problemas = [];
+  const prod = productosMatriz.find(p => p.id === productoId);
+  if (!prod) return { ok: false, problemas: ['Producto no encontrado'] };
+
+  // 1. Material
+  if (!prod.material_id) problemas.push('Falta material asignado');
+  // 2. Presentación
+  if (!prod.presentacion_mat_prima || !prod.presentacion_mat_prima.trim()) {
+    problemas.push('Falta presentación de materia prima');
+  }
+  // 3. Procesos
+  const procs = productosMatrizProcesos.filter(pp => pp.producto_id === productoId);
+  if (procs.length === 0) {
+    problemas.push('No tiene procesos cargados');
+  } else {
+    procs.forEach((pp, idx) => {
+      const n = (idx + 1) + ' (' + (pp.proceso || '?') + ')';
+      if (!pp.duracion_estimada_min || pp.duracion_estimada_min < 1) {
+        problemas.push('Proceso ' + n + ': falta duración estimada');
+      }
+      if (!pp.maquina_ideal_id && !pp.maquina_ideal_nombre) {
+        problemas.push('Proceso ' + n + ': falta máquina ideal');
+      }
+      if (!pp.operario_ideal_id) {
+        problemas.push('Proceso ' + n + ': falta operario ideal');
+      }
+      if (!pp.trabajo_a_realizar || !String(pp.trabajo_a_realizar).trim()) {
+        problemas.push('Proceso ' + n + ': falta detalle de tareas');
+      }
+      // Activos
+      if (pp.maquina_ideal_id) {
+        const mq = maquinas.find(m => m.id === pp.maquina_ideal_id);
+        if (mq && mq.activo === false) {
+          problemas.push('Proceso ' + n + ': la máquina ideal "' + mq.nombre + '" está inactiva');
+        }
+      }
+      if (pp.operario_ideal_id) {
+        const op = operarios.find(o => o.id === pp.operario_ideal_id);
+        if (op && op.activo === false) {
+          problemas.push('Proceso ' + n + ': el operario ideal "' + op.nombre + '" está inactivo');
+        }
+      }
+      // Suplentes inactivos
+      (pp.maquinas_suplentes || []).forEach(mqId => {
+        const mq = maquinas.find(m => m.id === parseInt(mqId));
+        if (mq && mq.activo === false) {
+          problemas.push('Proceso ' + n + ': la máquina suplente "' + mq.nombre + '" está inactiva');
+        }
+      });
+      (pp.operarios_suplentes || []).forEach(opId => {
+        const op = operarios.find(o => o.id === parseInt(opId));
+        if (op && op.activo === false) {
+          problemas.push('Proceso ' + n + ': el operario suplente "' + op.nombre + '" está inactivo');
+        }
+      });
+    });
+  }
+
+  return { ok: problemas.length === 0, problemas: problemas };
+}
+
+// Devuelve true si el producto tiene algun problema (para el indicador ⚠).
+function _matrizProductoTieneProblemas(productoId) {
+  return !validarProductoMatriz(productoId).ok;
+}
+
+// Devuelve true si en este nodo (sector/equipo/conjunto/subconjunto/cliente)
+// hay al menos un producto con problemas. La idea es propagar el ⚠ hacia arriba.
+function _matrizNivelTieneProblemas(opts) {
+  // opts: {clienteId, sectorId, equipoId, conjuntoId, subconjuntoId}
+  // Cualquiera no especificado es "cualquier valor en ese campo".
+  // Buscamos productos que tengan ALGUNA ubicacion matcheando.
+  const prodsConProblemas = productosMatriz.filter(p => _matrizProductoTieneProblemas(p.id));
+  if (prodsConProblemas.length === 0) return false;
+  // Para cada producto con problemas, ver si alguna ubicacion matchea
+  return prodsConProblemas.some(p => {
+    const ubics = productosMatrizUbicaciones.filter(u => u.producto_id === p.id);
+    if (ubics.length === 0) {
+      // Producto sin ubicaciones: solo cuenta para "Productos Genéricos"
+      return opts.clienteId === undefined && !p.cliente_id;
+    }
+    return ubics.some(u => {
+      if (opts.clienteId !== undefined && u.cliente_id !== opts.clienteId) return false;
+      if (opts.sectorId !== undefined && u.sector_id !== opts.sectorId) return false;
+      if (opts.equipoId !== undefined && u.equipo_id !== opts.equipoId) return false;
+      if (opts.conjuntoId !== undefined && u.conjunto_id !== opts.conjuntoId) return false;
+      if (opts.subconjuntoId !== undefined && u.subconjunto_id !== opts.subconjuntoId) return false;
+      return true;
+    });
+  });
+}
+
+// Icono ⚠ con tooltip. Usar como sufijo en titulos.
+function _warningIconHtml(tooltip) {
+  const tt = tooltip ? ' title="' + escapeHtml(tooltip) + '"' : '';
+  return ' <span style="font-size:13px"' + tt + '>⚠️</span>';
+}
+
 // Cuenta total de productos (que pasen filtros) bajo un cliente, contando
 // producto distintos (no por ubicacion). Para mostrar en el resumen.
 function _matrizCountProdsDelCliente(cliId) {
@@ -5838,7 +6107,9 @@ function _matrizRenderProductoCardNested(p) {
   }
   // Body
   h += '<div style="flex:1;min-width:0">';
-  h += '<div style="font-weight:600;font-size:12px">' + escapeHtml(p.descripcion || '(sin descripción)') + '</div>';
+  const validacion = validarProductoMatriz(p.id);
+  const warnIcon = validacion.ok ? '' : _warningIconHtml('Producto incompleto o desactualizado:\n' + validacion.problemas.join('\n'));
+  h += '<div style="font-weight:600;font-size:12px">' + escapeHtml(p.descripcion || '(sin descripción)') + warnIcon + '</div>';
   const matLbl = p.material_id ? ((materiales.find(m => m.id === p.material_id) || {}).nombre || '') : '';
   const meta = [p.codigo_cliente, matLbl, procs.length + ' proceso(s)'].filter(Boolean).join(' · ');
   if (meta) h += '<div style="color:#888;font-size:10px;margin-top:1px">' + escapeHtml(meta) + '</div>';
@@ -5931,10 +6202,11 @@ function _matrizRenderClienteNode(cli) {
   const codigoChip = cli.codigo
     ? ' <span style="display:inline-block;padding:1px 5px;border-radius:3px;font-size:9px;background:#0C447C;color:#fff;font-weight:500;margin-left:4px;letter-spacing:0.3px">' + escapeHtml(cli.codigo) + '</span>'
     : '';
+  const warn = _matrizNivelTieneProblemas({ clienteId: cli.id }) ? _warningIconHtml('Algún producto debajo requiere atención') : '';
   return _matrizRenderNode(
     'cli:' + cli.id,
     '🏢',
-    escapeHtml(cli.nombre) + codigoChip,
+    escapeHtml(cli.nombre) + codigoChip + warn,
     cnt + ' producto(s)',
     '#0C447C',
     20,
@@ -5963,10 +6235,11 @@ function _matrizRenderClienteNode(cli) {
 
 function _matrizRenderSectorNode(sec, cliId) {
   const cnt = _matrizCountProdsDelSector(sec.id);
+  const warn = _matrizNivelTieneProblemas({ sectorId: sec.id }) ? _warningIconHtml('Algún producto debajo requiere atención') : '';
   return _matrizRenderNode(
     'sec:' + sec.id,
     '🏭',
-    escapeHtml(sec.nombre),
+    escapeHtml(sec.nombre) + warn,
     cnt + ' producto(s)',
     '#5F5E5A',
     24,
@@ -5996,10 +6269,11 @@ function _matrizRenderEquipoNode(eq, cliId) {
   const codeChip = eq.codigo_cliente
     ? ' <span style="font-size:10px;color:#888;font-weight:400">[' + escapeHtml(eq.codigo_cliente) + ']</span>'
     : '';
+  const warn = _matrizNivelTieneProblemas({ equipoId: eq.id }) ? _warningIconHtml('Algún producto debajo requiere atención') : '';
   return _matrizRenderNode(
     'eq:' + eq.id,
     '⚙',
-    escapeHtml(eq.nombre) + codeChip,
+    escapeHtml(eq.nombre) + codeChip + warn,
     cnt + ' producto(s)',
     '#5F5E5A',
     24,
@@ -6027,10 +6301,11 @@ function _matrizRenderEquipoNode(eq, cliId) {
 
 function _matrizRenderConjuntoNode(con, cliId) {
   const cnt = _matrizCountProdsDelConjunto(con.id);
+  const warn = _matrizNivelTieneProblemas({ conjuntoId: con.id }) ? _warningIconHtml('Algún producto debajo requiere atención') : '';
   return _matrizRenderNode(
     'con:' + con.id,
     '📦',
-    escapeHtml(con.nombre),
+    escapeHtml(con.nombre) + warn,
     cnt + ' producto(s)',
     '#5F5E5A',
     24,
@@ -6061,10 +6336,11 @@ function _matrizRenderConjuntoNode(con, cliId) {
 
 function _matrizRenderSubconjuntoNode(sub, cliId) {
   const cnt = _matrizCountProdsDelSubconjunto(sub.id);
+  const warn = _matrizNivelTieneProblemas({ subconjuntoId: sub.id }) ? _warningIconHtml('Algún producto debajo requiere atención') : '';
   return _matrizRenderNode(
     'sub:' + sub.id,
     '🔧',
-    escapeHtml(sub.nombre),
+    escapeHtml(sub.nombre) + warn,
     cnt + ' producto(s)',
     '#5F5E5A',
     24,
@@ -6085,10 +6361,12 @@ function _matrizRenderGenericosNode() {
   const filtered = applyMatrizFilters(productosMatriz);
   const generics = filtered.filter(p => !p.cliente_id);
   if (generics.length === 0) return '';
+  const hayProblemas = generics.some(p => _matrizProductoTieneProblemas(p.id));
+  const warn = hayProblemas ? _warningIconHtml('Algún producto debajo requiere atención') : '';
   return _matrizRenderNode(
     'gen',
     '📦',
-    'Productos Genéricos',
+    'Productos Genéricos' + warn,
     generics.length + ' producto(s)',
     '#5F5E5A',
     20,
