@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v53</title>
+<title>Velasco App 2.0 — Proyectos v54</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -123,6 +123,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
   <div id="main"></div>
 </div>
 <div class="to" id="to"></div>
+<div id="global-spinner" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.35);z-index:9999;align-items:center;justify-content:center;flex-direction:column;gap:14px">
+  <div style="width:48px;height:48px;border:4px solid rgba(255,255,255,0.3);border-top:4px solid #fff;border-radius:50%;animation:spin 0.8s linear infinite"></div>
+  <div id="global-spinner-msg" style="color:#fff;font-size:14px;font-weight:500;text-shadow:0 1px 2px rgba(0,0,0,0.5)"></div>
+</div>
+<style>@keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}</style>
 
 <script>
 const SB_URL = 'https://mzjbcfkalvduimqhawur.supabase.co';
@@ -509,6 +514,23 @@ function sortItemsList(arr) {
     return s.dir === 'asc' ? cmp : -cmp;
   });
   return out;
+}
+
+// Spinner global: bloquea la UI mientras se hace una operación larga.
+// Uso: showSpinner('Importando productos...'); await ...; hideSpinner();
+function showSpinner(msg) {
+  const sp = document.getElementById('global-spinner');
+  const m = document.getElementById('global-spinner-msg');
+  if (m) m.textContent = msg || '';
+  if (sp) sp.style.display = 'flex';
+}
+function hideSpinner() {
+  const sp = document.getElementById('global-spinner');
+  if (sp) sp.style.display = 'none';
+}
+function updateSpinnerMsg(msg) {
+  const m = document.getElementById('global-spinner-msg');
+  if (m) m.textContent = msg || '';
 }
 
 function toast(msg, isErr) {
@@ -1545,12 +1567,62 @@ function renderNewProjectForm() {
 
   // Primer item: header con botón "+ Agregar desde Matriz" a la derecha
   h += '<div class="section-t" style="margin-top:24px">';
-  h += '<span>Primer item del proyecto <span style="font-size:11px;color:#A32D2D;font-weight:500">* obligatorio</span></span>';
+  if (newProjectMatrizSelection && newProjectMatrizSelection.modoGrupo) {
+    h += '<span>Items del proyecto <span style="font-size:11px;color:#A32D2D;font-weight:500">* mínimo uno</span></span>';
+  } else {
+    h += '<span>Primer item del proyecto <span style="font-size:11px;color:#A32D2D;font-weight:500">* obligatorio</span></span>';
+  }
   h += '<button type="button" class="b b-p" onclick="newProjectAbrirMatriz()">+ Agregar desde Matriz</button>';
   h += '</div>';
 
-  // Si ya se eligio un producto matriz, mostrar el cartel informativo arriba
-  if (newProjectMatrizSelection) {
+  // ==========================================================================
+  // MODO GRUPO: el usuario eligió un conjunto/subconjunto. Se muestra la lista
+  // de items que se van a crear, sin form de primer item individual.
+  // ==========================================================================
+  if (newProjectMatrizSelection && newProjectMatrizSelection.modoGrupo) {
+    const grupo = newProjectMatrizSelection;
+    h += '<div style="background:#E8F2FC;color:#0C447C;padding:10px 14px;border-radius:5px;margin-bottom:8px;font-size:12px;border:1px solid #A8C8E8;display:flex;align-items:center;justify-content:space-between">';
+    h += '<div><b>' + (grupo.tipo === 'conjunto' ? 'Conjunto' : 'Subconjunto') + ' importado de matriz:</b> ' + escapeHtml(grupo.nombreGrupo) + '. Se crearán ' + grupo.expansion.productos.length + ' item(s) al guardar el proyecto.</div>';
+    h += '<button type="button" class="b" onclick="newProjectQuitarMatriz()" style="margin-left:10px;padding:3px 8px;font-size:11px">Quitar</button>';
+    h += '</div>';
+    h += '<div style="background:#FAFAF7;border:1px solid #E8E6DF;border-radius:6px;padding:14px">';
+    // Lista de items a crear
+    h += '<div style="font-size:11px;font-weight:600;color:#5F5E5A;margin-bottom:8px">Items que se van a crear:</div>';
+    h += '<div style="max-height:300px;overflow-y:auto;border:1px solid #E8E6DF;border-radius:5px;padding:6px 10px;background:#fff">';
+    let totalUnidades = 0;
+    grupo.expansion.productos.forEach(({ prodId, cant }) => {
+      const p = productosMatriz.find(x => x.id === prodId);
+      if (!p) return;
+      totalUnidades += cant;
+      const procsCnt = productosMatrizProcesos.filter(pr => pr.producto_id === prodId).length;
+      const matLbl = p.material_id ? ((materiales.find(m => m.id === p.material_id) || {}).nombre || '') : '';
+      const v = validarProductoMatriz(prodId);
+      const warn = v.ok ? '' : _warningIconHtml(v.problemas.join('\n'));
+      h += '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid #F0EEE7;font-size:11px">';
+      h += '<span style="flex:1">' + escapeHtml(p.descripcion) + warn + '<span style="color:#888;font-size:10px"> · ' + escapeHtml(matLbl || '?') + ' · ' + procsCnt + ' proceso(s)</span></span>';
+      h += '<span style="color:#0C447C;font-weight:600">x' + cant + '</span>';
+      h += '</div>';
+    });
+    h += '</div>';
+    h += '<div style="margin-top:8px;font-size:11px;color:#5F5E5A">Total: <b>' + grupo.expansion.productos.length + '</b> tipo(s) de producto, <b>' + totalUnidades + '</b> unidad(es) total. Estado inicial: <b>' + escapeHtml(grupo.estadoComun) + '</b>. Fecha fin: <b>' + escapeHtml(grupo.fechaFinComun) + '</b>.</div>';
+    if (grupo.ignorarValidaciones) {
+      h += '<div style="margin-top:6px;font-size:11px;color:#A32D2D"><b>⚠️ Modo "Cargar igualmente":</b> algunos productos tienen campos pendientes que se importarán en blanco.</div>';
+    }
+    h += '</div>';
+    h += '<div class="actions">';
+    h += '<button class="b" onclick="navigate({view:\'projects\'})">Cancelar</button>';
+    h += '<button class="b b-p" onclick="saveNewProject()">Crear proyecto e importar ' + grupo.expansion.productos.length + ' item(s)</button>';
+    h += '</div></div>';
+    main.innerHTML = h;
+    setupPhotoPaste();
+    return;
+  }
+
+  // ==========================================================================
+  // MODO ITEM ÚNICO: el flujo clásico (o el caso "desde matriz" producto)
+  // ==========================================================================
+  // Si ya se eligio un producto matriz (no grupo), mostrar el cartel informativo arriba
+  if (newProjectMatrizSelection && !newProjectMatrizSelection.modoGrupo) {
     const prod = productosMatriz.find(p => p.id === newProjectMatrizSelection.productoId);
     if (prod) {
       h += '<div style="background:#E8F2FC;color:#0C447C;padding:10px 14px;border-radius:5px;margin-bottom:8px;font-size:12px;border:1px solid #A8C8E8;display:flex;align-items:center;justify-content:space-between">';
@@ -1783,17 +1855,6 @@ async function saveNewProject() {
   const descripcion = document.getElementById('f-desc').value.trim();
   const urgencia = document.getElementById('f-urg').value;
   const estado = document.getElementById('f-estado').value;
-  const itemDesc = document.getElementById('f-item-desc').value.trim();
-  const itemCant = parseInt(document.getElementById('f-item-cant').value) || 1;
-  const itemPres = document.getElementById('f-item-pres').value.trim() || null;
-  const itemFechaFin = document.getElementById('f-item-fechafin').value || null;
-  const itemFotoUrl = document.getElementById('photo-url-item').value.trim() || null;
-  const itemEstadoEl = document.getElementById('f-item-estado');
-  const itemEstado = itemEstadoEl ? itemEstadoEl.value : 'Espera MP';
-  const itemCodCli = (document.getElementById('f-item-codcli') || { value: '' }).value.trim() || null;
-  // Material: lo leo del hidden value (existe tanto en modo matriz como en modo libre via picker)
-  const itemMatValEl = document.getElementById('f-item-material-value');
-  const itemMaterialId = itemMatValEl && itemMatValEl.value ? parseInt(itemMatValEl.value) : null;
   const fotoUrl = document.getElementById('photo-url-proj').value.trim() || null;
   const fechaIngreso = document.getElementById('f-fechaing').value || null;
   const fechaEntrega = document.getElementById('f-fechaentrega').value || null;
@@ -1803,101 +1864,168 @@ async function saveNewProject() {
   if (!cliente_id) { toast('Elegi un cliente', true); return; }
   if (!descripcion) { toast('Ingresa descripcion del proyecto', true); return; }
   if (!fechaEntrega) { toast('Ingresa fecha de entrega del proyecto', true); return; }
-  if (!itemDesc) { toast('Ingresa descripcion del primer item', true); return; }
   if (pedido_nro) {
     const dup = proyectos.find(p => p.pedido_nro === pedido_nro);
     if (dup) { errPedido.textContent = 'Ya existe un proyecto con el pedido ' + pedido_nro + ' (cliente: ' + clN(dup.cliente_id) + ')'; errPedido.style.display = 'block'; return; }
   }
 
-  // 1. Crear proyecto
-  const { data: newProj, error: projErr } = await sb.from('proyectos').insert({
-    cliente_id, pedido_nro, descripcion, urgencia, foto_url: fotoUrl,
-    fecha_ingreso: fechaIngreso, fecha_entrega: fechaEntrega,
-    cliente_final: clienteFinal, estado
-  }).select().single();
-  if (projErr) { toast('Error creando proyecto: ' + projErr.message, true); return; }
+  const esModoGrupo = newProjectMatrizSelection && newProjectMatrizSelection.modoGrupo;
 
-  // 2. Crear primer item
-  const itemPayload = {
-    proyecto_id: newProj.id, cliente_id, pedido_nro,
-    descripcion: itemDesc, cantidad: itemCant,
-    foto_url: itemFotoUrl,
-    material_id: itemMaterialId,
-    codigo_cliente: itemCodCli,
-    presentacion_mat_prima: itemPres, fecha_fin_estipulada: itemFechaFin,
-    estado: itemEstado
-  };
-  // Si es desde matriz, marcar imported_from_matriz_id
-  if (newProjectMatrizSelection) {
-    itemPayload.imported_from_matriz_id = newProjectMatrizSelection.productoId;
-  }
-  const { data: newItem, error: itemErr } = await sb.from('items').insert(itemPayload).select().single();
-  if (itemErr) { toast('Error creando item: ' + itemErr.message, true); return; }
-
-  // 3. Si hay matriz, copiar ubicaciones, procesos y correlatividades
-  if (newProjectMatrizSelection) {
-    const matriz = newProjectMatrizSelection;
-    // Ubicaciones
-    if (matriz.ubicaciones && matriz.ubicaciones.length > 0) {
-      const ubicInserts = matriz.ubicaciones.map(u => ({
-        item_id: newItem.id,
-        cliente_id: u.cliente_id,
-        sector_id: u.sector_id,
-        equipo_id: u.equipo_id,
-        conjunto_id: u.conjunto_id,
-        subconjunto_id: u.subconjunto_id
-      }));
-      await sb.from('items_ubicaciones').insert(ubicInserts);
+  // Validacion adicional para modo item unico
+  if (!esModoGrupo) {
+    const itemDescEl = document.getElementById('f-item-desc');
+    if (!itemDescEl || !itemDescEl.value.trim()) {
+      toast('Ingresa descripcion del primer item', true);
+      return;
     }
-    // Procesos + correlatividades secuenciales
-    const newActIds = [];
-    for (let i = 0; i < matriz.procesos.length; i++) {
-      const pp = matriz.procesos[i];
-      const actPayload = {
-        item_id: newItem.id,
-        cliente_id, pedido_nro,
-        descripcion: itemDesc + ' - ' + (pp.proceso || ''),
-        descripcion_proyecto: descripcion,
-        descripcion_trabajo: pp.trabajo_a_realizar || null,
-        proceso: pp.proceso,
-        duracion_estimada_min: pp.duracion_estimada_min,
-        duracion_margen_min: pp.duracion_margen_min || 0,
-        duracion_operario_min: pp.duracion_operario_min,
-        duracion_planificador_min: (pp.duracion_estimada_min || 0) + (pp.duracion_margen_min || 0),
-        tipo: pp.tipo,
-        maquina_ideal_id: pp.maquina_ideal_id,
-        maquina_ideal_nombre: pp.maquina_ideal_nombre,
-        maquinas_suplentes_ids: pp.maquinas_suplentes,
-        operario_ideal_id: pp.operario_ideal_id,
-        operarios_suplentes_ids: pp.operarios_suplentes,
-        urgencia,
-        foto_proyecto_url: fotoUrl,
+  }
+
+  showSpinner('Creando proyecto...');
+
+  try {
+    // 1. Crear proyecto
+    const { data: newProj, error: projErr } = await sb.from('proyectos').insert({
+      cliente_id, pedido_nro, descripcion, urgencia, foto_url: fotoUrl,
+      fecha_ingreso: fechaIngreso, fecha_entrega: fechaEntrega,
+      cliente_final: clienteFinal, estado
+    }).select().single();
+    if (projErr) { toast('Error creando proyecto: ' + projErr.message, true); return; }
+
+    if (esModoGrupo) {
+      // ===== MODO GRUPO: importar todos los productos del conjunto/subconjunto =====
+      const grupo = newProjectMatrizSelection;
+      const productosAImportar = grupo.expansion.productos;
+      const total = productosAImportar.length;
+      updateSpinnerMsg('Importando ' + total + ' producto(s)...');
+
+      // Activar contexto del proyecto recién creado para que _importarProductoCore
+      // use el cliente/pedido/descripcion correctos. Como _importarProductoCore lee
+      // de getProject(nav.projectId), seteamos nav temporalmente.
+      const navPrev = nav;
+      nav = { ...nav, view: 'project', projectId: newProj.id };
+      // Pero loadAll todavía no se ejecutó, entonces el proyecto recién creado no está
+      // en `proyectos`. Lo agregamos manualmente al cache para que getProject lo encuentre.
+      proyectos.push({ ...newProj, items: [] });
+
+      let importados = 0;
+      let totalUnidades = 0;
+      const BATCH_SIZE = 5;
+      for (let i = 0; i < productosAImportar.length; i += BATCH_SIZE) {
+        const batch = productosAImportar.slice(i, i + BATCH_SIZE);
+        updateSpinnerMsg('Importando producto(s) ' + (i + 1) + ' a ' + Math.min(i + BATCH_SIZE, total) + ' de ' + total + '...');
+        const promesas = batch.map(({ prodId, cant }) => {
+          const valores = {
+            cantidad: cant,
+            fecha_fin_estipulada: grupo.fechaFinComun,
+            estado: grupo.estadoComun,
+            presentacion_mat_prima: (productosMatriz.find(p => p.id === prodId) || {}).presentacion_mat_prima || null
+          };
+          return _importarProductoCore(prodId, valores, grupo.ignorarValidaciones).then(res => {
+            if (!res.error) {
+              importados++;
+              totalUnidades += cant;
+            }
+            return res;
+          });
+        });
+        await Promise.all(promesas);
+      }
+
+      newProjectMatrizSelection = null;
+      updateSpinnerMsg('Refrescando datos...');
+      await loadAll();
+      toast('Proyecto creado con ' + importados + ' item(s) importado(s) (' + totalUnidades + ' unidad(es) total)');
+      navigate({ view: 'project', projectId: newProj.id });
+    } else {
+      // ===== MODO ITEM ÚNICO: comportamiento clasico =====
+      const itemDesc = document.getElementById('f-item-desc').value.trim();
+      const itemCant = parseInt(document.getElementById('f-item-cant').value) || 1;
+      const itemPres = document.getElementById('f-item-pres').value.trim() || null;
+      const itemFechaFin = document.getElementById('f-item-fechafin').value || null;
+      const itemFotoUrl = document.getElementById('photo-url-item').value.trim() || null;
+      const itemEstadoEl = document.getElementById('f-item-estado');
+      const itemEstado = itemEstadoEl ? itemEstadoEl.value : 'Espera MP';
+      const itemCodCli = (document.getElementById('f-item-codcli') || { value: '' }).value.trim() || null;
+      const itemMatValEl = document.getElementById('f-item-material-value');
+      const itemMaterialId = itemMatValEl && itemMatValEl.value ? parseInt(itemMatValEl.value) : null;
+
+      const itemPayload = {
+        proyecto_id: newProj.id, cliente_id, pedido_nro,
+        descripcion: itemDesc, cantidad: itemCant,
         foto_url: itemFotoUrl,
-        fecha_ingreso: fechaIngreso,
-        cliente_final: clienteFinal,
-        orden: i + 1,
-        estado: 'sin_planificar',
-        fecha: '1900-01-01',
-        hora_inicio: '06:00:00',
-        estado_proceso: 'Planificación Pendiente'
+        material_id: itemMaterialId,
+        codigo_cliente: itemCodCli,
+        presentacion_mat_prima: itemPres, fecha_fin_estipulada: itemFechaFin,
+        estado: itemEstado
       };
-      const { data: newAct, error: actErr } = await sb.from('actividades_tablero').insert(actPayload).select().single();
-      if (actErr) { console.error('Error creando proceso:', actErr); continue; }
-      newActIds.push(newAct.id);
-    }
-    for (let i = 0; i < newActIds.length - 1; i++) {
-      await sb.from('correlatividades').insert({
-        predecesor_id: newActIds[i],
-        sucesor_id: newActIds[i + 1]
-      });
-    }
-  }
+      if (newProjectMatrizSelection) {
+        itemPayload.imported_from_matriz_id = newProjectMatrizSelection.productoId;
+      }
+      const { data: newItem, error: itemErr } = await sb.from('items').insert(itemPayload).select().single();
+      if (itemErr) { toast('Error creando item: ' + itemErr.message, true); return; }
 
-  // Limpiar estado de matriz para proximo proyecto
-  newProjectMatrizSelection = null;
-  await loadAll();
-  toast('Proyecto creado');
-  navigate({ view: 'project', projectId: newProj.id });
+      if (newProjectMatrizSelection) {
+        const matriz = newProjectMatrizSelection;
+        if (matriz.ubicaciones && matriz.ubicaciones.length > 0) {
+          const ubicInserts = matriz.ubicaciones.map(u => ({
+            item_id: newItem.id,
+            cliente_id: u.cliente_id,
+            sector_id: u.sector_id,
+            equipo_id: u.equipo_id,
+            conjunto_id: u.conjunto_id,
+            subconjunto_id: u.subconjunto_id
+          }));
+          await sb.from('items_ubicaciones').insert(ubicInserts);
+        }
+        // Procesos en batch
+        if (matriz.procesos && matriz.procesos.length > 0) {
+          const actInserts = matriz.procesos.map((pp, i) => ({
+            item_id: newItem.id,
+            cliente_id, pedido_nro,
+            descripcion: itemDesc + ' - ' + (pp.proceso || ''),
+            descripcion_proyecto: descripcion,
+            descripcion_trabajo: pp.trabajo_a_realizar || null,
+            proceso: pp.proceso,
+            duracion_estimada_min: pp.duracion_estimada_min,
+            duracion_margen_min: pp.duracion_margen_min || 0,
+            duracion_operario_min: pp.duracion_operario_min,
+            duracion_planificador_min: (pp.duracion_estimada_min || 0) + (pp.duracion_margen_min || 0),
+            tipo: pp.tipo,
+            maquina_ideal_id: pp.maquina_ideal_id,
+            maquina_ideal_nombre: pp.maquina_ideal_nombre,
+            maquinas_suplentes_ids: pp.maquinas_suplentes,
+            operario_ideal_id: pp.operario_ideal_id,
+            operarios_suplentes_ids: pp.operarios_suplentes,
+            urgencia,
+            foto_proyecto_url: fotoUrl,
+            foto_url: itemFotoUrl,
+            fecha_ingreso: fechaIngreso,
+            cliente_final: clienteFinal,
+            orden: i + 1,
+            estado: 'sin_planificar',
+            fecha: '1900-01-01',
+            hora_inicio: '06:00:00',
+            estado_proceso: 'Planificación Pendiente'
+          }));
+          const { data: actsData, error: actErr } = await sb.from('actividades_tablero').insert(actInserts).select('id');
+          if (!actErr && actsData && actsData.length > 1) {
+            const newActIds = actsData.map(x => x.id);
+            const corrInserts = [];
+            for (let i = 0; i < newActIds.length - 1; i++) {
+              corrInserts.push({ predecesor_id: newActIds[i], sucesor_id: newActIds[i + 1] });
+            }
+            await sb.from('correlatividades').insert(corrInserts);
+          }
+        }
+      }
+      newProjectMatrizSelection = null;
+      await loadAll();
+      toast('Proyecto creado');
+      navigate({ view: 'project', projectId: newProj.id });
+    }
+  } finally {
+    hideSpinner();
+  }
 }
 
 // ========== PROJECT DETAIL ==========
@@ -2728,7 +2856,6 @@ function showAgregarDesdeMatriz(opts) {
   agregarDesdeMatrizState = {
     modo: modo,
     clienteProjId: cliId,
-    tab: 'productos',  // 'productos' | 'conjuntos' | 'subconjuntos'
     filters: {
       search: '',
       codigos: '',
@@ -2740,6 +2867,8 @@ function showAgregarDesdeMatriz(opts) {
     },
     sort: { by: 'descripcion', dir: 'asc' }
   };
+  // Resetear expansion al abrir
+  afmExpanded = new Set();
   _renderAgregarDesdeMatrizModal();
 }
 
@@ -2754,18 +2883,6 @@ function _renderAgregarDesdeMatrizModal() {
   let h = '<div class="md-t">Agregar item desde Matriz de Productos</div>';
   const cliLblProj = clN(state.clienteProjId);
   h += '<div style="font-size:11px;color:#5F5E5A;margin-bottom:10px">Cliente del proyecto: <b>' + escapeHtml(cliLblProj) + '</b>. Por defecto se filtran productos de este cliente y los genéricos. Modificá los filtros para ver más opciones.</div>';
-
-  // ===== TABS: Productos / Conjuntos / Subconjuntos =====
-  h += '<div style="display:flex;border-bottom:1px solid #C8C6BE;margin-bottom:12px;gap:0">';
-  const tabsAfm = [['productos','Productos'], ['conjuntos','Conjuntos'], ['subconjuntos','Subconjuntos']];
-  tabsAfm.forEach(([key, lbl]) => {
-    const active = state.tab === key;
-    const style = active
-      ? 'background:#0C447C;color:#fff;border:1px solid #0C447C;border-bottom:none;font-weight:700'
-      : 'background:#fff;color:#5F5E5A;border:1px solid #C8C6BE;border-bottom:none;font-weight:500';
-    h += '<button class="b" style="' + style + ';padding:6px 16px;font-size:12px;border-radius:5px 5px 0 0;margin-bottom:-1px;position:relative;z-index:1" onclick="afmCambiarTab(\'' + key + '\')">' + lbl + '</button>';
-  });
-  h += '</div>';
 
   // ===== BARRA DE FILTROS (igual a la pagina de Matriz) =====
   h += '<div style="background:#F5F3EC;border:1px solid #C8C6BE;border-radius:6px;padding:10px 14px;margin-bottom:12px">';
@@ -2854,125 +2971,215 @@ function _renderAgregarDesdeMatrizModal() {
   m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
 }
 
-// Genera el HTML de la lista según el tab activo.
+// Set de nodos expandidos en el modal "Agregar desde Matriz". Keys:
+//   "con:N", "sub:N" (no se expanden productos, son hojas).
+// Productos genéricos / productos sueltos del cliente no necesitan expansión
+// porque son hojas.
+let afmExpanded = new Set();
+
+function afmToggleExpand(key) {
+  if (afmExpanded.has(key)) afmExpanded.delete(key);
+  else afmExpanded.add(key);
+  _afmRerenderList();
+}
+
+// Genera el HTML del cuerpo del modal: vista anidada Conjunto > Subconjunto > Producto.
+// No incluye clientes / sectores / equipos. La selección de cliente viene de los filtros.
+//
+// Estructura visual:
+//   📦 [Conjunto X]         "Importar todo" →  expandido:
+//      🔧 [Subconjunto A]   "Importar todo" →  expandido:
+//          📦 producto P1   "Importar"
+//          📦 producto P2   "Importar"
+//      📦 producto directo del conjunto (sin subconjunto)
+//   📦 Productos sueltos    (productos cuya ubicación termina antes de un conjunto, o sin ubicación)
 function _afmListaHtml() {
   const state = agregarDesdeMatrizState;
   if (!state) return '';
-  if (state.tab === 'productos') return _afmListaProductosHtml();
-  if (state.tab === 'conjuntos') return _afmListaConjuntosHtml();
-  if (state.tab === 'subconjuntos') return _afmListaSubconjuntosHtml();
-  return '';
-}
-
-function _afmListaProductosHtml() {
-  const state = agregarDesdeMatrizState;
-  const candidatos = afmGetFilteredProductos();
-  if (candidatos.length === 0) {
-    return '<div style="padding:20px;text-align:center;color:#888;font-size:12px;font-style:italic">No hay productos que coincidan con los filtros.</div>';
-  }
-  let h = '';
-  candidatos.forEach(p => {
-    const procsCnt = productosMatrizProcesos.filter(pr => pr.producto_id === p.id).length;
-    const cliLbl = p.cliente_id ? clN(p.cliente_id) : 'Genérico';
-    const matLbl = p.material_id ? ((materiales.find(x => x.id === p.material_id) || {}).nombre || '') : '';
-    const validacion = validarProductoMatriz(p.id);
-    const warn = validacion.ok ? '' : _warningIconHtml('Producto incompleto o desactualizado');
-    h += '<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid #E8E6DF;cursor:pointer" onclick="afmSeleccionarProducto(' + p.id + ')">';
-    if (p.foto_url) {
-      h += '<img src="' + escapeHtml(p.foto_url) + '" style="width:40px;height:40px;object-fit:cover;border-radius:4px;flex:0 0 auto">';
-    } else {
-      h += '<div style="width:40px;height:40px;background:#E8E6DF;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:18px;flex:0 0 auto">📦</div>';
-    }
-    h += '<div style="flex:1;min-width:0">';
-    h += '<div style="font-weight:600;font-size:12px">' + escapeHtml(p.descripcion || '') + warn + '</div>';
-    const meta = [cliLbl, p.codigo_cliente, matLbl, procsCnt + ' proceso(s)'].filter(Boolean).join(' · ');
-    h += '<div style="color:#888;font-size:10px;margin-top:1px">' + escapeHtml(meta) + '</div>';
-    h += '</div>';
-    const btnLabel = (state.modo === 'newProject') ? 'Elegir' : 'Importar';
-    h += '<button class="b b-p" style="padding:4px 10px;font-size:11px">' + btnLabel + '</button>';
-    h += '</div>';
-  });
-  return h;
-}
-
-// Lista de conjuntos filtrados por cliente_id elegido en filtros.
-// Cada conjunto muestra: nombre, cliente, cuántos productos contiene (incluyendo
-// los de sus subconjuntos recursivamente).
-function _afmListaConjuntosHtml() {
-  const state = agregarDesdeMatrizState;
   const f = state.filters;
+
+  // Determinar clientes de interes (de los filtros). Si no hay filtro, todos.
   const cliFilter = f.clienteIds || [];
-  const numericCli = new Set(cliFilter.filter(x => x !== 'GENERICO').map(x => parseInt(x)));
   const includesGenerico = cliFilter.includes('GENERICO');
-  let candidatos = conjuntos.slice();
-  // Filtrar por cliente. Conjuntos genericos NO existen (todo conjunto pertenece a un cliente).
-  if (cliFilter.length > 0) {
-    candidatos = candidatos.filter(c => numericCli.has(c.cliente_id));
+  const numericCli = new Set(cliFilter.filter(x => x !== 'GENERICO').map(x => parseInt(x)));
+  const usarTodosCli = cliFilter.length === 0;
+
+  // 1. Conjuntos: filtrar por cliente.
+  let conjuntosFiltrados = conjuntos.slice();
+  if (!usarTodosCli) {
+    conjuntosFiltrados = conjuntosFiltrados.filter(c => numericCli.has(c.cliente_id));
   }
-  // Filtrar por busqueda
+  // Filtrar por search (sobre el nombre del conjunto, sus subconjuntos, o productos)
   if (f.search && f.search.trim()) {
     const q = f.search.trim().toLowerCase();
-    candidatos = candidatos.filter(c => (c.nombre || '').toLowerCase().includes(q));
+    conjuntosFiltrados = conjuntosFiltrados.filter(c => {
+      // Match directo en nombre del conjunto
+      if ((c.nombre || '').toLowerCase().includes(q)) return true;
+      // Match en algun subconjunto
+      const subRels = subconjuntosConjuntos.filter(sc => sc.conjunto_id === c.id);
+      for (const sr of subRels) {
+        const sub = subconjuntos.find(s => s.id === sr.subconjunto_id);
+        if (sub && (sub.nombre || '').toLowerCase().includes(q)) return true;
+      }
+      // Match en algun producto del conjunto (directo o via subconjunto)
+      const exp = _expandirConjunto(c.id, 1);
+      return exp.productos.some(({ prodId }) => {
+        const p = productosMatriz.find(x => x.id === prodId);
+        return p && (p.descripcion || '').toLowerCase().includes(q);
+      });
+    });
   }
-  // Ordenar
-  candidatos.sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
-  if (candidatos.length === 0) {
-    return '<div style="padding:20px;text-align:center;color:#888;font-size:12px;font-style:italic">No hay conjuntos que coincidan con los filtros.</div>';
-  }
-  let h = '';
-  candidatos.forEach(con => {
-    const cliLbl = clN(con.cliente_id);
-    const expansion = _expandirConjunto(con.id, 1);  // {productos: [{prodId, cant}], problemas: [...]}
-    const totalProd = expansion.productos.reduce((acc, x) => acc + x.cant, 0);
-    const numUnicos = expansion.productos.length;
-    const warn = expansion.problemas.length > 0 ? _warningIconHtml('Contiene productos incompletos o desactualizados') : '';
-    h += '<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid #E8E6DF;cursor:pointer" onclick="afmSeleccionarConjunto(' + con.id + ')">';
-    h += '<div style="width:40px;height:40px;background:#E8E6DF;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:18px;flex:0 0 auto">📦</div>';
-    h += '<div style="flex:1;min-width:0">';
-    h += '<div style="font-weight:600;font-size:12px">' + escapeHtml(con.nombre || '') + warn + '</div>';
-    h += '<div style="color:#888;font-size:10px;margin-top:1px">' + escapeHtml(cliLbl) + ' · ' + numUnicos + ' tipo(s) de producto · ' + totalProd + ' unidad(es) total</div>';
-    h += '</div>';
-    const btnLabel = (state.modo === 'newProject') ? 'Elegir todo' : 'Importar todo';
-    h += '<button class="b b-p" style="padding:4px 10px;font-size:11px">' + btnLabel + '</button>';
-    h += '</div>';
+  conjuntosFiltrados.sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+
+  // 2. Productos sueltos (del cliente, NO en conjunto): para mostrar al final
+  // como una lista plana. Estos son productos cuya ubicacion no apunta a un
+  // conjunto, o que no tienen ubicacion (genericos).
+  let prodsSueltosCandidatos = afmGetFilteredProductos();
+  // Quitar productos que ya aparecen en algún conjunto/subconjunto (para no duplicar)
+  const productosEnConjuntos = new Set();
+  conjuntosFiltrados.forEach(c => {
+    const exp = _expandirConjunto(c.id, 1);
+    exp.productos.forEach(({ prodId }) => productosEnConjuntos.add(prodId));
   });
+  prodsSueltosCandidatos = prodsSueltosCandidatos.filter(p => !productosEnConjuntos.has(p.id));
+
+  // ===== RENDER =====
+  if (conjuntosFiltrados.length === 0 && prodsSueltosCandidatos.length === 0) {
+    return '<div style="padding:20px;text-align:center;color:#888;font-size:12px;font-style:italic">No hay conjuntos ni productos que coincidan con los filtros.</div>';
+  }
+  let h = '<div style="padding:8px">';
+
+  // Conjuntos anidados
+  conjuntosFiltrados.forEach(c => {
+    h += _afmRenderConjuntoNode(c);
+  });
+
+  // Productos sueltos: lista plana al final
+  if (prodsSueltosCandidatos.length > 0) {
+    h += '<div style="margin-top:12px;font-size:11px;font-weight:700;color:#5F5E5A;text-transform:uppercase;letter-spacing:0.5px;padding:8px 4px 4px">Productos sueltos (no asignados a un conjunto)</div>';
+    prodsSueltosCandidatos.forEach(p => {
+      h += _afmRenderProductoLeaf(p);
+    });
+  }
+
+  h += '</div>';
   return h;
 }
 
-function _afmListaSubconjuntosHtml() {
+// Renderiza un nodo Conjunto expandible con boton "Importar todo".
+function _afmRenderConjuntoNode(c) {
+  const key = 'con:' + c.id;
+  const expanded = afmExpanded.has(key);
+  const expansion = _expandirConjunto(c.id, 1);
+  const totalUnidades = expansion.productos.reduce((acc, x) => acc + x.cant, 0);
+  const numUnicos = expansion.productos.length;
+  const hayProblemas = expansion.problemas.length > 0;
+  const warn = hayProblemas ? _warningIconHtml('Contiene productos incompletos o desactualizados') : '';
+  const cliLbl = clN(c.cliente_id);
+
+  let h = '<div style="background:#fff;border:1px solid #C8C6BE;border-radius:6px;margin-bottom:6px;overflow:hidden">';
+  h += '<div style="display:flex;align-items:center;padding:8px 12px;gap:8px">';
+  h += '<button onclick="afmToggleExpand(\'' + key + '\')" style="background:transparent;border:none;padding:4px;font-size:14px;color:#5F5E5A;cursor:pointer;flex:0 0 auto">' + (expanded ? '▼' : '▶') + '</button>';
+  h += '<span style="font-size:14px;flex:0 0 auto">📦</span>';
+  h += '<div style="flex:1;min-width:0;cursor:pointer" onclick="afmToggleExpand(\'' + key + '\')">';
+  h += '<div style="font-weight:600;color:#5F5E5A;font-size:13px">' + escapeHtml(c.nombre) + warn + '</div>';
+  h += '<div style="font-size:11px;color:#888;margin-top:1px">' + escapeHtml(cliLbl) + ' · ' + numUnicos + ' tipo(s) de producto · ' + totalUnidades + ' unidad(es) total</div>';
+  h += '</div>';
+  const stateAfm = agregarDesdeMatrizState;
+  const btnLabel = (stateAfm.modo === 'newProject') ? 'Elegir todo' : 'Importar todo';
+  h += '<button class="b b-p" style="padding:4px 10px;font-size:11px" onclick="afmSeleccionarConjunto(' + c.id + ')">' + btnLabel + '</button>';
+  h += '</div>';
+  if (expanded) {
+    h += '<div style="border-top:1px solid #E8E6DF;background:#FAF9F5;padding:8px 8px 8px 24px">';
+    // Subconjuntos
+    const subRels = subconjuntosConjuntos.filter(sc => sc.conjunto_id === c.id);
+    subRels.forEach(sc => {
+      const sub = subconjuntos.find(s => s.id === sc.subconjunto_id);
+      if (sub) h += _afmRenderSubconjuntoNode(sub);
+    });
+    // Productos directos del conjunto (sin subconjunto)
+    const ubicsDirect = productosMatrizUbicaciones.filter(u => u.conjunto_id === c.id && !u.subconjunto_id);
+    const productosYaContados = new Set();
+    ubicsDirect.forEach(u => {
+      if (productosYaContados.has(u.producto_id)) return;
+      productosYaContados.add(u.producto_id);
+      const p = productosMatriz.find(x => x.id === u.producto_id);
+      if (p) h += _afmRenderProductoLeaf(p, u.cantidad || 1);
+    });
+    if (subRels.length === 0 && productosYaContados.size === 0) {
+      h += '<div style="font-size:11px;color:#888;font-style:italic;padding:4px 0">Sin subconjuntos ni productos directos.</div>';
+    }
+    h += '</div>';
+  }
+  h += '</div>';
+  return h;
+}
+
+function _afmRenderSubconjuntoNode(sub) {
+  const key = 'sub:' + sub.id;
+  const expanded = afmExpanded.has(key);
+  const expansion = _expandirSubconjunto(sub.id, 1);
+  const totalUnidades = expansion.productos.reduce((acc, x) => acc + x.cant, 0);
+  const numUnicos = expansion.productos.length;
+  const hayProblemas = expansion.problemas.length > 0;
+  const warn = hayProblemas ? _warningIconHtml('Contiene productos incompletos o desactualizados') : '';
+
+  let h = '<div style="background:#fff;border:1px solid #C8C6BE;border-radius:6px;margin-bottom:6px;overflow:hidden">';
+  h += '<div style="display:flex;align-items:center;padding:8px 12px;gap:8px">';
+  h += '<button onclick="afmToggleExpand(\'' + key + '\')" style="background:transparent;border:none;padding:4px;font-size:14px;color:#5F5E5A;cursor:pointer;flex:0 0 auto">' + (expanded ? '▼' : '▶') + '</button>';
+  h += '<span style="font-size:14px;flex:0 0 auto">🔧</span>';
+  h += '<div style="flex:1;min-width:0;cursor:pointer" onclick="afmToggleExpand(\'' + key + '\')">';
+  h += '<div style="font-weight:600;color:#5F5E5A;font-size:13px">' + escapeHtml(sub.nombre) + warn + '</div>';
+  h += '<div style="font-size:11px;color:#888;margin-top:1px">' + numUnicos + ' tipo(s) de producto · ' + totalUnidades + ' unidad(es) total</div>';
+  h += '</div>';
+  const stateAfm = agregarDesdeMatrizState;
+  const btnLabel = (stateAfm.modo === 'newProject') ? 'Elegir todo' : 'Importar todo';
+  h += '<button class="b b-p" style="padding:4px 10px;font-size:11px" onclick="afmSeleccionarSubconjunto(' + sub.id + ')">' + btnLabel + '</button>';
+  h += '</div>';
+  if (expanded) {
+    h += '<div style="border-top:1px solid #E8E6DF;background:#FAF9F5;padding:8px 8px 8px 24px">';
+    const ubics = productosMatrizUbicaciones.filter(u => u.subconjunto_id === sub.id);
+    const productosYaContados = new Set();
+    ubics.forEach(u => {
+      if (productosYaContados.has(u.producto_id)) return;
+      productosYaContados.add(u.producto_id);
+      const p = productosMatriz.find(x => x.id === u.producto_id);
+      if (p) h += _afmRenderProductoLeaf(p, u.cantidad || 1);
+    });
+    if (productosYaContados.size === 0) {
+      h += '<div style="font-size:11px;color:#888;font-style:italic;padding:4px 0">Sin productos.</div>';
+    }
+    h += '</div>';
+  }
+  h += '</div>';
+  return h;
+}
+
+// Renderiza un producto (hoja) en la lista, con boton "Importar"/"Elegir".
+// Si viene la cantidad (porque se está mostrando dentro de un conjunto/subconjunto),
+// se muestra como sufijo.
+function _afmRenderProductoLeaf(p, cantOpt) {
+  const procsCnt = productosMatrizProcesos.filter(pr => pr.producto_id === p.id).length;
+  const cliLbl = p.cliente_id ? clN(p.cliente_id) : 'Genérico';
+  const matLbl = p.material_id ? ((materiales.find(x => x.id === p.material_id) || {}).nombre || '') : '';
+  const validacion = validarProductoMatriz(p.id);
+  const warn = validacion.ok ? '' : _warningIconHtml('Producto incompleto o desactualizado');
+  const cantSuffix = cantOpt ? ' <span style="color:#0C447C;font-weight:600">x' + cantOpt + '</span>' : '';
   const state = agregarDesdeMatrizState;
-  const f = state.filters;
-  const cliFilter = f.clienteIds || [];
-  const numericCli = new Set(cliFilter.filter(x => x !== 'GENERICO').map(x => parseInt(x)));
-  let candidatos = subconjuntos.slice();
-  if (cliFilter.length > 0) {
-    candidatos = candidatos.filter(s => numericCli.has(s.cliente_id));
+  let h = '<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:#fff;border:1px solid #E8E6DF;border-radius:4px;margin-bottom:4px;cursor:pointer" onclick="afmSeleccionarProducto(' + p.id + ')">';
+  if (p.foto_url) {
+    h += '<img src="' + escapeHtml(p.foto_url) + '" style="width:32px;height:32px;object-fit:cover;border-radius:3px;flex:0 0 auto">';
+  } else {
+    h += '<div style="width:32px;height:32px;background:#E8E6DF;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:14px;flex:0 0 auto">📦</div>';
   }
-  if (f.search && f.search.trim()) {
-    const q = f.search.trim().toLowerCase();
-    candidatos = candidatos.filter(s => (s.nombre || '').toLowerCase().includes(q));
-  }
-  candidatos.sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
-  if (candidatos.length === 0) {
-    return '<div style="padding:20px;text-align:center;color:#888;font-size:12px;font-style:italic">No hay subconjuntos que coincidan con los filtros.</div>';
-  }
-  let h = '';
-  candidatos.forEach(sub => {
-    const cliLbl = clN(sub.cliente_id);
-    const expansion = _expandirSubconjunto(sub.id, 1);
-    const totalProd = expansion.productos.reduce((acc, x) => acc + x.cant, 0);
-    const numUnicos = expansion.productos.length;
-    const warn = expansion.problemas.length > 0 ? _warningIconHtml('Contiene productos incompletos o desactualizados') : '';
-    h += '<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid #E8E6DF;cursor:pointer" onclick="afmSeleccionarSubconjunto(' + sub.id + ')">';
-    h += '<div style="width:40px;height:40px;background:#E8E6DF;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:18px;flex:0 0 auto">🔧</div>';
-    h += '<div style="flex:1;min-width:0">';
-    h += '<div style="font-weight:600;font-size:12px">' + escapeHtml(sub.nombre || '') + warn + '</div>';
-    h += '<div style="color:#888;font-size:10px;margin-top:1px">' + escapeHtml(cliLbl) + ' · ' + numUnicos + ' tipo(s) de producto · ' + totalProd + ' unidad(es) total</div>';
-    h += '</div>';
-    const btnLabel = (state.modo === 'newProject') ? 'Elegir todo' : 'Importar todo';
-    h += '<button class="b b-p" style="padding:4px 10px;font-size:11px">' + btnLabel + '</button>';
-    h += '</div>';
-  });
+  h += '<div style="flex:1;min-width:0">';
+  h += '<div style="font-weight:600;font-size:12px">' + escapeHtml(p.descripcion || '') + warn + cantSuffix + '</div>';
+  const meta = [cliLbl, p.codigo_cliente, matLbl, procsCnt + ' proceso(s)'].filter(Boolean).join(' · ');
+  h += '<div style="color:#888;font-size:10px;margin-top:1px">' + escapeHtml(meta) + '</div>';
+  h += '</div>';
+  const btnLabel = (state.modo === 'newProject') ? 'Elegir' : 'Importar';
+  h += '<button class="b b-p" style="padding:3px 8px;font-size:10px">' + btnLabel + '</button>';
+  h += '</div>';
   return h;
 }
 
@@ -3035,12 +3242,6 @@ function _expandirSubconjunto(subconjuntoId, multiplicador) {
     productos: [...productosMap.entries()].map(([prodId, cant]) => ({ prodId, cant })),
     problemas: [...problemas]
   };
-}
-
-function afmCambiarTab(tabKey) {
-  if (!agregarDesdeMatrizState) return;
-  agregarDesdeMatrizState.tab = tabKey;
-  _renderAgregarDesdeMatrizModal();
 }
 
 // ----- Helpers de filtros del modal "Agregar desde Matriz" -----
@@ -3514,32 +3715,71 @@ function _confirmarImportGrupal(mode) {
 async function _ejecutarImportGrupalProyecto(expansion, fechaFin, estado, ignorarValidaciones, nombreGrupo) {
   const proj = getProject(nav.projectId);
   if (!proj) return;
+  const total = expansion.productos.length;
+  showSpinner('Importando ' + total + ' producto(s)...');
   let importados = 0;
   let totalUnidades = 0;
-  for (const { prodId, cant } of expansion.productos) {
-    const valores = {
-      cantidad: cant,
-      fecha_fin_estipulada: fechaFin,
-      estado: estado,
-      // Presentacion: la del producto (no la editamos en modo grupal por simplicidad)
-      presentacion_mat_prima: (productosMatriz.find(p => p.id === prodId) || {}).presentacion_mat_prima || null
-    };
-    await _ejecutarImportProyecto(prodId, valores, ignorarValidaciones);
-    importados++;
-    totalUnidades += cant;
+  // Paralelizamos en batches de 5 para no saturar la conexión.
+  // Cada item internamente es secuencial (item -> ubicaciones -> procesos ->
+  // correlatividades), pero items distintos van en paralelo.
+  const BATCH_SIZE = 5;
+  try {
+    for (let i = 0; i < expansion.productos.length; i += BATCH_SIZE) {
+      const batch = expansion.productos.slice(i, i + BATCH_SIZE);
+      updateSpinnerMsg('Importando producto(s) ' + (i + 1) + ' a ' + Math.min(i + BATCH_SIZE, total) + ' de ' + total + '...');
+      const promesas = batch.map(({ prodId, cant }) => {
+        const valores = {
+          cantidad: cant,
+          fecha_fin_estipulada: fechaFin,
+          estado: estado,
+          presentacion_mat_prima: (productosMatriz.find(p => p.id === prodId) || {}).presentacion_mat_prima || null
+        };
+        return _importarProductoCore(prodId, valores, ignorarValidaciones).then(res => {
+          if (!res.error) {
+            importados++;
+            totalUnidades += cant;
+          }
+          return res;
+        });
+      });
+      await Promise.all(promesas);
+    }
+    const modalAfm = document.getElementById('add-from-matriz-modal');
+    if (modalAfm) modalAfm.remove();
+    updateSpinnerMsg('Refrescando datos...');
+    await loadAll();
+    render();
+    toast('Importado(s) ' + importados + ' producto(s) de "' + nombreGrupo + '" (' + totalUnidades + ' unidad(es) total)');
+  } finally {
+    hideSpinner();
   }
-  const modalAfm = document.getElementById('add-from-matriz-modal');
-  if (modalAfm) modalAfm.remove();
-  toast('Importado(s) ' + importados + ' producto(s) de "' + nombreGrupo + '" (' + totalUnidades + ' unidad(es) total)');
 }
 
-// Para modo newProject solo se puede elegir UN producto base (el form de
-// Nuevo Proyecto carga un primer item, no varios). Por simplicidad, en modo
-// newProject NO permitimos importar conjuntos/subconjuntos: avisamos al
-// usuario que primero cree el proyecto y luego importe el grupo desde la
-// vista de proyecto.
+// Para modo newProject: el usuario eligió un conjunto/subconjunto. Se guarda
+// la expansión completa en newProjectMatrizSelection.grupo y el form de Nuevo
+// Proyecto pasa a modo "lista de items a importar" (no edita primer item
+// individual).
 function _seleccionarGrupoParaNewProject(opts, expansion, fechaFin, estado, force) {
-  toast('Para importar un ' + opts.tipo + ' completo, primero creá el proyecto con un item base; luego, desde la vista del proyecto, usá "+ Agregar desde Matriz" y elegí el ' + opts.tipo + '.', true);
+  // Filtrar productos del grupo: si no se ignoran validaciones y hay productos
+  // con problemas, mejor abortar; el modal ya hizo la validación, así que esto
+  // solo se ejecuta si el usuario confirmó "Importar" o "Cargar igualmente".
+  newProjectMatrizSelection = {
+    modoGrupo: true,
+    tipo: opts.tipo,              // 'conjunto' | 'subconjunto'
+    nombreGrupo: opts.nombreGrupo,
+    grupoId: opts.grupoId,
+    expansion: expansion,          // {productos: [{prodId, cant}], problemas: [...]}
+    fechaFinComun: fechaFin,
+    estadoComun: estado,
+    ignorarValidaciones: !!force
+  };
+  // Capturar valores del form actual y re-renderizar
+  const _captured = _newProjectCaptureFormValues();
+  const modalAfm = document.getElementById('add-from-matriz-modal');
+  if (modalAfm) modalAfm.remove();
+  renderNewProjectForm();
+  _newProjectRestoreFormValues(_captured);
+  toast(opts.tipo + ' seleccionado: "' + opts.nombreGrupo + '" (' + expansion.productos.length + ' tipo(s) de producto)');
 }
 
 // Importar producto matriz al proyecto: abre primero un modal para que el
@@ -3640,15 +3880,34 @@ function _confirmarImport(mode) {
 }
 
 async function _ejecutarImportProyecto(productoId, valores, ignorarValidaciones) {
+  showSpinner('Importando producto...');
+  try {
+    await _importarProductoCore(productoId, valores, ignorarValidaciones);
+    const modalAfm = document.getElementById('add-from-matriz-modal');
+    if (modalAfm) modalAfm.remove();
+    await loadAll();
+    const prodProcs = productosMatrizProcesos.filter(pp => pp.producto_id === productoId);
+    toast('Item importado de la matriz: ' + prodProcs.length + ' proceso(s)' + (ignorarValidaciones ? ' (forzado)' : ''));
+    render();
+  } finally {
+    hideSpinner();
+  }
+}
+
+// Versión interna: crea item + ubicaciones + procesos + correlatividades para
+// UN producto, en batch (4 queries fijas + 1 para ubicaciones si las hay).
+// NO hace loadAll, NO cierra modales, NO toast. Sirve para llamar en lote
+// desde _ejecutarImportGrupalProyecto.
+//
+// Retorna {itemId, actIds} o {error}. La paralelización por items distintos
+// se hace afuera de esta función con Promise.all.
+async function _importarProductoCore(productoId, valores, ignorarValidaciones) {
   const proj = getProject(nav.projectId);
-  if (!proj) return;
+  if (!proj) return { error: 'No project' };
   const prod = productosMatriz.find(p => p.id === productoId);
-  if (!prod) return;
+  if (!prod) return { error: 'Producto no encontrado' };
 
-  // Si ignorarValidaciones, los campos faltantes se importan como null/vacío.
-  // Si no, todo se importa tal como está.
-
-  // 1. Crear item con datos del producto + valores del modal
+  // 1. Crear item
   const itemPayload = {
     proyecto_id: proj.id,
     cliente_id: proj.cliente_id,
@@ -3658,15 +3917,15 @@ async function _ejecutarImportProyecto(productoId, valores, ignorarValidaciones)
     foto_url: prod.foto_url || null,
     material_id: prod.material_id || null,
     codigo_cliente: prod.codigo_cliente || null,
-    presentacion_mat_prima: valores.presentacion_mat_prima || null,
+    presentacion_mat_prima: valores.presentacion_mat_prima || prod.presentacion_mat_prima || null,
     fecha_fin_estipulada: valores.fecha_fin_estipulada,
     estado: valores.estado || 'Espera MP',
     imported_from_matriz_id: prod.id
   };
   const { data: newItem, error: itErr } = await sb.from('items').insert(itemPayload).select().single();
-  if (itErr) { toast('Error creando item: ' + itErr.message, true); console.error(itErr); return; }
+  if (itErr) { console.error('Error creando item:', itErr); return { error: itErr.message }; }
 
-  // 2. Copiar ubicaciones
+  // 2. Ubicaciones (batch)
   const ubics = productosMatrizUbicaciones.filter(u => u.producto_id === productoId);
   if (ubics.length > 0) {
     const ubicInserts = ubics.map(u => ({
@@ -3680,16 +3939,10 @@ async function _ejecutarImportProyecto(productoId, valores, ignorarValidaciones)
     await sb.from('items_ubicaciones').insert(ubicInserts);
   }
 
-  // 3. Copiar procesos. Si ignorarValidaciones, blanqueamos los campos
-  // referenciados a operarios/máquinas inactivos para que el responsable
-  // los complete a mano.
+  // 3. Procesos (batch). Resolvemos máquinas/operarios inactivos si force.
   const prodProcs = productosMatrizProcesos.filter(pp => pp.producto_id === productoId)
     .sort((a, b) => (a.orden || 999999) - (b.orden || 999999));
-
-  const newActIds = [];
-  for (let i = 0; i < prodProcs.length; i++) {
-    const pp = prodProcs[i];
-    // Resolver maquina/operario considerando "activo"
+  const actInserts = prodProcs.map((pp, i) => {
     let maq_id = pp.maquina_ideal_id;
     let op_id = pp.operario_ideal_id;
     if (ignorarValidaciones && maq_id) {
@@ -3700,7 +3953,6 @@ async function _ejecutarImportProyecto(productoId, valores, ignorarValidaciones)
       const op = operarios.find(o => o.id === op_id);
       if (op && op.activo === false) op_id = null;
     }
-    // Filtrar suplentes inactivos si force
     let maq_supl = pp.maquinas_suplentes || [];
     let op_supl = pp.operarios_suplentes || [];
     if (ignorarValidaciones) {
@@ -3713,7 +3965,7 @@ async function _ejecutarImportProyecto(productoId, valores, ignorarValidaciones)
         return !op || op.activo !== false;
       });
     }
-    const actPayload = {
+    return {
       item_id: newItem.id,
       cliente_id: proj.cliente_id,
       pedido_nro: proj.pedido_nro,
@@ -3742,24 +3994,26 @@ async function _ejecutarImportProyecto(productoId, valores, ignorarValidaciones)
       hora_inicio: '06:00:00',
       estado_proceso: 'Planificación Pendiente'
     };
-    const { data: newAct, error: actErr } = await sb.from('actividades_tablero').insert(actPayload).select().single();
-    if (actErr) { console.error('Error creando proceso:', actErr); continue; }
-    newActIds.push(newAct.id);
+  });
+  let newActIds = [];
+  if (actInserts.length > 0) {
+    // Insertamos en batch. Supabase preserva el orden de los inserts en los
+    // returns, así que los IDs vuelven en el mismo orden que los enviamos.
+    const { data: actsData, error: actErr } = await sb.from('actividades_tablero').insert(actInserts).select('id');
+    if (actErr) { console.error('Error creando procesos:', actErr); return { error: actErr.message }; }
+    newActIds = (actsData || []).map(x => x.id);
   }
 
-  // 4. Correlatividades secuenciales
-  for (let i = 0; i < newActIds.length - 1; i++) {
-    await sb.from('correlatividades').insert({
-      predecesor_id: newActIds[i],
-      sucesor_id: newActIds[i + 1]
-    });
+  // 4. Correlatividades secuenciales (batch)
+  if (newActIds.length > 1) {
+    const corrInserts = [];
+    for (let i = 0; i < newActIds.length - 1; i++) {
+      corrInserts.push({ predecesor_id: newActIds[i], sucesor_id: newActIds[i + 1] });
+    }
+    await sb.from('correlatividades').insert(corrInserts);
   }
 
-  const modalAfm = document.getElementById('add-from-matriz-modal');
-  if (modalAfm) modalAfm.remove();
-  await loadAll();
-  toast('Item importado de la matriz: ' + prodProcs.length + ' proceso(s)' + (ignorarValidaciones ? ' (forzado)' : ''));
-  render();
+  return { itemId: newItem.id, actIds: newActIds };
 }
 
 async function confirmDeleteItem(itemId) {
