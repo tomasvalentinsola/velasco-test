@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v55</title>
+<title>Velasco App 2.0 — Proyectos v56</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -519,6 +519,42 @@ function sortItemsList(arr) {
 
 // Spinner global: bloquea la UI mientras se hace una operación larga.
 // Uso: showSpinner('Importando productos...'); await ...; hideSpinner();
+// Modal de confirmación con estilo de la app. Reemplaza confirm() nativo.
+// Uso: confirmModal({ titulo, mensaje, onConfirm, textoConfirmar, peligroso }).
+//   - onConfirm: callback que se llama si el usuario confirma.
+//   - textoConfirmar: texto del botón principal (default "Eliminar").
+//   - peligroso: si true, botón rojo (default true). Pasar false para acciones normales.
+function confirmModal(opts) {
+  opts = opts || {};
+  const titulo = opts.titulo || 'Confirmar';
+  const mensaje = opts.mensaje || '';
+  const textoConfirmar = opts.textoConfirmar || 'Eliminar';
+  const peligroso = opts.peligroso !== false;
+  const onConfirm = opts.onConfirm || (() => {});
+
+  const existing = document.getElementById('confirm-modal');
+  if (existing) existing.remove();
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'confirm-modal';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '460px'; m.style.zIndex = '1100';
+  let h = '<div class="md-t">' + escapeHtml(titulo) + '</div>';
+  // Mensaje (acepta \n para saltos de linea)
+  h += '<div style="font-size:13px;color:#5F5E5A;line-height:1.5;margin-bottom:14px;white-space:pre-line">' + escapeHtml(mensaje) + '</div>';
+  h += '<div class="actions">';
+  h += '<button class="b" onclick="document.getElementById(\'confirm-modal\').remove()">Cancelar</button>';
+  const btnStyle = peligroso ? 'background:#A32D2D;color:#fff;border-color:#A32D2D' : '';
+  const btnClass = peligroso ? 'b' : 'b b-p';
+  h += '<button class="' + btnClass + '" style="' + btnStyle + '" onclick="_confirmModalOk()">' + escapeHtml(textoConfirmar) + '</button>';
+  h += '</div>';
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd);
+  window._confirmModalCb = onConfirm;
+}
+function _confirmModalOk() {
+  const cb = window._confirmModalCb;
+  document.getElementById('confirm-modal').remove();
+  window._confirmModalCb = null;
+  if (cb) cb();
+}
+
 function showSpinner(msg) {
   const sp = document.getElementById('global-spinner');
   const m = document.getElementById('global-spinner-msg');
@@ -1540,6 +1576,12 @@ function setProjectFilters(all) {
 // se guarda aca para usar al guardar (copiar ubicaciones, procesos y
 // correlatividades). null = item desde cero.
 let newProjectMatrizSelection = null;
+// Buffer de items pendientes para Nuevo Proyecto (v56). Cada item es un objeto
+// con los mismos campos que un row de la tabla 'items', mas metadatos:
+//   - fromMatriz: { productoId, procesos, ubicaciones } si vino de matriz
+//   - fromGrupo:  label del conjunto/subconjunto origen (visual)
+//   - ignorarValidaciones: true si se importó con "Cargar igualmente"
+let newProjectItemsBuffer = [];
 
 function renderNewProjectForm() {
   const main = document.getElementById('main');
@@ -1548,7 +1590,8 @@ function renderNewProjectForm() {
   h += '<div class="form-t">Nuevo proyecto</div>';
   h += '<div style="font-size:12px;color:#5F5E5A;margin-bottom:14px">Carga los datos del proyecto y al menos un primer item.</div>';
   h += '<div style="display:flex;gap:20px;margin-bottom:14px">';
-  h += '<div style="flex-shrink:0"><div class="ef-l">Foto del proyecto</div>' + buildPhotoWrapHtml(null, 'proj') + '</div>';
+  const projFotoFromDraft = (newProjectDraft && newProjectDraft.projFoto) ? newProjectDraft.projFoto : null;
+  h += '<div style="flex-shrink:0"><div class="ef-l">Foto del proyecto</div>' + buildPhotoWrapHtml(projFotoFromDraft, 'proj') + '</div>';
   h += '<div style="flex:1">';
   h += '<div class="row">';
   h += '<div class="ef" style="flex:2"><div class="ef-l">Cliente <span style="color:#A32D2D">*</span></div>';
@@ -1586,190 +1629,293 @@ function renderNewProjectForm() {
   h += '<input type="date" class="ef-i" id="f-fechaentrega" value=""><div class="ef-help">Fecha comprometida al cliente.</div></div></div>';
   h += '</div></div>';
 
-  // Primer item: header con botón "+ Agregar desde Matriz" a la derecha
+  // ===========================================================================
+  // ITEMS DEL PROYECTO (buffer pendiente, v56)
+  // ===========================================================================
+  // El form ya no obliga a un "primer item". En su lugar, el usuario va
+  // agregando items al buffer mediante "+ Agregar item" o "+ Agregar desde
+  // Matriz". Al crear el proyecto, todos los items del buffer se crean en lote.
   h += '<div class="section-t" style="margin-top:24px">';
-  if (newProjectMatrizSelection && newProjectMatrizSelection.modoGrupo) {
-    h += '<span>Items del proyecto <span style="font-size:11px;color:#A32D2D;font-weight:500">* mínimo uno</span></span>';
-  } else {
-    h += '<span>Primer item del proyecto <span style="font-size:11px;color:#A32D2D;font-weight:500">* obligatorio</span></span>';
-  }
+  h += '<span>Items del proyecto <span style="font-size:11px;color:#A32D2D;font-weight:500">* al menos uno</span></span>';
+  h += '<span style="font-size:11px;color:#5F5E5A">' + newProjectItemsBuffer.length + ' item(s) cargado(s)</span>';
+  h += '</div>';
+
+  // Renderizar lista de items pendientes
+  h += '<div id="np-items-list" style="background:#FAFAF7;border:1px solid #E8E6DF;border-radius:6px;padding:10px;min-height:80px">';
+  h += _renderNpItemsListHtml();
+  h += '</div>';
+
+  // Barra de botones para agregar (al final, abajo de la lista)
+  h += '<div style="display:flex;gap:8px;justify-content:center;margin-top:12px;padding:8px;background:#fff;border:1px dashed #C8C6BE;border-radius:6px">';
+  h += '<button type="button" class="b b-p" onclick="newProjectAddItem()">+ Agregar item</button>';
   h += '<button type="button" class="b b-p" onclick="newProjectAbrirMatriz()">+ Agregar desde Matriz</button>';
   h += '</div>';
 
-  // ==========================================================================
-  // MODO GRUPO: el usuario eligió un conjunto/subconjunto. Se muestra la lista
-  // de items que se van a crear, sin form de primer item individual.
-  // ==========================================================================
-  if (newProjectMatrizSelection && newProjectMatrizSelection.modoGrupo) {
-    const grupo = newProjectMatrizSelection;
-    h += '<div style="background:#E8F2FC;color:#0C447C;padding:10px 14px;border-radius:5px;margin-bottom:8px;font-size:12px;border:1px solid #A8C8E8;display:flex;align-items:center;justify-content:space-between">';
-    h += '<div><b>' + (grupo.tipo === 'conjunto' ? 'Conjunto' : 'Subconjunto') + ' importado de matriz:</b> ' + escapeHtml(grupo.nombreGrupo) + '. Se crearán ' + grupo.expansion.productos.length + ' item(s) al guardar el proyecto.</div>';
-    h += '<button type="button" class="b" onclick="newProjectQuitarMatriz()" style="margin-left:10px;padding:3px 8px;font-size:11px">Quitar</button>';
-    h += '</div>';
-    h += '<div style="background:#FAFAF7;border:1px solid #E8E6DF;border-radius:6px;padding:14px">';
-    // Lista de items a crear
-    h += '<div style="font-size:11px;font-weight:600;color:#5F5E5A;margin-bottom:8px">Items que se van a crear:</div>';
-    h += '<div style="max-height:300px;overflow-y:auto;border:1px solid #E8E6DF;border-radius:5px;padding:6px 10px;background:#fff">';
-    let totalUnidades = 0;
-    grupo.expansion.productos.forEach(({ prodId, cant }) => {
-      const p = productosMatriz.find(x => x.id === prodId);
-      if (!p) return;
-      totalUnidades += cant;
-      const procsCnt = productosMatrizProcesos.filter(pr => pr.producto_id === prodId).length;
-      const matLbl = p.material_id ? ((materiales.find(m => m.id === p.material_id) || {}).nombre || '') : '';
-      const v = validarProductoMatriz(prodId);
-      const warn = v.ok ? '' : _warningIconHtml(v.problemas.join('\n'));
-      h += '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid #F0EEE7;font-size:11px">';
-      h += '<span style="flex:1">' + escapeHtml(p.descripcion) + warn + '<span style="color:#888;font-size:10px"> · ' + escapeHtml(matLbl || '?') + ' · ' + procsCnt + ' proceso(s)</span></span>';
-      h += '<span style="color:#0C447C;font-weight:600">x' + cant + '</span>';
-      h += '</div>';
-    });
-    h += '</div>';
-    h += '<div style="margin-top:8px;font-size:11px;color:#5F5E5A">Total: <b>' + grupo.expansion.productos.length + '</b> tipo(s) de producto, <b>' + totalUnidades + '</b> unidad(es) total. Estado inicial: <b>' + escapeHtml(grupo.estadoComun) + '</b>. Fecha fin: <b>' + escapeHtml(grupo.fechaFinComun) + '</b>.</div>';
-    if (grupo.ignorarValidaciones) {
-      h += '<div style="margin-top:6px;font-size:11px;color:#A32D2D"><b>⚠️ Modo "Cargar igualmente":</b> algunos productos tienen campos pendientes que se importarán en blanco.</div>';
-    }
-    h += '</div>';
-    h += '<div class="actions">';
-    h += '<button class="b" onclick="newProjectCancelar()">Cancelar</button>';
-    h += '<button class="b b-p" onclick="saveNewProject()">Crear proyecto e importar ' + grupo.expansion.productos.length + ' item(s)</button>';
-    h += '</div></div>';
-    main.innerHTML = h;
-    setupPhotoPaste();
-    return;
-  }
-
-  // ==========================================================================
-  // MODO ITEM ÚNICO: el flujo clásico (o el caso "desde matriz" producto)
-  // ==========================================================================
-  // Si ya se eligio un producto matriz (no grupo), mostrar el cartel informativo arriba
-  if (newProjectMatrizSelection && !newProjectMatrizSelection.modoGrupo) {
-    const prod = productosMatriz.find(p => p.id === newProjectMatrizSelection.productoId);
-    if (prod) {
-      h += '<div style="background:#E8F2FC;color:#0C447C;padding:10px 14px;border-radius:5px;margin-bottom:8px;font-size:12px;border:1px solid #A8C8E8;display:flex;align-items:center;justify-content:space-between">';
-      h += '<div><b>Item importado de matriz:</b> ' + escapeHtml(prod.descripcion) + '. Los campos heredados (código del cliente, material) están bloqueados. Se copiarán también las ubicaciones y procesos al crear el proyecto.</div>';
-      h += '<button type="button" class="b" onclick="newProjectQuitarMatriz()" style="margin-left:10px;padding:3px 8px;font-size:11px">Quitar</button>';
-      h += '</div>';
-    }
-  }
-
-  h += '<div style="background:#FAFAF7;border:1px solid #E8E6DF;border-radius:6px;padding:14px">';
-  h += '<div style="display:flex;gap:14px;margin-bottom:8px">';
-  h += '<div style="flex-shrink:0"><div class="ef-l">Foto del item</div>' + buildPhotoWrapHtml(newProjectMatrizSelection ? newProjectMatrizSelection.foto_url : null, 'item') + '<div class="ef-help" style="max-width:120px">Si la dejas vacia, se usa la del proyecto en el tablero.</div></div>';
-  h += '<div style="flex:1">';
-
-  // Pre-llenar valores si hay seleccion de matriz
-  const matriz = newProjectMatrizSelection;
-  const itDescVal = matriz ? escapeHtml(matriz.descripcion) : '';
-  // Cantidad: viene del modal de import (default 1) si la matriz se eligio
-  const itCantVal = matriz && matriz.cantidad ? matriz.cantidad : '1';
-  const itCodCliVal = matriz ? escapeHtml(matriz.codigo_cliente || '') : '';
-  const itMatId = matriz && matriz.material_id ? matriz.material_id : '';
-  const itMatLabel = matriz && matriz.material_id ? ((materiales.find(m => m.id === matriz.material_id) || {}).nombre || '') : '';
-  // Presentación: la editada en el modal de import (default era la del producto matriz)
-  const itPresVal = matriz ? escapeHtml(matriz.presentacion_mat_prima || '') : '';
-  // Fecha fin: la del modal de import
-  const itFechaFinVal = matriz && matriz.fecha_fin_estipulada ? matriz.fecha_fin_estipulada : '';
-
-  // Descripción + Cantidad
-  h += '<div class="row">';
-  h += '<div class="ef" style="flex:3"><div class="ef-l">Descripcion del item <span style="color:#A32D2D">*</span></div>';
-  if (matriz) {
-    h += '<input type="text" class="ef-i" id="f-item-desc" value="' + itDescVal + '" disabled style="background:#F5F3EC;color:#888"></div>';
-  } else {
-    h += '<input type="text" class="ef-i" id="f-item-desc" placeholder="Ej. Eje principal"></div>';
-  }
-  h += '<div class="ef" style="flex:1"><div class="ef-l">Cantidad</div>';
-  h += '<input type="number" class="ef-i" id="f-item-cant" value="' + itCantVal + '" min="1" step="1"></div></div>';
-
-  // Estado del item: si vino de matriz, usar el estado seleccionado en el modal
-  const itEstadoDefault = (matriz && matriz.estado) ? matriz.estado : 'Espera MP';
-  h += '<div class="ef" style="background:#FFF4D5;padding:8px 10px;border-radius:5px;border:1px solid #F5C842"><div class="ef-l" style="color:#854F0B">Estado del item</div>';
-  h += '<select class="ef-i" id="f-item-estado">';
-  ITEM_STATES.forEach(st => {
-    h += '<option value="' + st + '"' + (st === itEstadoDefault ? ' selected' : '') + '>' + st + '</option>';
-  });
-  h += '</select>';
-  h += '<div class="ef-help" style="color:#854F0B">Si la materia prima ya esta en el taller, podes setearlo en "Llego MP" o el estado real.</div></div>';
-
-  // Codigo cliente + Material (solo lectura si vino de matriz)
-  h += '<div class="row">';
-  h += '<div class="ef" style="flex:1"><div class="ef-l">Código del cliente' + (matriz ? ' <span style="font-size:10px;color:#888">(heredado de matriz)</span>' : '') + '</div>';
-  if (matriz) {
-    h += '<input type="text" class="ef-i" id="f-item-codcli" value="' + itCodCliVal + '" disabled style="background:#F5F3EC;color:#888">';
-  } else {
-    h += '<input type="text" class="ef-i" id="f-item-codcli" placeholder="Ej. 4517-AB">';
-  }
-  h += '</div>';
-  h += '<div class="ef" style="flex:1"><div class="ef-l">Material' + (matriz ? ' <span style="font-size:10px;color:#888">(heredado de matriz)</span>' : '') + '</div>';
-  if (matriz) {
-    h += '<input type="text" class="ef-i" value="' + escapeHtml(itMatLabel) + '" disabled style="background:#F5F3EC;color:#888">';
-    h += '<input type="hidden" id="f-item-material-value" value="' + (itMatId || '') + '">';
-  } else {
-    h += renderPicker({
-      id: 'f-item-material',
-      value: itMatId,
-      valueLabel: itMatLabel,
-      placeholder: 'Buscar o cargar nuevo...',
-      options: materiales.map(x => ({ id: x.id, label: x.nombre })),
-      onCreateLabel: '+ Cargar nuevo material',
-      onCreateFnName: 'newProjectCargarMaterial'
-    });
-  }
-  h += '</div>';
-  h += '</div>';
-
-  // Presentación + Fecha fin
-  h += '<div class="row">';
-  h += '<div class="ef" style="flex:1"><div class="ef-l">Presentacion materia prima</div>';
-  if (matriz) {
-    h += '<input type="text" class="ef-i" id="f-item-pres" value="' + itPresVal + '" disabled style="background:#F5F3EC;color:#888">';
-  } else {
-    h += '<input type="text" class="ef-i" id="f-item-pres" placeholder="Ej. \u00d8290 x 1 1/2 pulg">';
-  }
-  h += '</div>';
-  h += '<div class="ef" style="flex:1"><div class="ef-l">Fecha de fin estipulada</div>';
-  h += '<input type="date" class="ef-i" id="f-item-fechafin" value="' + itFechaFinVal + '" style="max-width:200px">';
-  h += '<div class="ef-help">Estimacion de oficina tecnica.</div></div></div>';
-
-  // Si hay seleccion de matriz, mostrar resumen de ubicaciones y procesos heredados
-  if (matriz && matriz.ubicaciones && matriz.ubicaciones.length > 0) {
-    h += '<div style="margin-top:10px;padding:8px 10px;background:#fff;border:1px solid #E8E6DF;border-radius:5px">';
-    h += '<div style="font-size:11px;font-weight:600;color:#5F5E5A;margin-bottom:4px">Equipos compatibles (heredados de matriz)</div>';
-    matriz.ubicaciones.forEach(u => {
-      h += '<div style="font-size:11px;color:#5F5E5A;padding:2px 0">' + _pmUbicacionRoute(u) + '</div>';
-    });
-    h += '</div>';
-  }
-  if (matriz && matriz.procesos && matriz.procesos.length > 0) {
-    h += '<div style="margin-top:6px;padding:8px 10px;background:#fff;border:1px solid #E8E6DF;border-radius:5px">';
-    h += '<div style="font-size:11px;font-weight:600;color:#5F5E5A;margin-bottom:4px">Procesos a importar (' + matriz.procesos.length + ')</div>';
-    matriz.procesos.forEach((pr, idx) => {
-      h += '<div style="font-size:11px;color:#5F5E5A;padding:2px 0">' + (idx + 1) + '. ' + escapeHtml(pr.proceso || '') + '</div>';
-    });
-    h += '</div>';
-  }
-
-  h += '</div></div></div>';
   h += '<div class="actions">';
   h += '<button class="b" onclick="newProjectCancelar()">Cancelar</button>';
-  h += '<button class="b b-p" onclick="saveNewProject()">Crear proyecto</button>';
+  h += '<button class="b b-p" onclick="saveNewProject()">Crear proyecto con ' + newProjectItemsBuffer.length + ' item(s)</button>';
   h += '</div></div>';
   main.innerHTML = h;
   setupPhotoPaste();
-  // Restaurar draft si existe (de una navegacion previa fuera del form).
-  // No restauramos si hay una seleccion de matriz porque el form se reconstruye
-  // desde la seleccion (matriz tiene prioridad sobre draft).
-  if (newProjectDraft && !newProjectMatrizSelection) {
+  // Restaurar draft de campos de cabecera (proyecto: cliente, descripcion, foto, etc.).
+  // No restauramos campos de "primer item" porque ya no existen — los items van al buffer.
+  if (newProjectDraft) {
     _newProjectRestoreFormValues(newProjectDraft);
   }
 }
 
-// Cancelar el Nuevo Proyecto: limpia el draft y la seleccion de matriz, vuelve a proyectos.
+// Render del buffer de items pendientes (lista plana en v56; vista anidada en v57).
+function _renderNpItemsListHtml() {
+  if (!newProjectItemsBuffer || newProjectItemsBuffer.length === 0) {
+    return '<div style="font-size:12px;color:#888;font-style:italic;text-align:center;padding:20px">Aún no hay items. Apretá "+ Agregar item" o "+ Agregar desde Matriz" para empezar.</div>';
+  }
+  let h = '';
+  newProjectItemsBuffer.forEach((it, idx) => {
+    // Resolver labels
+    const matLbl = it.material_id ? ((materiales.find(m => m.id === it.material_id) || {}).nombre || '') : '';
+    const matricesInfo = it.fromMatriz
+      ? '<span style="font-size:10px;background:#E8F2FC;color:#0C447C;padding:1px 6px;border-radius:8px;margin-left:6px">de matriz</span>'
+      : '';
+    const grupoInfo = it.fromGrupo
+      ? '<span style="font-size:10px;background:#FFF4D5;color:#854F0B;padding:1px 6px;border-radius:8px;margin-left:6px">' + escapeHtml(it.fromGrupo) + '</span>'
+      : '';
+    // Procesos: si viene de matriz, los del producto matriz; si es libre, ninguno
+    let procsInfo = '';
+    if (it.fromMatriz && it.fromMatriz.productoId) {
+      const cnt = productosMatrizProcesos.filter(pr => pr.producto_id === it.fromMatriz.productoId).length;
+      procsInfo = ' · ' + cnt + ' proceso(s)';
+    }
+    h += '<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:#fff;border:1px solid #E8E6DF;border-radius:5px;margin-bottom:6px">';
+    if (it.foto_url) {
+      h += '<img src="' + escapeHtml(it.foto_url) + '" style="width:48px;height:48px;object-fit:cover;border-radius:4px;flex:0 0 auto">';
+    } else {
+      h += '<div style="width:48px;height:48px;background:#E8E6DF;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:20px;flex:0 0 auto">📦</div>';
+    }
+    h += '<div style="flex:1;min-width:0">';
+    h += '<div style="font-weight:600;font-size:13px">' + escapeHtml(it.descripcion || '(sin descripción)') + matricesInfo + grupoInfo + '</div>';
+    const subInfo = [matLbl, it.codigo_cliente, it.presentacion_mat_prima].filter(Boolean).join(' · ');
+    if (subInfo) h += '<div style="font-size:11px;color:#888;margin-top:2px">' + escapeHtml(subInfo) + procsInfo + '</div>';
+    h += '</div>';
+    // Cantidad inline editable
+    h += '<label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#5F5E5A;flex:0 0 auto">Cant.:';
+    h += '<input type="number" min="1" step="1" value="' + (it.cantidad || 1) + '" onchange="newProjectChangeItemCantidad(' + idx + ', this.value)" style="width:60px;padding:2px 4px;border:1px solid #C8C6BE;border-radius:3px;font-size:11px">';
+    h += '</label>';
+    h += '<div style="display:flex;flex-direction:column;gap:3px">';
+    h += '<button class="b b-icon" onclick="newProjectEditItem(' + idx + ')" style="font-size:10px;padding:2px 8px">Editar</button>';
+    h += '<button class="b b-icon b-d" onclick="newProjectRemoveItem(' + idx + ')" style="font-size:10px;padding:2px 8px">Quitar</button>';
+    h += '</div>';
+    h += '</div>';
+  });
+  return h;
+}
+
+// Cambia la cantidad de un item del buffer.
+function newProjectChangeItemCantidad(idx, value) {
+  const n = parseInt(value);
+  if (!n || n < 1) {
+    toast('La cantidad debe ser ≥ 1', true);
+    _refreshNpItemsList();
+    return;
+  }
+  if (!newProjectItemsBuffer[idx]) return;
+  newProjectItemsBuffer[idx].cantidad = n;
+}
+
+function _refreshNpItemsList() {
+  const list = document.getElementById('np-items-list');
+  if (list) list.innerHTML = _renderNpItemsListHtml();
+  // Actualizar contador en la cabecera de items
+  const headerCount = document.querySelector('.section-t span:last-child');
+  // (no esencial, no rompe nada si no actualiza)
+}
+
+// Quitar un item del buffer.
+function newProjectRemoveItem(idx) {
+  if (!newProjectItemsBuffer[idx]) return;
+  const it = newProjectItemsBuffer[idx];
+  confirmModal({
+    titulo: 'Quitar item',
+    mensaje: '¿Quitar el item "' + (it.descripcion || '(sin descripción)') + '" del proyecto?',
+    textoConfirmar: 'Quitar',
+    onConfirm: () => {
+      newProjectItemsBuffer.splice(idx, 1);
+      try { newProjectDraft = _newProjectCaptureFormValues(); } catch (e) {}
+      renderNewProjectForm();
+    }
+  });
+}
+
+function newProjectEditItem(idx) {
+  if (!newProjectItemsBuffer[idx]) return;
+  showNewProjectItemForm(idx);
+}
+
+function newProjectAddItem() {
+  showNewProjectItemForm(null);
+}
+
+// Modal para agregar / editar un item del buffer (item libre, sin matriz).
+// Si idx es null, crea uno nuevo. Si es un índice válido, edita.
+function showNewProjectItemForm(idx) {
+  const existing = document.getElementById('np-item-modal');
+  if (existing) existing.remove();
+  const isNew = idx === null || idx === undefined;
+  const it = isNew ? { cantidad: 1, estado: 'Espera MP' } : Object.assign({}, newProjectItemsBuffer[idx]);
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'np-item-modal';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '700px'; m.style.maxHeight = '90vh'; m.style.overflowY = 'auto';
+  let h = '<div class="md-t">' + (isNew ? 'Nuevo item' : 'Editar item') + '</div>';
+
+  // Si el item viene de matriz, mostrar cartel informativo (bloqueamos algunos campos)
+  if (it.fromMatriz) {
+    const prod = productosMatriz.find(p => p.id === it.fromMatriz.productoId);
+    h += '<div style="background:#E8F2FC;color:#0C447C;padding:8px 12px;border-radius:5px;margin-bottom:10px;font-size:11px;border:1px solid #A8C8E8">';
+    h += '<b>Item importado de matriz:</b> ' + escapeHtml(prod ? prod.descripcion : '?') + '. Los campos heredados (descripción, código, material) están bloqueados.';
+    h += '</div>';
+  }
+
+  h += '<div style="display:flex;gap:14px;margin-bottom:8px">';
+  h += '<div style="flex-shrink:0"><div class="ef-l">Foto del item</div>' + buildPhotoWrapHtml(it.foto_url || null, 'np-item') + '</div>';
+  h += '<div style="flex:1">';
+
+  const readonly = it.fromMatriz ? ' readonly style="background:#F0EEE7"' : '';
+  h += '<div class="ef"><div class="ef-l">Descripción <span style="color:#A32D2D">*</span></div>';
+  h += '<input type="text" class="ef-i" id="np-it-desc" value="' + escapeHtml(it.descripcion || '') + '"' + readonly + '></div>';
+
+  h += '<div class="row">';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Cantidad <span style="color:#A32D2D">*</span></div>';
+  h += '<input type="number" class="ef-i" id="np-it-cant" value="' + (it.cantidad || 1) + '" min="1" step="1"></div>';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Código del cliente</div>';
+  h += '<input type="text" class="ef-i" id="np-it-codcli" value="' + escapeHtml(it.codigo_cliente || '') + '"' + readonly + '></div>';
+  h += '</div>';
+
+  // Material: si viene de matriz, solo lectura. Si no, picker.
+  if (it.fromMatriz) {
+    const matLbl = it.material_id ? ((materiales.find(m => m.id === it.material_id) || {}).nombre || '') : '';
+    h += '<div class="ef"><div class="ef-l">Material</div>';
+    h += '<input type="text" class="ef-i" value="' + escapeHtml(matLbl) + '" readonly style="background:#F0EEE7">';
+    h += '<input type="hidden" id="np-it-material-value" value="' + (it.material_id || '') + '"></div>';
+  } else {
+    h += '<div class="ef"><div class="ef-l">Material</div>';
+    h += '<div class="combo-wrap" style="position:relative">';
+    h += '<input type="text" class="ef-i" id="np-it-material-search" placeholder="Buscar material..." autocomplete="off" oninput="renderNpItMaterialCombo()" onfocus="renderNpItMaterialCombo()" onblur="setTimeout(closeNpItMaterialCombo, 200)" value="' + (it.material_id ? escapeHtml(((materiales.find(m => m.id === it.material_id) || {}).nombre || '')) : '') + '">';
+    h += '<input type="hidden" id="np-it-material-value" value="' + (it.material_id || '') + '">';
+    h += '<div id="np-it-material-list" class="combo-list" style="display:none"></div>';
+    h += '</div></div>';
+  }
+
+  h += '<div class="ef"><div class="ef-l">Presentación de materia prima</div>';
+  h += '<input type="text" class="ef-i" id="np-it-pres" value="' + escapeHtml(it.presentacion_mat_prima || '') + '" placeholder="Ej. Barra Ø50 x 6mts"></div>';
+
+  h += '<div class="row">';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Fecha de fin estipulada</div>';
+  h += '<input type="date" class="ef-i" id="np-it-fechafin" value="' + escapeHtml(it.fecha_fin_estipulada || '') + '"></div>';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Estado <span style="color:#A32D2D">*</span></div>';
+  h += '<select class="ef-i" id="np-it-estado">';
+  ITEM_STATES.forEach(st => {
+    h += '<option value="' + st + '"' + (st === (it.estado || 'Espera MP') ? ' selected' : '') + '>' + st + '</option>';
+  });
+  h += '</select></div></div>';
+
+  h += '</div></div>';
+
+  h += '<div class="actions">';
+  h += '<button class="b" onclick="document.getElementById(\'np-item-modal\').remove()">Cancelar</button>';
+  h += '<button class="b b-p" onclick="saveNewProjectItemFromModal(' + (isNew ? 'null' : idx) + ')">' + (isNew ? 'Agregar' : 'Guardar') + '</button>';
+  h += '</div>';
+
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
+  setupPhotoPaste();
+}
+
+// Combo para elegir material en el modal de item de Nuevo Proyecto
+function renderNpItMaterialCombo() {
+  const search = document.getElementById('np-it-material-search');
+  const list = document.getElementById('np-it-material-list');
+  if (!search || !list) return;
+  const q = search.value.trim().toLowerCase();
+  const filtered = materiales.filter(m => !q || m.nombre.toLowerCase().includes(q));
+  let h = '';
+  filtered.forEach(m => {
+    h += '<div class="combo-item" onmousedown="selectNpItMaterial(' + m.id + ', \'' + m.nombre.replace(/'/g, "\\'") + '\')">' + escapeHtml(m.nombre) + '</div>';
+  });
+  if (filtered.length === 0) {
+    h = '<div class="combo-empty">No hay materiales · <button type="button" class="b" style="padding:2px 6px;font-size:10px" onclick="showCargarMaterial(\'' + (q || '').replace(/'/g, "\\'") + '\', \'np-it-material\')">+ Cargar nuevo</button></div>';
+  }
+  list.innerHTML = h;
+  list.style.display = 'block';
+}
+function selectNpItMaterial(id, nombre) {
+  document.getElementById('np-it-material-value').value = id;
+  document.getElementById('np-it-material-search').value = nombre;
+  closeNpItMaterialCombo();
+}
+function closeNpItMaterialCombo() {
+  const list = document.getElementById('np-it-material-list');
+  if (list) list.style.display = 'none';
+}
+
+// Guarda los valores del modal en el buffer.
+function saveNewProjectItemFromModal(idx) {
+  const desc = document.getElementById('np-it-desc').value.trim();
+  if (!desc) { toast('Ingresá la descripción', true); return; }
+  const cant = parseInt(document.getElementById('np-it-cant').value) || 0;
+  if (cant < 1) { toast('La cantidad debe ser ≥ 1', true); return; }
+  const codCli = document.getElementById('np-it-codcli').value.trim() || null;
+  const matValEl = document.getElementById('np-it-material-value');
+  const matId = matValEl && matValEl.value ? parseInt(matValEl.value) : null;
+  const pres = document.getElementById('np-it-pres').value.trim() || null;
+  const fechaFin = document.getElementById('np-it-fechafin').value || null;
+  const estado = document.getElementById('np-it-estado').value;
+  const fotoUrl = (document.getElementById('photo-url-np-item') || { value: '' }).value.trim() || null;
+
+  const isNew = idx === null || idx === undefined;
+  const existing = isNew ? {} : newProjectItemsBuffer[idx];
+  // Mantener fromMatriz y otros metadatos si existe
+  const item = Object.assign({}, existing, {
+    descripcion: desc,
+    cantidad: cant,
+    codigo_cliente: codCli,
+    material_id: matId,
+    presentacion_mat_prima: pres,
+    fecha_fin_estipulada: fechaFin,
+    estado: estado,
+    foto_url: fotoUrl
+  });
+  if (isNew) {
+    newProjectItemsBuffer.push(item);
+  } else {
+    newProjectItemsBuffer[idx] = item;
+  }
+  document.getElementById('np-item-modal').remove();
+  // Capturar el form actual para preservarlo al re-renderizar
+  try { newProjectDraft = _newProjectCaptureFormValues(); } catch (e) {}
+  renderNewProjectForm();
+}
+
+
+// Cancelar el Nuevo Proyecto: pide confirmación si hay items en el buffer.
+// Limpia el draft, la seleccion de matriz y el buffer; vuelve a proyectos.
 function newProjectCancelar() {
-  newProjectDraft = null;
-  newProjectMatrizSelection = null;
-  navigate({ view: 'projects' });
+  const hayCambios = (newProjectItemsBuffer && newProjectItemsBuffer.length > 0) ||
+    (document.getElementById('f-desc') && document.getElementById('f-desc').value.trim());
+  if (hayCambios) {
+    confirmModal({
+      titulo: 'Descartar proyecto',
+      mensaje: '¿Descartar el proyecto sin guardar? Vas a perder los ' + newProjectItemsBuffer.length + ' item(s) cargado(s) y los datos del formulario.',
+      textoConfirmar: 'Descartar',
+      onConfirm: () => {
+        newProjectDraft = null;
+        newProjectMatrizSelection = null;
+        newProjectItemsBuffer = [];
+        navigate({ view: 'projects' });
+      }
+    });
+  } else {
+    newProjectDraft = null;
+    newProjectMatrizSelection = null;
+    newProjectItemsBuffer = [];
+    navigate({ view: 'projects' });
+  }
 }
 
 // "+ Agregar desde Matriz" en form de Nuevo Proyecto.
@@ -1790,14 +1936,17 @@ function newProjectAbrirMatriz() {
   showAgregarDesdeMatriz({ modo: 'newProject', clienteProjId: parseInt(cliId) });
 }
 
+// DEPRECATED v56: ya no se usa porque el flujo cambió a buffer de items.
+// Si se llama, vacía el buffer entero.
 function newProjectQuitarMatriz() {
-  newProjectMatrizSelection = null;
-  // Re-render del form para volver al modo "desde cero"
+  newProjectItemsBuffer = [];
   renderNewProjectForm();
 }
 
+// DEPRECATED v56: el campo f-item-material ya no existe. Si se llama, asume que
+// el usuario está en el modal del item (np-it-material).
 function newProjectCargarMaterial(initialName) {
-  showCargarMaterial(initialName, 'f-item-material');
+  showCargarMaterial(initialName, 'np-it-material');
 }
 
 function onStateChangeNew() {
@@ -1823,27 +1972,32 @@ function renderClienteCombo() {
   list.style.display = 'block';
 }
 function selectClienteCombo(id, nombre) {
-  // Si cambia el cliente y hay un producto matriz seleccionado, hay que
-  // limpiar la seleccion porque podria no corresponder al nuevo cliente.
-  if (newProjectMatrizSelection) {
-    const currentCliId = parseInt(document.getElementById('f-cliente').value);
-    if (currentCliId !== id) {
-      newProjectMatrizSelection = null;
+  // Si cambia el cliente y hay items en el buffer (especialmente los que vinieron
+  // de matriz), avisarle al usuario que puede perder esos items.
+  const currentCliId = parseInt(document.getElementById('f-cliente').value);
+  if (currentCliId && currentCliId !== id && newProjectItemsBuffer.length > 0) {
+    const itemsMatriz = newProjectItemsBuffer.filter(it => it.fromMatriz).length;
+    if (itemsMatriz > 0) {
+      confirmModal({
+        titulo: 'Cambiar cliente',
+        mensaje: 'Hay ' + newProjectItemsBuffer.length + ' item(s) en el proyecto, ' + itemsMatriz + ' de los cuales fueron importados de la matriz del cliente actual. Si cambiás de cliente, esos items podrían no corresponder al nuevo cliente. ¿Continuar?',
+        textoConfirmar: 'Cambiar cliente',
+        peligroso: false,
+        onConfirm: () => {
+          document.getElementById('f-cliente').value = id;
+          document.getElementById('f-cliente-search').value = nombre;
+          document.getElementById('f-cliente-list').style.display = 'none';
+        }
+      });
+      // No aplicar el cambio hasta que confirme
+      const search = document.getElementById('f-cliente-search');
+      if (search) search.value = clN(currentCliId) || '';
+      return;
     }
   }
   document.getElementById('f-cliente').value = id;
   document.getElementById('f-cliente-search').value = nombre;
   document.getElementById('f-cliente-list').style.display = 'none';
-  // Si habia una seleccion de matriz y ya no la hay, re-renderizar form
-  if (!newProjectMatrizSelection) {
-    // Solo re-renderizamos si estamos en el form de nuevo proyecto
-    if (nav.view === 'newProject') {
-      // Preservar valores que ya tenia el usuario antes del re-render
-      const _captured = _newProjectCaptureFormValues();
-      renderNewProjectForm();
-      _newProjectRestoreFormValues(_captured);
-    }
-  }
 }
 
 // Captura/restaura valores del form de Nuevo Proyecto (excepto los del primer item
@@ -1902,16 +2056,9 @@ async function saveNewProject() {
     const dup = proyectos.find(p => p.pedido_nro === pedido_nro);
     if (dup) { errPedido.textContent = 'Ya existe un proyecto con el pedido ' + pedido_nro + ' (cliente: ' + clN(dup.cliente_id) + ')'; errPedido.style.display = 'block'; return; }
   }
-
-  const esModoGrupo = newProjectMatrizSelection && newProjectMatrizSelection.modoGrupo;
-
-  // Validacion adicional para modo item unico
-  if (!esModoGrupo) {
-    const itemDescEl = document.getElementById('f-item-desc');
-    if (!itemDescEl || !itemDescEl.value.trim()) {
-      toast('Ingresa descripcion del primer item', true);
-      return;
-    }
+  if (!newProjectItemsBuffer || newProjectItemsBuffer.length === 0) {
+    toast('Agregá al menos un item antes de crear el proyecto', true);
+    return;
   }
 
   showSpinner('Creando proyecto...');
@@ -1925,50 +2072,39 @@ async function saveNewProject() {
     }).select().single();
     if (projErr) { toast('Error creando proyecto: ' + projErr.message, true); return; }
 
-    if (esModoGrupo) {
-      // ===== MODO GRUPO: importar todos los productos del conjunto/subconjunto =====
-      const grupo = newProjectMatrizSelection;
-      const productosAImportar = grupo.expansion.productos;
-      const total = productosAImportar.length;
-      updateSpinnerMsg('Importando ' + total + ' producto(s)...');
+    // Setear nav y cache temporal para que _importarProductoCore funcione
+    nav = { ...nav, view: 'project', projectId: newProj.id };
+    proyectos.push({ ...newProj, items: [] });
 
-      // Activar contexto del proyecto recién creado para que _importarProductoCore
-      // use el cliente/pedido/descripcion correctos. Como _importarProductoCore lee
-      // de getProject(nav.projectId), seteamos nav temporalmente.
-      const navPrev = nav;
-      nav = { ...nav, view: 'project', projectId: newProj.id };
-      // Pero loadAll todavía no se ejecutó, entonces el proyecto recién creado no está
-      // en `proyectos`. Lo agregamos manualmente al cache para que getProject lo encuentre.
-      proyectos.push({ ...newProj, items: [] });
+    const total = newProjectItemsBuffer.length;
+    updateSpinnerMsg('Creando ' + total + ' item(s)...');
 
-      let importados = 0;
-      let totalUnidades = 0;
-      const globalPmpToAct = {};
-      const BATCH_SIZE = 5;
-      for (let i = 0; i < productosAImportar.length; i += BATCH_SIZE) {
-        const batch = productosAImportar.slice(i, i + BATCH_SIZE);
-        updateSpinnerMsg('Importando producto(s) ' + (i + 1) + ' a ' + Math.min(i + BATCH_SIZE, total) + ' de ' + total + '...');
-        const promesas = batch.map(({ prodId, cant }) => {
-          const valores = {
-            cantidad: cant,
-            fecha_fin_estipulada: grupo.fechaFinComun,
-            estado: grupo.estadoComun,
-            presentacion_mat_prima: (productosMatriz.find(p => p.id === prodId) || {}).presentacion_mat_prima || null
-          };
-          return _importarProductoCore(prodId, valores, grupo.ignorarValidaciones).then(res => {
-            if (!res.error) {
-              importados++;
-              totalUnidades += cant;
-              if (res.pmpToActMap) Object.assign(globalPmpToAct, res.pmpToActMap);
-            }
-            return res;
-          });
-        });
-        await Promise.all(promesas);
-      }
-      // Correlatividades inter-producto
-      updateSpinnerMsg('Conectando dependencias entre productos...');
-      const productosImportadosIds = new Set(productosAImportar.map(x => x.prodId));
+    let creados = 0;
+    // Mapeo global pmp_id → act_id para correlatividades inter-producto al final.
+    const globalPmpToAct = {};
+    // Procesar items en batches de 5 (paralelos)
+    const BATCH_SIZE = 5;
+    for (let i = 0; i < newProjectItemsBuffer.length; i += BATCH_SIZE) {
+      const batch = newProjectItemsBuffer.slice(i, i + BATCH_SIZE);
+      updateSpinnerMsg('Creando item(s) ' + (i + 1) + ' a ' + Math.min(i + BATCH_SIZE, total) + ' de ' + total + '...');
+      const promesas = batch.map(item => _crearItemDesdeBuffer(item, newProj, descripcion, urgencia, fotoUrl, fechaIngreso, clienteFinal).then(res => {
+        if (!res.error) {
+          creados++;
+          if (res.pmpToActMap) Object.assign(globalPmpToAct, res.pmpToActMap);
+        }
+        return res;
+      }));
+      await Promise.all(promesas);
+    }
+
+    // Correlatividades inter-producto: solo si hay items que vinieron de matriz
+    const productosImportadosIds = new Set(
+      newProjectItemsBuffer
+        .filter(it => it.fromMatriz)
+        .map(it => it.fromMatriz.productoId)
+    );
+    if (productosImportadosIds.size > 1) {
+      updateSpinnerMsg('Conectando dependencias entre items...');
       const corrsInterProducto = productosMatrizCorrelatividades.filter(c => {
         const pPred = productosMatrizProcesos.find(p => p.id === c.predecesor_id);
         const pSuc = productosMatrizProcesos.find(p => p.id === c.sucesor_id);
@@ -1987,105 +2123,125 @@ async function saveNewProject() {
           await sb.from('correlatividades').insert(corrInserts);
         }
       }
-
-      newProjectMatrizSelection = null;
-      newProjectDraft = null;
-      updateSpinnerMsg('Refrescando datos...');
-      await loadAll();
-      const corrMsg = corrsInterProducto.length > 0 ? ', ' + corrsInterProducto.length + ' dependencia(s) entre items' : '';
-      toast('Proyecto creado con ' + importados + ' item(s) (' + totalUnidades + ' unidad(es) total' + corrMsg + ')');
-      navigate({ view: 'project', projectId: newProj.id });
-    } else {
-      // ===== MODO ITEM ÚNICO: comportamiento clasico =====
-      const itemDesc = document.getElementById('f-item-desc').value.trim();
-      const itemCant = parseInt(document.getElementById('f-item-cant').value) || 1;
-      const itemPres = document.getElementById('f-item-pres').value.trim() || null;
-      const itemFechaFin = document.getElementById('f-item-fechafin').value || null;
-      const itemFotoUrl = document.getElementById('photo-url-item').value.trim() || null;
-      const itemEstadoEl = document.getElementById('f-item-estado');
-      const itemEstado = itemEstadoEl ? itemEstadoEl.value : 'Espera MP';
-      const itemCodCli = (document.getElementById('f-item-codcli') || { value: '' }).value.trim() || null;
-      const itemMatValEl = document.getElementById('f-item-material-value');
-      const itemMaterialId = itemMatValEl && itemMatValEl.value ? parseInt(itemMatValEl.value) : null;
-
-      const itemPayload = {
-        proyecto_id: newProj.id, cliente_id, pedido_nro,
-        descripcion: itemDesc, cantidad: itemCant,
-        foto_url: itemFotoUrl,
-        material_id: itemMaterialId,
-        codigo_cliente: itemCodCli,
-        presentacion_mat_prima: itemPres, fecha_fin_estipulada: itemFechaFin,
-        estado: itemEstado
-      };
-      if (newProjectMatrizSelection) {
-        itemPayload.imported_from_matriz_id = newProjectMatrizSelection.productoId;
-      }
-      const { data: newItem, error: itemErr } = await sb.from('items').insert(itemPayload).select().single();
-      if (itemErr) { toast('Error creando item: ' + itemErr.message, true); return; }
-
-      if (newProjectMatrizSelection) {
-        const matriz = newProjectMatrizSelection;
-        if (matriz.ubicaciones && matriz.ubicaciones.length > 0) {
-          const ubicInserts = matriz.ubicaciones.map(u => ({
-            item_id: newItem.id,
-            cliente_id: u.cliente_id,
-            sector_id: u.sector_id,
-            equipo_id: u.equipo_id,
-            conjunto_id: u.conjunto_id,
-            subconjunto_id: u.subconjunto_id
-          }));
-          await sb.from('items_ubicaciones').insert(ubicInserts);
-        }
-        // Procesos en batch
-        if (matriz.procesos && matriz.procesos.length > 0) {
-          const actInserts = matriz.procesos.map((pp, i) => ({
-            item_id: newItem.id,
-            cliente_id, pedido_nro,
-            descripcion: itemDesc + ' - ' + (pp.proceso || ''),
-            descripcion_proyecto: descripcion,
-            descripcion_trabajo: pp.trabajo_a_realizar || null,
-            proceso: pp.proceso,
-            duracion_estimada_min: pp.duracion_estimada_min,
-            duracion_margen_min: pp.duracion_margen_min || 0,
-            duracion_operario_min: pp.duracion_operario_min,
-            duracion_planificador_min: (pp.duracion_estimada_min || 0) + (pp.duracion_margen_min || 0),
-            tipo: pp.tipo,
-            maquina_ideal_id: pp.maquina_ideal_id,
-            maquina_ideal_nombre: pp.maquina_ideal_nombre,
-            maquinas_suplentes_ids: pp.maquinas_suplentes,
-            operario_ideal_id: pp.operario_ideal_id,
-            operarios_suplentes_ids: pp.operarios_suplentes,
-            urgencia,
-            foto_proyecto_url: fotoUrl,
-            foto_url: itemFotoUrl,
-            fecha_ingreso: fechaIngreso,
-            cliente_final: clienteFinal,
-            orden: i + 1,
-            estado: 'sin_planificar',
-            fecha: '1900-01-01',
-            hora_inicio: '06:00:00',
-            estado_proceso: 'Planificación Pendiente'
-          }));
-          const { data: actsData, error: actErr } = await sb.from('actividades_tablero').insert(actInserts).select('id');
-          if (!actErr && actsData && actsData.length > 1) {
-            const newActIds = actsData.map(x => x.id);
-            const corrInserts = [];
-            for (let i = 0; i < newActIds.length - 1; i++) {
-              corrInserts.push({ predecesor_id: newActIds[i], sucesor_id: newActIds[i + 1] });
-            }
-            await sb.from('correlatividades').insert(corrInserts);
-          }
-        }
-      }
-      newProjectMatrizSelection = null;
-      newProjectDraft = null;
-      await loadAll();
-      toast('Proyecto creado');
-      navigate({ view: 'project', projectId: newProj.id });
     }
+
+    // Limpiar estado
+    newProjectMatrizSelection = null;
+    newProjectDraft = null;
+    newProjectItemsBuffer = [];
+    updateSpinnerMsg('Refrescando datos...');
+    await loadAll();
+    toast('Proyecto creado con ' + creados + ' item(s)');
+    navigate({ view: 'project', projectId: newProj.id });
   } finally {
     hideSpinner();
   }
+}
+
+// Crea UN item del buffer en la DB. Si el item vino de matriz, copia ubicaciones,
+// procesos y genera las correlatividades intra-producto (de matriz o secuencial
+// fallback). Si es item libre, solo crea el item sin procesos.
+//
+// Retorna { itemId, actIds, pmpToActMap } o { error }.
+async function _crearItemDesdeBuffer(item, proj, projDesc, urgencia, projFoto, fechaIngreso, clienteFinal) {
+  const itemPayload = {
+    proyecto_id: proj.id,
+    cliente_id: proj.cliente_id,
+    pedido_nro: proj.pedido_nro,
+    descripcion: item.descripcion,
+    cantidad: item.cantidad || 1,
+    foto_url: item.foto_url || null,
+    material_id: item.material_id || null,
+    codigo_cliente: item.codigo_cliente || null,
+    presentacion_mat_prima: item.presentacion_mat_prima || null,
+    fecha_fin_estipulada: item.fecha_fin_estipulada || null,
+    estado: item.estado || 'Espera MP'
+  };
+  if (item.fromMatriz) {
+    itemPayload.imported_from_matriz_id = item.fromMatriz.productoId;
+  }
+  const { data: newItem, error: itemErr } = await sb.from('items').insert(itemPayload).select().single();
+  if (itemErr) { console.error('Error creando item:', itemErr); return { error: itemErr.message }; }
+
+  let pmpToActMap = {};
+
+  if (item.fromMatriz) {
+    // Ubicaciones (batch)
+    const ubics = item.fromMatriz.ubicaciones || [];
+    if (ubics.length > 0) {
+      const ubicInserts = ubics.map(u => ({
+        item_id: newItem.id,
+        cliente_id: u.cliente_id,
+        sector_id: u.sector_id,
+        equipo_id: u.equipo_id,
+        conjunto_id: u.conjunto_id,
+        subconjunto_id: u.subconjunto_id
+      }));
+      await sb.from('items_ubicaciones').insert(ubicInserts);
+    }
+    // Procesos (batch)
+    const procs = item.fromMatriz.procesos || [];
+    if (procs.length > 0) {
+      const actInserts = procs.map((pp, i) => ({
+        item_id: newItem.id,
+        cliente_id: proj.cliente_id,
+        pedido_nro: proj.pedido_nro,
+        descripcion: item.descripcion + ' - ' + (pp.proceso || ''),
+        descripcion_proyecto: projDesc,
+        descripcion_trabajo: pp.trabajo_a_realizar || null,
+        proceso: pp.proceso,
+        duracion_estimada_min: pp.duracion_estimada_min,
+        duracion_margen_min: pp.duracion_margen_min || 0,
+        duracion_operario_min: pp.duracion_operario_min,
+        duracion_planificador_min: (pp.duracion_estimada_min || 0) + (pp.duracion_margen_min || 0),
+        tipo: pp.tipo,
+        maquina_ideal_id: pp.maquina_ideal_id,
+        maquina_ideal_nombre: pp.maquina_ideal_nombre,
+        maquinas_suplentes_ids: pp.maquinas_suplentes,
+        operario_ideal_id: pp.operario_ideal_id,
+        operarios_suplentes_ids: pp.operarios_suplentes,
+        urgencia: urgencia,
+        foto_proyecto_url: projFoto,
+        foto_url: item.foto_url,
+        fecha_ingreso: fechaIngreso,
+        cliente_final: clienteFinal,
+        orden: i + 1,
+        estado: 'sin_planificar',
+        fecha: '1900-01-01',
+        hora_inicio: '06:00:00',
+        estado_proceso: 'Planificación Pendiente'
+      }));
+      const { data: actsData, error: actErr } = await sb.from('actividades_tablero').insert(actInserts).select('id');
+      if (actErr) { console.error('Error creando procesos:', actErr); return { error: actErr.message }; }
+      const newActIds = (actsData || []).map(x => x.id);
+      // Mapeo pmp_id → act_id
+      procs.forEach((pp, idx) => {
+        if (newActIds[idx]) pmpToActMap[pp.id] = newActIds[idx];
+      });
+      // Correlatividades intra-producto
+      const pmpIds = new Set(procs.map(pp => pp.id));
+      const corrsIntra = productosMatrizCorrelatividades.filter(c =>
+        pmpIds.has(c.predecesor_id) && pmpIds.has(c.sucesor_id));
+      if (corrsIntra.length > 0) {
+        const corrInserts = corrsIntra
+          .map(c => ({
+            predecesor_id: pmpToActMap[c.predecesor_id],
+            sucesor_id: pmpToActMap[c.sucesor_id]
+          }))
+          .filter(c => c.predecesor_id && c.sucesor_id);
+        if (corrInserts.length > 0) await sb.from('correlatividades').insert(corrInserts);
+      } else if (newActIds.length > 1) {
+        // Fallback secuencial (producto sin correlatividades definidas)
+        const corrInserts = [];
+        for (let i = 0; i < newActIds.length - 1; i++) {
+          corrInserts.push({ predecesor_id: newActIds[i], sucesor_id: newActIds[i + 1] });
+        }
+        await sb.from('correlatividades').insert(corrInserts);
+      }
+    }
+  }
+  // Item libre (sin matriz): no se crean procesos, el usuario los agregará después
+  return { itemId: newItem.id, pmpToActMap: pmpToActMap };
 }
 
 // ========== PROJECT DETAIL ==========
@@ -2210,12 +2366,18 @@ async function confirmDeleteItemFromList(itemId) {
   const item = items.find(i => i.id === itemId);
   if (!item) return;
   const procCount = actividades.filter(a => a.item_id === itemId && !a.proceso_eliminado).length;
-  if (!confirm('¿Eliminar el item "' + item.descripcion + '"' + (procCount > 0 ? ' y sus ' + procCount + ' proceso(s)' : '') + '?')) return;
-  await sb.from('actividades_tablero').delete().eq('item_id', itemId);
-  await sb.from('items').delete().eq('id', itemId);
-  await loadAll();
-  toast('Item eliminado');
-  render();
+  confirmModal({
+    titulo: 'Eliminar item',
+    mensaje: '¿Eliminar el item "' + item.descripcion + '"' + (procCount > 0 ? ' y sus ' + procCount + ' proceso(s)' : '') + '?',
+    textoConfirmar: 'Eliminar',
+    onConfirm: async () => {
+      await sb.from('actividades_tablero').delete().eq('item_id', itemId);
+      await sb.from('items').delete().eq('id', itemId);
+      await loadAll();
+      toast('Item eliminado');
+      render();
+    }
+  });
 }
 
 async function saveProjectMeta() {
@@ -2270,15 +2432,21 @@ async function confirmDeleteProject() {
   const proj = getProject(nav.projectId);
   if (!proj) return;
   const procCount = actividades.filter(a => proj.items.map(it => it.id).includes(a.item_id) && !a.proceso_eliminado).length;
-  if (!confirm('Eliminar el proyecto "' + (proj.descripcion || '(sin descripcion)') + '" con sus ' + proj.items.length + ' item(s) y ' + procCount + ' proceso(s)?')) return;
-  for (const it of proj.items) {
-    await sb.from('actividades_tablero').delete().eq('item_id', it.id);
-    await sb.from('items').delete().eq('id', it.id);
-  }
-  await sb.from('proyectos').delete().eq('id', proj.id);
-  await loadAll();
-  toast('Proyecto eliminado');
-  navigate({ view: 'projects' });
+  confirmModal({
+    titulo: 'Eliminar proyecto',
+    mensaje: 'Eliminar el proyecto "' + (proj.descripcion || '(sin descripcion)') + '" con sus ' + proj.items.length + ' item(s) y ' + procCount + ' proceso(s)?',
+    textoConfirmar: 'Eliminar',
+    onConfirm: async () => {
+      for (const it of proj.items) {
+        await sb.from('actividades_tablero').delete().eq('item_id', it.id);
+        await sb.from('items').delete().eq('id', it.id);
+      }
+      await sb.from('proyectos').delete().eq('id', proj.id);
+      await loadAll();
+      toast('Proyecto eliminado');
+      navigate({ view: 'projects' });
+    }
+  });
 }
 
 // ========== PROJECT STATE CHANGE MODAL ==========
@@ -2373,7 +2541,24 @@ async function saveProjectState(projectId) {
   // Si el estado nuevo requiere pedido y el proyecto NO tiene, y el campo
   // estaba visible y vacio, mostrar advertencia (no bloqueante).
   if (PROJ_STATES_REQUIRE_PEDIDO.has(newEstado) && !proj.pedido_nro && pedidoVisible && !pedidoNew) {
-    if (!confirm('Vas a dejar el proyecto sin numero de pedido. Va a aparecer una advertencia roja hasta que lo cargues. ¿Continuar?')) return;
+    confirmModal({
+      titulo: 'Sin número de pedido',
+      mensaje: 'Vas a dejar el proyecto sin número de pedido. Va a aparecer una advertencia roja hasta que lo cargues. ¿Continuar?',
+      textoConfirmar: 'Continuar',
+      peligroso: false,
+      onConfirm: async () => {
+        const payload2 = {
+          estado: newEstado, sub_estado_cerrado: newSub, observaciones_anulacion: newObs
+        };
+        if (pedidoNew) payload2.pedido_nro = pedidoNew;
+        await sb.from('proyectos').update(payload2).eq('id', projectId);
+        await loadAll();
+        document.getElementById('state-modal').remove();
+        toast('Estado actualizado');
+        render();
+      }
+    });
+    return;
   }
 
   const payload = {
@@ -3571,8 +3756,7 @@ function afmSeleccionarProducto(productoId) {
   if (!state) return;
   if (state.modo === 'newProject') {
     // Mostrar el modal de import (cantidad/fecha/presentación + validaciones).
-    // Al confirmar, guarda en newProjectMatrizSelection con los valores
-    // elegidos y vuelve al form de nuevo proyecto.
+    // Al confirmar, agregamos el item al buffer y volvemos al form de nuevo proyecto.
     _mostrarModalImportar({
       modo: 'newProject',
       productoId: productoId,
@@ -3605,8 +3789,8 @@ function afmSeleccionarProducto(productoId) {
           }
           return copia;
         });
-        newProjectMatrizSelection = {
-          productoId: prod.id,
+        // Agregar al buffer (en lugar de reemplazar)
+        newProjectItemsBuffer.push({
           descripcion: prod.descripcion,
           codigo_cliente: prod.codigo_cliente,
           material_id: prod.material_id,
@@ -3615,16 +3799,19 @@ function afmSeleccionarProducto(productoId) {
           fecha_fin_estipulada: valores.fecha_fin_estipulada,
           estado: valores.estado || 'Espera MP',
           foto_url: prod.foto_url,
-          ubicaciones: ubics,
-          procesos: procesosFinales,
-          ignorarValidaciones: ignorarValidaciones
-        };
-        const _captured = _newProjectCaptureFormValues();
+          fromMatriz: {
+            productoId: prod.id,
+            ubicaciones: ubics,
+            procesos: procesosFinales,
+            ignorarValidaciones: ignorarValidaciones
+          }
+        });
         const modalAfm = document.getElementById('add-from-matriz-modal');
         if (modalAfm) modalAfm.remove();
+        // Capturar el form actual para preservarlo al re-renderizar
+        try { newProjectDraft = _newProjectCaptureFormValues(); } catch (e) {}
         renderNewProjectForm();
-        _newProjectRestoreFormValues(_captured);
-        toast('Producto seleccionado: ' + prod.descripcion + (ignorarValidaciones ? ' (forzado)' : ''));
+        toast('Item agregado: ' + prod.descripcion + (ignorarValidaciones ? ' (forzado)' : ''));
       }
     });
   } else {
@@ -3844,31 +4031,63 @@ async function _ejecutarImportGrupalProyecto(expansion, fechaFin, estado, ignora
   }
 }
 
-// Para modo newProject: el usuario eligió un conjunto/subconjunto. Se guarda
-// la expansión completa en newProjectMatrizSelection.grupo y el form de Nuevo
-// Proyecto pasa a modo "lista de items a importar" (no edita primer item
-// individual).
+// Para modo newProject: el usuario eligió un conjunto/subconjunto. Se expande
+// y se agrega cada producto al buffer como un item, marcado con fromGrupo
+// para visualizar de qué conjunto/subconjunto vino.
 function _seleccionarGrupoParaNewProject(opts, expansion, fechaFin, estado, force) {
-  // Filtrar productos del grupo: si no se ignoran validaciones y hay productos
-  // con problemas, mejor abortar; el modal ya hizo la validación, así que esto
-  // solo se ejecuta si el usuario confirmó "Importar" o "Cargar igualmente".
-  newProjectMatrizSelection = {
-    modoGrupo: true,
-    tipo: opts.tipo,              // 'conjunto' | 'subconjunto'
-    nombreGrupo: opts.nombreGrupo,
-    grupoId: opts.grupoId,
-    expansion: expansion,          // {productos: [{prodId, cant}], problemas: [...]}
-    fechaFinComun: fechaFin,
-    estadoComun: estado,
-    ignorarValidaciones: !!force
-  };
-  // Capturar valores del form actual y re-renderizar
-  const _captured = _newProjectCaptureFormValues();
+  const labelTipo = opts.tipo === 'conjunto' ? 'Conjunto' : 'Subconjunto';
+  expansion.productos.forEach(({ prodId, cant }) => {
+    const prod = productosMatriz.find(p => p.id === prodId);
+    if (!prod) return;
+    const ubics = productosMatrizUbicaciones.filter(u => u.producto_id === prodId);
+    const procs = productosMatrizProcesos.filter(pr => pr.producto_id === prodId)
+      .sort((a, b) => (a.orden || 999999) - (b.orden || 999999));
+    const procesosFinales = procs.map(pp => {
+      const copia = Object.assign({}, pp);
+      if (force) {
+        if (copia.maquina_ideal_id) {
+          const mq = maquinas.find(m => m.id === copia.maquina_ideal_id);
+          if (mq && mq.activo === false) copia.maquina_ideal_id = null;
+        }
+        if (copia.operario_ideal_id) {
+          const op = operarios.find(o => o.id === copia.operario_ideal_id);
+          if (op && op.activo === false) copia.operario_ideal_id = null;
+        }
+        copia.maquinas_suplentes = (copia.maquinas_suplentes || []).filter(id => {
+          const mq = maquinas.find(m => m.id === parseInt(id));
+          return !mq || mq.activo !== false;
+        });
+        copia.operarios_suplentes = (copia.operarios_suplentes || []).filter(id => {
+          const op = operarios.find(o => o.id === parseInt(id));
+          return !op || op.activo !== false;
+        });
+      }
+      return copia;
+    });
+    newProjectItemsBuffer.push({
+      descripcion: prod.descripcion,
+      codigo_cliente: prod.codigo_cliente,
+      material_id: prod.material_id,
+      presentacion_mat_prima: prod.presentacion_mat_prima,
+      cantidad: cant,
+      fecha_fin_estipulada: fechaFin,
+      estado: estado || 'Espera MP',
+      foto_url: prod.foto_url,
+      fromMatriz: {
+        productoId: prod.id,
+        ubicaciones: ubics,
+        procesos: procesosFinales,
+        ignorarValidaciones: !!force
+      },
+      fromGrupo: labelTipo + ': ' + opts.nombreGrupo
+    });
+  });
   const modalAfm = document.getElementById('add-from-matriz-modal');
   if (modalAfm) modalAfm.remove();
+  // Capturar el form actual para preservarlo al re-renderizar
+  try { newProjectDraft = _newProjectCaptureFormValues(); } catch (e) {}
   renderNewProjectForm();
-  _newProjectRestoreFormValues(_captured);
-  toast(opts.tipo + ' seleccionado: "' + opts.nombreGrupo + '" (' + expansion.productos.length + ' tipo(s) de producto)');
+  toast(opts.tipo + ' agregado: "' + opts.nombreGrupo + '" (' + expansion.productos.length + ' tipo(s) de producto agregado(s) al proyecto)');
 }
 
 // Importar producto matriz al proyecto: abre primero un modal para que el
@@ -4132,13 +4351,20 @@ async function confirmDeleteItem(itemId) {
   const item = items.find(i => i.id === itemId);
   if (!item) return;
   const procCount = actividades.filter(a => a.item_id === itemId && !a.proceso_eliminado).length;
-  if (!confirm('Eliminar el item "' + item.descripcion + '" y sus ' + procCount + ' proceso(s)?')) return;
-  await sb.from('actividades_tablero').delete().eq('item_id', itemId);
-  await sb.from('items').delete().eq('id', itemId);
-  await loadAll();
-  document.getElementById('item-modal').remove();
-  toast('Item eliminado');
-  render();
+  confirmModal({
+    titulo: 'Eliminar item',
+    mensaje: 'Eliminar el item "' + item.descripcion + '" y sus ' + procCount + ' proceso(s)?',
+    textoConfirmar: 'Eliminar',
+    onConfirm: async () => {
+      await sb.from('actividades_tablero').delete().eq('item_id', itemId);
+      await sb.from('items').delete().eq('id', itemId);
+      await loadAll();
+      const md = document.getElementById('item-modal');
+      if (md) md.remove();
+      toast('Item eliminado');
+      render();
+    }
+  });
 }
 
 // ========== ITEM DETAIL ==========
@@ -4396,12 +4622,18 @@ async function moveProceso(procesoId, delta) {
 
 // ========== Correlatividad: agregar y eliminar predecesores ==========
 async function removeCorrelatividad(corrId) {
-  if (!confirm('Quitar este predecesor?')) return;
-  await sb.from('correlatividades').delete().eq('id', corrId);
-  await loadAll();
-  toast('Predecesor quitado');
-  refreshPredsInModal();
-  render();
+  confirmModal({
+    titulo: 'Quitar predecesor',
+    mensaje: '¿Quitar este predecesor?',
+    textoConfirmar: 'Quitar',
+    onConfirm: async () => {
+      await sb.from('correlatividades').delete().eq('id', corrId);
+      await loadAll();
+      toast('Predecesor quitado');
+      refreshPredsInModal();
+      render();
+    }
+  });
 }
 
 let predSearchTargetId = null;
@@ -4845,11 +5077,17 @@ async function confirmDeleteProceso(procesoId) {
   if (procCtx && procCtx.tipo === 'producto') {
     const proc = productosMatrizProcesos.find(p => p.id === procesoId);
     if (!proc) return;
-    if (!confirm('Eliminar el proceso "' + (proc.proceso || proc.descripcion) + '" del producto?')) return;
-    await sb.from('productos_matriz_procesos').delete().eq('id', procesoId);
-    await loadAll();
-    toast('Proceso eliminado');
-    render();
+    confirmModal({
+      titulo: 'Eliminar proceso',
+      mensaje: 'Eliminar el proceso "' + (proc.proceso || proc.descripcion) + '" del producto?',
+      textoConfirmar: 'Eliminar',
+      onConfirm: async () => {
+        await sb.from('productos_matriz_procesos').delete().eq('id', procesoId);
+        await loadAll();
+        toast('Proceso eliminado');
+        render();
+      }
+    });
     return;
   }
 
@@ -4858,18 +5096,30 @@ async function confirmDeleteProceso(procesoId) {
   if (!proc) return;
   const isPlanificada = proc.estado && proc.estado !== 'sin_planificar' && proc.fecha !== '1900-01-01';
   if (isPlanificada) {
-    if (!confirm('Eliminar el proceso "' + (proc.proceso || proc.descripcion) + '"?\n\nEsta actividad ya esta planificada en el tablero. Se va a marcar como eliminada y aparecera con un signo de advertencia para que el responsable de planificacion la quite.')) return;
-    await sb.from('actividades_tablero').update({ proceso_eliminado: true }).eq('id', procesoId);
-    await loadAll();
-    toast('Proceso marcado como eliminado (visible en el tablero como advertencia)');
-    render();
+    confirmModal({
+      titulo: 'Eliminar proceso planificado',
+      mensaje: 'Eliminar el proceso "' + (proc.proceso || proc.descripcion) + '"?\n\nEsta actividad ya está planificada en el tablero. Se va a marcar como eliminada y aparecerá con un signo de advertencia para que el responsable de planificación la quite.',
+      textoConfirmar: 'Marcar como eliminado',
+      onConfirm: async () => {
+        await sb.from('actividades_tablero').update({ proceso_eliminado: true }).eq('id', procesoId);
+        await loadAll();
+        toast('Proceso marcado como eliminado (visible en el tablero como advertencia)');
+        render();
+      }
+    });
     return;
   }
-  if (!confirm('Eliminar el proceso "' + (proc.proceso || proc.descripcion) + '"?')) return;
-  await sb.from('actividades_tablero').delete().eq('id', procesoId);
-  await loadAll();
-  toast('Proceso eliminado');
-  render();
+  confirmModal({
+    titulo: 'Eliminar proceso',
+    mensaje: 'Eliminar el proceso "' + (proc.proceso || proc.descripcion) + '"?',
+    textoConfirmar: 'Eliminar',
+    onConfirm: async () => {
+      await sb.from('actividades_tablero').delete().eq('id', procesoId);
+      await loadAll();
+      toast('Proceso eliminado');
+      render();
+    }
+  });
 }
 
 
@@ -5510,12 +5760,18 @@ async function confirmDeleteMaterial(materialId) {
     toast('No se puede eliminar: usado en ' + parts.join(' y '), true);
     return;
   }
-  if (!confirm('Eliminar el material "' + mat.nombre + '"?')) return;
-  const { error } = await sb.from('materiales').delete().eq('id', materialId);
-  if (error) { toast('Error: ' + error.message, true); return; }
-  await loadAll();
-  toast('Material eliminado');
-  render();
+  confirmModal({
+    titulo: 'Eliminar material',
+    mensaje: 'Eliminar el material "' + mat.nombre + '"?',
+    textoConfirmar: 'Eliminar',
+    onConfirm: async () => {
+      const { error } = await sb.from('materiales').delete().eq('id', materialId);
+      if (error) { toast('Error: ' + error.message, true); return; }
+      await loadAll();
+      toast('Material eliminado');
+      render();
+    }
+  });
 }
 
 function renderMaquinasTab() {
@@ -7810,13 +8066,19 @@ function _renderPmPredChipsHtml(proceso) {
 }
 
 async function removePmCorrelatividad(predId, sucId) {
-  if (!confirm('¿Quitar este predecesor?')) return;
-  const { error } = await sb.from('productos_matriz_correlatividades').delete()
-    .eq('predecesor_id', predId).eq('sucesor_id', sucId);
-  if (error) { toast('Error: ' + error.message, true); console.error(error); return; }
-  await loadAll();
-  toast('Predecesor quitado');
-  render();
+  confirmModal({
+    titulo: 'Quitar predecesor',
+    mensaje: '¿Quitar este predecesor?',
+    textoConfirmar: 'Quitar',
+    onConfirm: async () => {
+      const { error } = await sb.from('productos_matriz_correlatividades').delete()
+        .eq('predecesor_id', predId).eq('sucesor_id', sucId);
+      if (error) { toast('Error: ' + error.message, true); console.error(error); return; }
+      await loadAll();
+      toast('Predecesor quitado');
+      render();
+    }
+  });
 }
 
 // Modal para elegir un predecesor entre los procesos disponibles.
@@ -7916,18 +8178,22 @@ async function confirmDeleteProductoMatriz(productoId) {
   const msg = '¿Eliminar el producto "' + (prod.descripcion || '') + '"?'
     + (procsCnt > 0 ? '\n\nTambién se eliminarán sus ' + procsCnt + ' proceso(s) asociado(s).' : '')
     + '\n\nEsto NO afecta a los proyectos existentes que ya importaron este producto.';
-  if (!confirm(msg)) return;
-  // Procesos se eliminan en cascada por la FK ON DELETE CASCADE
-  const { error } = await sb.from('productos_matriz').delete().eq('id', productoId);
-  if (error) { toast('Error: ' + error.message, true); console.error(error); return; }
-  await loadAll();
-  toast('Producto eliminado');
-  // Si estabamos en la vista del producto que se acaba de eliminar, volver a la matriz
-  if (nav.view === 'productoMatriz' && nav.productoId === productoId) {
-    navigate({ view: 'recursos', tab: 'matriz' });
-  } else {
-    render();
-  }
+  confirmModal({
+    titulo: 'Eliminar producto matriz',
+    mensaje: msg,
+    textoConfirmar: 'Eliminar',
+    onConfirm: async () => {
+      const { error } = await sb.from('productos_matriz').delete().eq('id', productoId);
+      if (error) { toast('Error: ' + error.message, true); console.error(error); return; }
+      await loadAll();
+      toast('Producto eliminado');
+      if (nav.view === 'productoMatriz' && nav.productoId === productoId) {
+        navigate({ view: 'recursos', tab: 'matriz' });
+      } else {
+        render();
+      }
+    }
+  });
 }
 
 function showClienteForm(clienteId) {
@@ -8029,12 +8295,18 @@ async function saveCliente(clienteId) {
 async function confirmDeleteCliente(clienteId) {
   const cliente = clientes.find(c => c.id === clienteId);
   if (!cliente) return;
-  if (!confirm('Eliminar cliente "' + cliente.nombre + '"?')) return;
-  const { error } = await sb.from('clientes').delete().eq('id', clienteId);
-  if (error) { toast('Error: ' + error.message, true); return; }
-  await loadAll();
-  toast('Cliente eliminado');
-  render();
+  confirmModal({
+    titulo: 'Eliminar cliente',
+    mensaje: 'Eliminar cliente "' + cliente.nombre + '"?',
+    textoConfirmar: 'Eliminar',
+    onConfirm: async () => {
+      const { error } = await sb.from('clientes').delete().eq('id', clienteId);
+      if (error) { toast('Error: ' + error.message, true); return; }
+      await loadAll();
+      toast('Cliente eliminado');
+      render();
+    }
+  });
 }
 
 
@@ -8240,7 +8512,18 @@ async function copyImageToClipboard(url) {
 async function copyProject(projectId) {
   const proj = getProject(projectId);
   if (!proj) { toast('Proyecto no encontrado', true); return; }
-  if (!confirm('¿Duplicar el proyecto "' + (proj.descripcion || '') + '"? Va a abrir el proyecto nuevo para editar.')) return;
+  confirmModal({
+    titulo: 'Duplicar proyecto',
+    mensaje: '¿Duplicar el proyecto "' + (proj.descripcion || '') + '"? Va a abrir el proyecto nuevo para editar.',
+    textoConfirmar: 'Duplicar',
+    peligroso: false,
+    onConfirm: () => _doCopyProject(projectId)
+  });
+}
+
+async function _doCopyProject(projectId) {
+  const proj = getProject(projectId);
+  if (!proj) return;
 
   // Contadores para reportar al final
   let itemsCopied = 0, itemsFailed = 0, procsCopied = 0, procsFailed = 0;
