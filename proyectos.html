@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v54</title>
+<title>Velasco App 2.0 — Proyectos v55</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -148,6 +148,7 @@ let subconjuntos = [];
 let conjuntosEquipos = [];        // pivot N:M
 let subconjuntosConjuntos = [];   // pivot N:M
 let productosMatrizUbicaciones = [];
+let productosMatrizCorrelatividades = [];  // D2.5
 let itemsUbicaciones = [];   // Entrega A: ubicaciones de items en proyectos
 let nav = { view: 'projects' };
 // Default filter for projects list: all states except closed/anulado/perdido
@@ -827,7 +828,7 @@ async function loadAll() {
   // rompe la app y queda como arrays vacios. Cuando se aplique el SQL, ya
   // funciona sin tocar nada).
   try {
-    const [pm, pmp, mat, sec, eq, con, sub, ce, sc, pmu, iu] = await Promise.all([
+    const [pm, pmp, mat, sec, eq, con, sub, ce, sc, pmu, iu, pmc] = await Promise.all([
       sb.from('productos_matriz').select('*').order('descripcion'),
       sb.from('productos_matriz_procesos').select('*').order('orden', { ascending: true, nullsFirst: false }),
       sb.from('materiales').select('*').order('nombre'),
@@ -838,7 +839,8 @@ async function loadAll() {
       sb.from('conjuntos_equipos').select('*'),
       sb.from('subconjuntos_conjuntos').select('*'),
       sb.from('productos_matriz_ubicaciones').select('*'),
-      sb.from('items_ubicaciones').select('*')
+      sb.from('items_ubicaciones').select('*'),
+      sb.from('productos_matriz_correlatividades').select('*')
     ]);
     productosMatriz = pm.data || [];
     productosMatrizProcesos = pmp.data || [];
@@ -851,6 +853,7 @@ async function loadAll() {
     subconjuntosConjuntos = sc.data || [];
     productosMatrizUbicaciones = pmu.data || [];
     itemsUbicaciones = iu.data || [];
+    productosMatrizCorrelatividades = pmc.data || [];
   } catch(e) {
     console.warn('[loadAll] Tablas matriz/jerarquia no disponibles aun:', e);
     productosMatriz = [];
@@ -864,10 +867,28 @@ async function loadAll() {
     subconjuntosConjuntos = [];
     productosMatrizUbicaciones = [];
     itemsUbicaciones = [];
+    productosMatrizCorrelatividades = [];
   }
 }
 
-function navigate(newNav) { nav = newNav; render(); }
+// Draft del Nuevo Proyecto (en memoria). Se guarda cuando el usuario navega
+// fuera del form sin completar y se restaura al volver. Cancelar o crear lo limpian.
+let newProjectDraft = null;
+
+function navigate(newNav) {
+  // Si estamos saliendo del form de Nuevo Proyecto a otra vista (no a si mismo),
+  // guardar el estado actual del form para restaurarlo si el usuario vuelve.
+  try {
+    if (nav && nav.view === 'newProject' && newNav.view !== 'newProject') {
+      newProjectDraft = _newProjectCaptureFormValues();
+    }
+  } catch (e) {
+    // Si algun campo del form no existe (ej. recien creado), ignoramos.
+    console.warn('[navigate] no se pudo capturar draft:', e);
+  }
+  nav = newNav;
+  render();
+}
 
 function renderCrumbs() {
   const c = document.getElementById('crumbs');
@@ -1610,7 +1631,7 @@ function renderNewProjectForm() {
     }
     h += '</div>';
     h += '<div class="actions">';
-    h += '<button class="b" onclick="navigate({view:\'projects\'})">Cancelar</button>';
+    h += '<button class="b" onclick="newProjectCancelar()">Cancelar</button>';
     h += '<button class="b b-p" onclick="saveNewProject()">Crear proyecto e importar ' + grupo.expansion.productos.length + ' item(s)</button>';
     h += '</div></div>';
     main.innerHTML = h;
@@ -1731,11 +1752,24 @@ function renderNewProjectForm() {
 
   h += '</div></div></div>';
   h += '<div class="actions">';
-  h += '<button class="b" onclick="navigate({view:\'projects\'})">Cancelar</button>';
+  h += '<button class="b" onclick="newProjectCancelar()">Cancelar</button>';
   h += '<button class="b b-p" onclick="saveNewProject()">Crear proyecto</button>';
   h += '</div></div>';
   main.innerHTML = h;
   setupPhotoPaste();
+  // Restaurar draft si existe (de una navegacion previa fuera del form).
+  // No restauramos si hay una seleccion de matriz porque el form se reconstruye
+  // desde la seleccion (matriz tiene prioridad sobre draft).
+  if (newProjectDraft && !newProjectMatrizSelection) {
+    _newProjectRestoreFormValues(newProjectDraft);
+  }
+}
+
+// Cancelar el Nuevo Proyecto: limpia el draft y la seleccion de matriz, vuelve a proyectos.
+function newProjectCancelar() {
+  newProjectDraft = null;
+  newProjectMatrizSelection = null;
+  navigate({ view: 'projects' });
 }
 
 // "+ Agregar desde Matriz" en form de Nuevo Proyecto.
@@ -1909,6 +1943,7 @@ async function saveNewProject() {
 
       let importados = 0;
       let totalUnidades = 0;
+      const globalPmpToAct = {};
       const BATCH_SIZE = 5;
       for (let i = 0; i < productosAImportar.length; i += BATCH_SIZE) {
         const batch = productosAImportar.slice(i, i + BATCH_SIZE);
@@ -1924,17 +1959,41 @@ async function saveNewProject() {
             if (!res.error) {
               importados++;
               totalUnidades += cant;
+              if (res.pmpToActMap) Object.assign(globalPmpToAct, res.pmpToActMap);
             }
             return res;
           });
         });
         await Promise.all(promesas);
       }
+      // Correlatividades inter-producto
+      updateSpinnerMsg('Conectando dependencias entre productos...');
+      const productosImportadosIds = new Set(productosAImportar.map(x => x.prodId));
+      const corrsInterProducto = productosMatrizCorrelatividades.filter(c => {
+        const pPred = productosMatrizProcesos.find(p => p.id === c.predecesor_id);
+        const pSuc = productosMatrizProcesos.find(p => p.id === c.sucesor_id);
+        if (!pPred || !pSuc) return false;
+        if (pPred.producto_id === pSuc.producto_id) return false;
+        return productosImportadosIds.has(pPred.producto_id) && productosImportadosIds.has(pSuc.producto_id);
+      });
+      if (corrsInterProducto.length > 0) {
+        const corrInserts = corrsInterProducto
+          .map(c => ({
+            predecesor_id: globalPmpToAct[c.predecesor_id],
+            sucesor_id: globalPmpToAct[c.sucesor_id]
+          }))
+          .filter(c => c.predecesor_id && c.sucesor_id);
+        if (corrInserts.length > 0) {
+          await sb.from('correlatividades').insert(corrInserts);
+        }
+      }
 
       newProjectMatrizSelection = null;
+      newProjectDraft = null;
       updateSpinnerMsg('Refrescando datos...');
       await loadAll();
-      toast('Proyecto creado con ' + importados + ' item(s) importado(s) (' + totalUnidades + ' unidad(es) total)');
+      const corrMsg = corrsInterProducto.length > 0 ? ', ' + corrsInterProducto.length + ' dependencia(s) entre items' : '';
+      toast('Proyecto creado con ' + importados + ' item(s) (' + totalUnidades + ' unidad(es) total' + corrMsg + ')');
       navigate({ view: 'project', projectId: newProj.id });
     } else {
       // ===== MODO ITEM ÚNICO: comportamiento clasico =====
@@ -2019,6 +2078,7 @@ async function saveNewProject() {
         }
       }
       newProjectMatrizSelection = null;
+      newProjectDraft = null;
       await loadAll();
       toast('Proyecto creado');
       navigate({ view: 'project', projectId: newProj.id });
@@ -3719,9 +3779,9 @@ async function _ejecutarImportGrupalProyecto(expansion, fechaFin, estado, ignora
   showSpinner('Importando ' + total + ' producto(s)...');
   let importados = 0;
   let totalUnidades = 0;
-  // Paralelizamos en batches de 5 para no saturar la conexión.
-  // Cada item internamente es secuencial (item -> ubicaciones -> procesos ->
-  // correlatividades), pero items distintos van en paralelo.
+  // Mapeo global pmp_id -> act_id de TODOS los productos importados, para
+  // crear correlatividades inter-producto al final.
+  const globalPmpToAct = {};
   const BATCH_SIZE = 5;
   try {
     for (let i = 0; i < expansion.productos.length; i += BATCH_SIZE) {
@@ -3738,18 +3798,47 @@ async function _ejecutarImportGrupalProyecto(expansion, fechaFin, estado, ignora
           if (!res.error) {
             importados++;
             totalUnidades += cant;
+            // Acumular mapeo
+            if (res.pmpToActMap) {
+              Object.assign(globalPmpToAct, res.pmpToActMap);
+            }
           }
           return res;
         });
       });
       await Promise.all(promesas);
     }
+    // Correlatividades INTER-producto: buscar correlatividades de la matriz
+    // cuyo predecesor Y sucesor estén ambos en el mapeo global (entre productos
+    // distintos importados). Las intra-producto ya las creó _importarProductoCore.
+    updateSpinnerMsg('Conectando dependencias entre productos...');
+    const productosImportadosIds = new Set(expansion.productos.map(x => x.prodId));
+    // Para cada correlatividad de matriz, ver si ambos extremos están en distintos productos importados.
+    const corrsInterProducto = productosMatrizCorrelatividades.filter(c => {
+      const pPred = productosMatrizProcesos.find(p => p.id === c.predecesor_id);
+      const pSuc = productosMatrizProcesos.find(p => p.id === c.sucesor_id);
+      if (!pPred || !pSuc) return false;
+      if (pPred.producto_id === pSuc.producto_id) return false;  // intra ya hecha
+      return productosImportadosIds.has(pPred.producto_id) && productosImportadosIds.has(pSuc.producto_id);
+    });
+    if (corrsInterProducto.length > 0) {
+      const corrInserts = corrsInterProducto
+        .map(c => ({
+          predecesor_id: globalPmpToAct[c.predecesor_id],
+          sucesor_id: globalPmpToAct[c.sucesor_id]
+        }))
+        .filter(c => c.predecesor_id && c.sucesor_id);
+      if (corrInserts.length > 0) {
+        await sb.from('correlatividades').insert(corrInserts);
+      }
+    }
     const modalAfm = document.getElementById('add-from-matriz-modal');
     if (modalAfm) modalAfm.remove();
     updateSpinnerMsg('Refrescando datos...');
     await loadAll();
     render();
-    toast('Importado(s) ' + importados + ' producto(s) de "' + nombreGrupo + '" (' + totalUnidades + ' unidad(es) total)');
+    const corrMsg = corrsInterProducto.length > 0 ? ', ' + corrsInterProducto.length + ' dependencia(s) entre items' : '';
+    toast('Importado(s) ' + importados + ' producto(s) de "' + nombreGrupo + '" (' + totalUnidades + ' unidad(es) total' + corrMsg + ')');
   } finally {
     hideSpinner();
   }
@@ -3996,16 +4085,39 @@ async function _importarProductoCore(productoId, valores, ignorarValidaciones) {
     };
   });
   let newActIds = [];
+  let pmpToActMap = {};  // mapeo pmp_id -> act_id, para correlatividades
   if (actInserts.length > 0) {
     // Insertamos en batch. Supabase preserva el orden de los inserts en los
     // returns, así que los IDs vuelven en el mismo orden que los enviamos.
     const { data: actsData, error: actErr } = await sb.from('actividades_tablero').insert(actInserts).select('id');
     if (actErr) { console.error('Error creando procesos:', actErr); return { error: actErr.message }; }
     newActIds = (actsData || []).map(x => x.id);
+    // Construir mapeo pmp_id -> act_id (ordenados igual)
+    prodProcs.forEach((pp, idx) => {
+      if (newActIds[idx]) pmpToActMap[pp.id] = newActIds[idx];
+    });
   }
 
-  // 4. Correlatividades secuenciales (batch)
-  if (newActIds.length > 1) {
+  // 4. Correlatividades INTRA-producto: si en la matriz hay correlatividades
+  // definidas entre procesos de ESTE producto, las usamos. Si no, fallback
+  // secuencial (legacy: cada proceso depende del anterior). Las correlatividades
+  // INTER-producto se manejan afuera de esta función, en la versión grupal.
+  const pmpIds = new Set(prodProcs.map(pp => pp.id));
+  const corrsIntraProducto = productosMatrizCorrelatividades.filter(c =>
+    pmpIds.has(c.predecesor_id) && pmpIds.has(c.sucesor_id));
+  if (corrsIntraProducto.length > 0) {
+    // Usar las correlatividades de la matriz
+    const corrInserts = corrsIntraProducto
+      .map(c => ({
+        predecesor_id: pmpToActMap[c.predecesor_id],
+        sucesor_id: pmpToActMap[c.sucesor_id]
+      }))
+      .filter(c => c.predecesor_id && c.sucesor_id);
+    if (corrInserts.length > 0) {
+      await sb.from('correlatividades').insert(corrInserts);
+    }
+  } else if (newActIds.length > 1) {
+    // Fallback secuencial (producto viejo sin correlatividades definidas)
     const corrInserts = [];
     for (let i = 0; i < newActIds.length - 1; i++) {
       corrInserts.push({ predecesor_id: newActIds[i], sucesor_id: newActIds[i + 1] });
@@ -4013,7 +4125,7 @@ async function _importarProductoCore(productoId, valores, ignorarValidaciones) {
     await sb.from('correlatividades').insert(corrInserts);
   }
 
-  return { itemId: newItem.id, actIds: newActIds };
+  return { itemId: newItem.id, actIds: newActIds, pmpToActMap: pmpToActMap, productoId: productoId };
 }
 
 async function confirmDeleteItem(itemId) {
@@ -4158,7 +4270,10 @@ function renderProductoMatrizDetail() {
   h += '<b>Cliente:</b> ' + escapeHtml(cliLbl) + (cliCodigo ? ' <span style="display:inline-block;padding:1px 5px;border-radius:3px;font-size:10px;background:#0C447C;color:#fff;font-weight:500;margin-left:4px">' + escapeHtml(cliCodigo) + '</span>' : '') + '<br>';
   h += '<b>Código del cliente:</b> ' + escapeHtml(prod.codigo_cliente || '—') + '<br>';
   h += '<b>Material:</b> ' + escapeHtml(matLbl) + ' &nbsp; <b>Presentación:</b> ' + escapeHtml(prod.presentacion_mat_prima || '—') + '<br>';
-  h += '<button class="b b-icon" style="margin-top:8px" onclick="showProductoMatrizForm(' + prod.id + ')">Editar producto</button></div></div>';
+  h += '<div style="margin-top:8px;display:flex;gap:6px">';
+  h += '<button class="b b-icon" onclick="showProductoMatrizForm(' + prod.id + ')">Editar producto</button>';
+  h += '<button class="b b-icon b-d" onclick="confirmDeleteProductoMatriz(' + prod.id + ')">Eliminar producto</button>';
+  h += '</div></div></div>';
 
   // Equipos compatibles (read-only en la vista, se editan desde el form)
   h += '<div class="section-t" style="margin-top:8px">Equipos compatibles</div>';
@@ -4198,6 +4313,8 @@ function renderProductoMatrizDetail() {
         const trabHtml = /[<>]/.test(p.trabajo_a_realizar) ? sanitizeRichHtml(p.trabajo_a_realizar) : escapeHtml(p.trabajo_a_realizar);
         h += '<br><b>Trabajo:</b> ' + trabHtml;
       }
+      // Predecesores (correlatividades de matriz)
+      h += '<br><b>Predecesores:</b> ' + _renderPmPredChipsHtml(p);
       h += '</div></div>';
       h += '<div class="card-actions" style="display:flex;flex-direction:column;gap:4px">';
       h += '<div style="display:flex;gap:2px">';
@@ -4632,8 +4749,21 @@ async function saveProceso(procesoId) {
       const sameProd = productosMatrizProcesos.filter(p => p.producto_id === procCtx.parentId);
       const maxOrden = sameProd.reduce((mx, a) => Math.max(mx, a.orden || 0), 0);
       payload.orden = maxOrden + 1;
-      const { error } = await sb.from('productos_matriz_procesos').insert(payload);
+      const { data: newProc, error } = await sb.from('productos_matriz_procesos').insert(payload).select().single();
       if (error) { toast('Error: ' + error.message, true); console.error(error); return; }
+      // Auto-correlatividad: el ultimo proceso anterior del mismo producto
+      // queda como predecesor del nuevo. Si es el primer proceso, no hay nada
+      // que conectar.
+      if (sameProd.length > 0 && newProc) {
+        const ultimoPrevio = sameProd.reduce((acc, p) =>
+          (acc === null || (p.orden || 0) > (acc.orden || 0)) ? p : acc, null);
+        if (ultimoPrevio) {
+          await sb.from('productos_matriz_correlatividades').insert({
+            predecesor_id: ultimoPrevio.id,
+            sucesor_id: newProc.id
+          });
+        }
+      }
       toast('Proceso agregado');
     }
     await loadAll();
@@ -6699,9 +6829,10 @@ function validarProductoMatriz(productoId) {
       if (!pp.duracion_estimada_min || pp.duracion_estimada_min < 1) {
         problemas.push('Proceso ' + n + ': falta duración estimada');
       }
-      if (!pp.maquina_ideal_id && !pp.maquina_ideal_nombre) {
-        problemas.push('Proceso ' + n + ': falta máquina ideal');
-      }
+      // NOTA: la maquina ideal puede ser null/null intencionalmente cuando el
+      // usuario eligió "Ninguna" (proceso sin maquina). No es una falla.
+      // El form de proceso obliga a elegir una opción (NINGUNA, OTRA, o máquina),
+      // así que null/null en DB siempre es "Ninguna" elegida explícitamente.
       if (!pp.operario_ideal_id) {
         problemas.push('Proceso ' + n + ': falta operario ideal');
       }
@@ -7624,7 +7755,157 @@ async function saveProductoMatriz(productoId) {
   document.getElementById('prod-matriz-modal').remove();
   pmFormState = null;
   await loadAll();
+  const wasNew = !productoId;
   toast(productoId ? 'Producto actualizado' : 'Producto creado');
+  if (wasNew && savedProductoId) {
+    // Navegar a la vista completa del producto recien creado y abrir el modal
+    // de "+ Agregar proceso" para que el usuario arranque a cargar procesos.
+    navigate({ view: 'productoMatriz', productoId: savedProductoId });
+    setTimeout(() => {
+      showProcesoForm(null, { tipo: 'producto', parentId: savedProductoId });
+    }, 100);
+  } else {
+    render();
+  }
+}
+
+// =============================================================================
+// CORRELATIVIDADES EN PRODUCTO MATRIZ (D2.5)
+// =============================================================================
+// Cada proceso de producto matriz puede tener predecesores: otros procesos
+// (del mismo producto o de otros productos del mismo cliente) que deben
+// terminar antes que este. Al importar al proyecto:
+//   - Producto solo → solo correlatividades intra-producto.
+//   - Conjunto/subconjunto → todas las correlatividades cuyo predecesor Y
+//     sucesor estén entre los productos importados.
+
+// Devuelve los procesos predecesores (de la matriz) de un proceso dado.
+function _pmGetPredecesores(procesoId) {
+  const rels = productosMatrizCorrelatividades.filter(c => c.sucesor_id === procesoId);
+  return rels.map(r => productosMatrizProcesos.find(p => p.id === r.predecesor_id)).filter(Boolean);
+}
+
+// Render chips de predecesores en la card del proceso, con boton "+ Predecesor"
+// y boton "×" en cada chip para quitar.
+function _renderPmPredChipsHtml(proceso) {
+  const preds = _pmGetPredecesores(proceso.id);
+  let h = '';
+  if (preds.length === 0) {
+    h += '<span style="color:#888;font-style:italic">sin predecesores</span> ';
+  } else {
+    preds.forEach(pred => {
+      const prodPred = productosMatriz.find(p => p.id === pred.producto_id);
+      const ordenIdx = (pred.orden || '?');
+      const label = (prodPred ? prodPred.descripcion : '?') + ' · #' + ordenIdx + ' ' + (pred.proceso || '');
+      const procesoId = proceso.id;
+      const predId = pred.id;
+      h += '<span style="display:inline-flex;align-items:center;gap:4px;background:#E8F2FC;color:#0C447C;border:1px solid #A8C8E8;border-radius:10px;padding:2px 8px;font-size:11px;margin:2px 4px 2px 0">';
+      h += '↶ ' + escapeHtml(label);
+      h += '<button onclick="removePmCorrelatividad(' + predId + ',' + procesoId + ')" title="Quitar predecesor" style="background:transparent;border:none;color:#0C447C;cursor:pointer;font-size:13px;padding:0;line-height:1">×</button>';
+      h += '</span>';
+    });
+  }
+  h += '<button class="b b-icon" style="font-size:10px;padding:1px 6px;margin-left:4px" onclick="showPmPredecesorPicker(' + proceso.id + ')">+ Predecesor</button>';
+  return h;
+}
+
+async function removePmCorrelatividad(predId, sucId) {
+  if (!confirm('¿Quitar este predecesor?')) return;
+  const { error } = await sb.from('productos_matriz_correlatividades').delete()
+    .eq('predecesor_id', predId).eq('sucesor_id', sucId);
+  if (error) { toast('Error: ' + error.message, true); console.error(error); return; }
+  await loadAll();
+  toast('Predecesor quitado');
+  render();
+}
+
+// Modal para elegir un predecesor entre los procesos disponibles.
+// Candidatos: todos los procesos del mismo cliente (intra-producto + inter-producto),
+// EXCEPTO el proceso mismo. Se filtran los que ya son predecesores y los que
+// crearian ciclo (sucesor de este).
+function showPmPredecesorPicker(procesoId) {
+  const proceso = productosMatrizProcesos.find(p => p.id === procesoId);
+  if (!proceso) return;
+  const prod = productosMatriz.find(p => p.id === proceso.producto_id);
+  if (!prod) return;
+  const cliId = prod.cliente_id;  // puede ser null (genérico)
+
+  // Procesos candidatos: del mismo cliente (o ambos genéricos)
+  let candidatos = productosMatrizProcesos.filter(p => {
+    if (p.id === procesoId) return false;
+    const pProd = productosMatriz.find(x => x.id === p.producto_id);
+    if (!pProd) return false;
+    return pProd.cliente_id === cliId;
+  });
+  // Ya predecesores: excluir
+  const yaPreds = new Set(productosMatrizCorrelatividades
+    .filter(c => c.sucesor_id === procesoId).map(c => c.predecesor_id));
+  candidatos = candidatos.filter(p => !yaPreds.has(p.id));
+  // Evitar ciclos directos: si el candidato tiene a este proceso como predecesor
+  // (transitivo), no lo permitimos. Por simplicidad solo verificamos el 1er nivel.
+  // (Un ciclo profundo va a fallar mas adelante en la planificacion.)
+  const sucesoresDeEste = new Set(productosMatrizCorrelatividades
+    .filter(c => c.predecesor_id === procesoId).map(c => c.sucesor_id));
+  candidatos = candidatos.filter(p => !sucesoresDeEste.has(p.id));
+
+  // Agrupar candidatos por producto
+  const grupos = new Map();  // productoId -> [procesos]
+  candidatos.forEach(p => {
+    if (!grupos.has(p.producto_id)) grupos.set(p.producto_id, []);
+    grupos.get(p.producto_id).push(p);
+  });
+
+  const existing = document.getElementById('pm-pred-modal');
+  if (existing) existing.remove();
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'pm-pred-modal';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '600px'; m.style.zIndex = '1100';
+  let h = '<div class="md-t">Elegir predecesor para "' + escapeHtml(proceso.proceso || '?') + '"</div>';
+  h += '<div style="font-size:11px;color:#5F5E5A;margin-bottom:8px">';
+  h += 'Producto actual: <b>' + escapeHtml(prod.descripcion) + '</b>. ';
+  h += 'Cliente: <b>' + escapeHtml(cliId ? ((clientes.find(c => c.id === cliId) || {}).nombre || '?') : 'Genérico') + '</b>. ';
+  h += 'Mostrando procesos del mismo cliente.';
+  h += '</div>';
+  if (grupos.size === 0) {
+    h += '<div style="padding:20px;text-align:center;color:#888;font-size:12px;font-style:italic">No hay procesos candidatos disponibles.</div>';
+  } else {
+    h += '<div style="max-height:400px;overflow-y:auto;border:1px solid #E8E6DF;border-radius:5px">';
+    // Ordenar grupos: el mismo producto primero, despues alfabetico
+    const sortedGrupos = [...grupos.entries()].sort((a, b) => {
+      if (a[0] === proceso.producto_id) return -1;
+      if (b[0] === proceso.producto_id) return 1;
+      const pa = productosMatriz.find(x => x.id === a[0]);
+      const pb = productosMatriz.find(x => x.id === b[0]);
+      return (pa ? pa.descripcion : '').localeCompare(pb ? pb.descripcion : '');
+    });
+    sortedGrupos.forEach(([prodId, procs]) => {
+      const p = productosMatriz.find(x => x.id === prodId);
+      if (!p) return;
+      const esMismoProducto = prodId === proceso.producto_id;
+      h += '<div style="background:' + (esMismoProducto ? '#FFF4D5' : '#F5F3EC') + ';padding:6px 10px;font-size:11px;font-weight:600;color:#5F5E5A;border-bottom:1px solid #E8E6DF">';
+      h += escapeHtml(p.descripcion) + (esMismoProducto ? ' <span style="color:#854F0B">(mismo producto)</span>' : '');
+      h += '</div>';
+      procs.sort((a, b) => (a.orden || 999999) - (b.orden || 999999));
+      procs.forEach(pp => {
+        h += '<div style="padding:6px 14px;border-bottom:1px solid #E8E6DF;font-size:12px;cursor:pointer;display:flex;justify-content:space-between;align-items:center" onclick="addPmPredecesor(' + pp.id + ',' + procesoId + ')">';
+        h += '<span><span style="color:#888;margin-right:6px">#' + (pp.orden || '?') + '</span>' + escapeHtml(pp.proceso || '?') + '</span>';
+        h += '<button class="b b-p" style="padding:2px 8px;font-size:10px">Elegir</button>';
+        h += '</div>';
+      });
+    });
+    h += '</div>';
+  }
+  h += '<div class="actions"><button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button></div>';
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
+}
+
+async function addPmPredecesor(predId, sucId) {
+  const { error } = await sb.from('productos_matriz_correlatividades').insert({
+    predecesor_id: predId, sucesor_id: sucId
+  });
+  if (error) { toast('Error: ' + error.message, true); console.error(error); return; }
+  await loadAll();
+  document.getElementById('pm-pred-modal').remove();
+  toast('Predecesor agregado');
   render();
 }
 
@@ -7641,7 +7922,12 @@ async function confirmDeleteProductoMatriz(productoId) {
   if (error) { toast('Error: ' + error.message, true); console.error(error); return; }
   await loadAll();
   toast('Producto eliminado');
-  render();
+  // Si estabamos en la vista del producto que se acaba de eliminar, volver a la matriz
+  if (nav.view === 'productoMatriz' && nav.productoId === productoId) {
+    navigate({ view: 'recursos', tab: 'matriz' });
+  } else {
+    render();
+  }
 }
 
 function showClienteForm(clienteId) {
