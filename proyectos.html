@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v62</title>
+<title>Velasco App 2.0 — Proyectos v63</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -28,7 +28,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .card-item.card-clickable:hover{border-color:#378ADD;background:#F5FAFF}
 .card-clickable{cursor:pointer;transition:all .12s}
 .card-clickable:hover{border-color:#378ADD;background:#F5FAFF;box-shadow:0 2px 6px rgba(55,138,221,.12)}
-.card-img{width:60px;height:60px;border-radius:6px;background:#E8E6DF;flex-shrink:0;object-fit:cover}
+.card-img{width:60px;height:60px;border-radius:6px;background:#E8E6DF;flex-shrink:0;object-fit:cover;overflow:hidden}
+.card-img img{width:100%;height:100%;object-fit:cover;display:block}
 .card-img-empty{width:60px;height:60px;border-radius:6px;background:#E8E6DF;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#888780;font-size:9px;text-align:center;padding:4px}
 .card-body{flex:1;min-width:0}
 .card-t{font-size:14px;font-weight:600;margin-bottom:3px}
@@ -1114,7 +1115,9 @@ function renderProjectsListBody(filteredProjects) {
   projs.forEach(p => {
     const stColors = projStateColor(p.estado);
     const isClosed = (p.estado === 'Cerrado' || p.estado === 'Anulado' || p.estado === 'Perdido');
-    const cardBg = isClosed ? '#F5F3EC' : '#fff';
+    // v63: fondo celeste para proyectos activos (identifica visualmente "Proyecto"
+    // vs Item, Conjunto, Subconjunto que usan blanco/gris). Cerrados quedan grises.
+    const cardBg = isClosed ? '#F5F3EC' : '#f0f6fc';
     const img = p.foto_url
       ? '<img src="' + escapeHtml(p.foto_url) + '" class="card-img" onerror="this.style.display=\'none\'">'
       : '<div class="card-img-empty">sin foto</div>';
@@ -1612,7 +1615,7 @@ let _recursosLastTab = null;
 function renderNewProjectForm() {
   const main = document.getElementById('main');
   const clientesOpts = clientes.map(c => '<option value="' + c.id + '">' + escapeHtml(c.nombre) + '</option>').join('');
-  let h = '<div class="form">';
+  let h = '<div class="form" style="background:#f0f6fc">';
   h += '<div class="form-t">Nuevo proyecto</div>';
   h += '<div style="font-size:12px;color:#5F5E5A;margin-bottom:14px">Carga los datos del proyecto y al menos un primer item.</div>';
   h += '<div style="display:flex;gap:20px;margin-bottom:14px">';
@@ -1694,6 +1697,10 @@ function renderNewProjectForm() {
   if (newProjectDraft) {
     _newProjectRestoreFormValues(newProjectDraft);
   }
+  // v63: si tras restaurar hay cliente seleccionado, llenar el combo de contacto.
+  const cliEl = document.getElementById('f-cliente');
+  const cliId = cliEl && cliEl.value ? parseInt(cliEl.value) : null;
+  _llenarComboContactoProj(cliId, null);
 }
 
 // Render del buffer de items pendientes (lista plana en v56; vista anidada en v57).
@@ -2578,6 +2585,7 @@ function renderProjectDetail() {
 
   h += '<div class="actions" style="margin-top:8px">';
   h += '<button class="b b-d" onclick="confirmDeleteProject()">Eliminar proyecto</button>';
+  h += '<button class="b" onclick="descartarCambiosProyecto()" title="Revierte los cambios al estado guardado">Descartar cambios</button>';
   h += '<button class="b b-p" onclick="saveProjectMeta()">Guardar cambios</button></div>';
 
   h += '<div class="section-t">Items del proyecto <div style="display:flex;gap:6px"><button class="b b-p" onclick="showItemForm(null)">+ Agregar item</button> <button class="b b-p" onclick="showAgregarDesdeMatriz()">+ Agregar desde Matriz</button></div></div>';
@@ -2642,6 +2650,24 @@ async function confirmDeleteItemFromList(itemId) {
       await sb.from('items').delete().eq('id', itemId);
       await loadAll();
       toast('Item eliminado');
+      render();
+    }
+  });
+}
+
+// v63: Descartar cambios del form de proyecto. Como los campos viven en el DOM
+// y se persisten al guardar, descartar = re-renderizar la vista para repintar
+// con los datos actuales de la DB (los del cache `proyectos`). Si el cache
+// estaba sucio porque hubo guardadas parciales (otras tabs), hacemos un loadAll
+// para asegurar.
+async function descartarCambiosProyecto() {
+  confirmModal({
+    titulo: 'Descartar cambios',
+    mensaje: '¿Descartar los cambios sin guardar? Vas a perder lo que tipiaste en este formulario.',
+    textoConfirmar: 'Descartar',
+    onConfirm: async () => {
+      await loadAll();
+      toast('Cambios descartados');
       render();
     }
   });
@@ -7867,31 +7893,37 @@ function _matrizProductoCardHtml(p) {
   const procs = productosMatrizProcesos.filter(pr => pr.producto_id === p.id)
     .sort((a, b) => (a.orden || 999999) - (b.orden || 999999));
   const expanded = matrizExpandedProds.has(p.id);
-  const clienteLbl = p.cliente_id ? clN(p.cliente_id) : 'Productos Genéricos';
+  const ubics = productosMatrizUbicaciones.filter(u => u.producto_id === p.id);
   let h = '<div style="background:#fff;border:1px solid #C8C6BE;border-radius:8px;margin-bottom:8px;overflow:hidden">';
   h += '<div style="display:flex;align-items:center;padding:8px 12px;gap:10px">';
-  // Flecha para expandir
-  h += '<button class="b" onclick="matrizToggleExpandProd(' + p.id + ')" style="background:transparent;border:none;padding:4px;font-size:14px;color:#5F5E5A;cursor:pointer;flex:0 0 auto">' + (expanded ? '▼' : '▶') + '</button>';
-  // Foto o placeholder con ícono llave
+  // Flecha para expandir (no navega, solo toggle del expand de procesos)
+  h += '<button class="b" onclick="event.stopPropagation();matrizToggleExpandProd(' + p.id + ')" style="background:transparent;border:none;padding:4px;font-size:14px;color:#5F5E5A;cursor:pointer;flex:0 0 auto">' + (expanded ? '▼' : '▶') + '</button>';
+  // Foto/icono también navega a detalle al hacer click
   if (p.foto_url) {
-    h += '<div class="card-img" style="flex:0 0 auto"><img src="' + escapeHtml(p.foto_url) + '" alt=""></div>';
+    h += '<div class="card-img" style="flex:0 0 auto;cursor:pointer" onclick="navigate({view:\'productoMatriz\',productoId:' + p.id + '})"><img src="' + escapeHtml(p.foto_url) + '" alt=""></div>';
   } else {
-    h += '<div class="card-img-empty" style="flex:0 0 auto">🔧</div>';
+    h += '<div class="card-img-empty" style="flex:0 0 auto;cursor:pointer" onclick="navigate({view:\'productoMatriz\',productoId:' + p.id + '})">🔧</div>';
   }
-  // Body
+  // Body: descripción clickeable para ir al detalle del producto.
+  // La ruta de ubicaciones se muestra abajo, con cada nivel clickeable a la vista anidada.
   h += '<div style="flex:1;min-width:0">';
   const validacion = validarProductoMatriz(p.id);
   const warnIcon = validacion.ok ? '' : _warningIconHtml('Producto incompleto o desactualizado:\n' + validacion.problemas.join('\n'));
-  h += '<div class="card-t">' + escapeHtml(p.descripcion || '(sin descripción)') + warnIcon + '</div>';
-  h += '<div class="card-s" style="margin-top:2px">';
-  h += '<span style="color:' + (p.cliente_id ? '#0C447C' : '#5F5E5A') + '">' + escapeHtml(clienteLbl) + '</span>';
-  if (p.material) h += ' · <span>' + escapeHtml(p.material) + '</span>';
-  h += ' · <span>' + procs.length + ' proceso(s)</span>';
-  h += '</div></div>';
+  h += '<div class="card-t" style="cursor:pointer" onclick="navigate({view:\'productoMatriz\',productoId:' + p.id + '})">' + escapeHtml(p.descripcion || '(sin descripción)') + warnIcon + '</div>';
+  // Rutas (una por línea si hay varias ubicaciones), o "Productos Genéricos" si no tiene
+  if (ubics.length === 0) {
+    h += '<div class="card-s" style="margin-top:2px"><span style="color:#5F5E5A">Productos Genéricos</span> · <span>' + procs.length + ' proceso(s)</span></div>';
+  } else {
+    ubics.forEach(u => {
+      h += '<div class="card-s" style="margin-top:2px">' + _pmUbicacionRouteClickable(u) + '</div>';
+    });
+    h += '<div class="card-s" style="margin-top:2px;color:#888">' + procs.length + ' proceso(s)</div>';
+  }
+  h += '</div>';
   // Acciones
   h += '<div class="card-actions" style="flex:0 0 auto">';
-  h += '<button class="b b-icon" onclick="showProductoMatrizForm(' + p.id + ')">Editar</button>';
-  h += '<button class="b b-icon b-d" onclick="confirmDeleteProductoMatriz(' + p.id + ')">Eliminar</button>';
+  h += '<button class="b b-icon" onclick="event.stopPropagation();showProductoMatrizForm(' + p.id + ')">Editar</button>';
+  h += '<button class="b b-icon b-d" onclick="event.stopPropagation();confirmDeleteProductoMatriz(' + p.id + ')">Eliminar</button>';
   h += '</div></div>';
   // Procesos desplegados
   if (expanded) {
@@ -8660,6 +8692,72 @@ function pmCambiarCantidadUbicacion(idx, value) {
   pmFormState.ubicacionesPendientes[idx].cantidad = n;
 }
 
+// Helpers de navegación que pre-expanden la matriz anidada hasta un nivel
+// específico. Cada función agrega las keys necesarias a matrizExpanded y
+// navega a la vista anidada (matrizView=clientes).
+function _matrizNavExpand(keys) {
+  keys.forEach(k => matrizExpanded.add(k));
+  navigate({ view: 'recursos', tab: 'matriz', matrizView: 'clientes' });
+}
+
+function navMatrizACliente(clienteId) {
+  if (clienteId == null) {
+    _matrizNavExpand(['gen']);
+  } else {
+    _matrizNavExpand(['cli:' + clienteId]);
+  }
+}
+function navMatrizASector(clienteId, sectorId) {
+  _matrizNavExpand(['cli:' + clienteId, 'sec:' + sectorId]);
+}
+function navMatrizAEquipo(clienteId, sectorId, equipoId) {
+  _matrizNavExpand(['cli:' + clienteId, 'sec:' + sectorId, 'eq:' + equipoId]);
+}
+function navMatrizAConjunto(clienteId, sectorId, equipoId, conjuntoId) {
+  _matrizNavExpand(['cli:' + clienteId, 'sec:' + sectorId, 'eq:' + equipoId, 'con:' + conjuntoId]);
+}
+function navMatrizASubconjunto(clienteId, sectorId, equipoId, conjuntoId, subconjuntoId) {
+  _matrizNavExpand(['cli:' + clienteId, 'sec:' + sectorId, 'eq:' + equipoId, 'con:' + conjuntoId, 'sub:' + subconjuntoId]);
+}
+
+// Construye la ruta clickeable Cliente > Sector > Equipo > Conjunto > Subconjunto.
+// Cada nivel navega a la vista anidada con esa rama pre-expandida.
+function _pmUbicacionRouteClickable(u) {
+  const parts = [];
+  if (u.cliente_id) {
+    const c = clientes.find(x => x.id === u.cliente_id);
+    const lbl = c ? c.nombre : '?';
+    parts.push('<a onclick="event.stopPropagation();navMatrizACliente(' + u.cliente_id + ')" style="color:#0C447C;cursor:pointer;text-decoration:underline">' + escapeHtml(lbl) + '</a>');
+  }
+  if (u.sector_id) {
+    const s = sectores.find(x => x.id === u.sector_id);
+    const lbl = s ? s.nombre : '?';
+    parts.push('<a onclick="event.stopPropagation();navMatrizASector(' + u.cliente_id + ',' + u.sector_id + ')" style="color:#0C447C;cursor:pointer;text-decoration:underline">' + escapeHtml(lbl) + '</a>');
+  } else if (u.cliente_id) {
+    parts.push('<i style="color:#888">Sin Sector</i>');
+  }
+  if (u.equipo_id) {
+    const e = equipos.find(x => x.id === u.equipo_id);
+    const lbl = e ? e.nombre : '?';
+    parts.push('<a onclick="event.stopPropagation();navMatrizAEquipo(' + u.cliente_id + ',' + u.sector_id + ',' + u.equipo_id + ')" style="color:#0C447C;cursor:pointer;text-decoration:underline">' + escapeHtml(lbl) + '</a>');
+  } else if (u.sector_id) {
+    parts.push('<i style="color:#888">Sin Equipo</i>');
+  }
+  if (u.conjunto_id) {
+    const c = conjuntos.find(x => x.id === u.conjunto_id);
+    const lbl = c ? c.nombre : '?';
+    parts.push('<a onclick="event.stopPropagation();navMatrizAConjunto(' + u.cliente_id + ',' + u.sector_id + ',' + u.equipo_id + ',' + u.conjunto_id + ')" style="color:#0C447C;cursor:pointer;text-decoration:underline">' + escapeHtml(lbl) + '</a>');
+  } else if (u.equipo_id) {
+    parts.push('<i style="color:#888">Sin Conjunto</i>');
+  }
+  if (u.subconjunto_id) {
+    const s = subconjuntos.find(x => x.id === u.subconjunto_id);
+    const lbl = s ? s.nombre : '?';
+    parts.push('<a onclick="event.stopPropagation();navMatrizASubconjunto(' + u.cliente_id + ',' + u.sector_id + ',' + u.equipo_id + ',' + u.conjunto_id + ',' + u.subconjunto_id + ')" style="color:#0C447C;cursor:pointer;text-decoration:underline">' + escapeHtml(lbl) + '</a>');
+  }
+  return parts.join(' <span style="color:#888">›</span> ');
+}
+
 // Devuelve string "Cliente > Sector > Equipo > Conjunto > Subconjunto"
 function _pmUbicacionRoute(u) {
   const parts = [];
@@ -9258,6 +9356,9 @@ function showContactoForm(contactoId, clienteId) {
   // Si contactoId es null, es nuevo. Si tiene valor, es edición.
   const contacto = contactoId ? clienteContactos.find(c => c.id === contactoId) : null;
   const isNew = !contacto;
+  // Si ya hay un cont-modal abierto (ej. doble click rápido), eliminarlo para
+  // evitar duplicados que provocarían que el "Guardar" del nuevo no cierre el viejo.
+  document.querySelectorAll('#cont-modal').forEach(el => el.remove());
   const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'cont-modal';
   bd.style.zIndex = '1100';  // Por encima del modal del cliente
   const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '420px';
@@ -9296,7 +9397,7 @@ async function saveContacto(contactoId, clienteId) {
     toast('Contacto creado');
   }
   await loadAll();
-  document.getElementById('cont-modal').remove();
+  document.querySelectorAll('#cont-modal').forEach(el => el.remove());
   // Si hay form de proyecto abierto con este cliente: seleccionar el contacto nuevo
   const cliSel = document.getElementById('f-cliente');
   if (cliSel && parseInt(cliSel.value) === clienteId) {
