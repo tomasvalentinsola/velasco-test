@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v57</title>
+<title>Velasco App 2.0 — Proyectos v59</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -115,8 +115,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
     <div class="hd-r">
       <button class="b" onclick="navigate({view:'projects'})">Proyectos</button>
       <button class="b" onclick="window.open('tablero_operarios.html','_blank')">Tablero</button>
-      <button class="b" onclick="navigate({view:'recursos',tab:'clientes'})">Recursos</button>
-      <button class="b" onclick="navigate({view:'clientes'})" title="Acceso directo a clientes (en próxima entrega se mueve a Recursos)">Clientes</button>
+      <button class="b" onclick="navigate({view:'recursos'})">Recursos</button>
     </div>
   </div>
   <div id="crumbs" class="crumbs"></div>
@@ -946,16 +945,10 @@ function renderCrumbs() {
     h = '<a onclick="navigate({view:\'projects\'})">Proyectos</a> <span class="sep">›</span> Clientes';
   } else if (nav.view === 'recursos') {
     const tabLabels = { clientes: 'Clientes', matriz: 'Matriz de Productos', rrhh: 'RRHH', maquinas: 'Máquinas', materiales: 'Materiales' };
-    const tab = nav.tab || 'clientes';
+    const tab = nav.tab || _recursosLastTab || 'matriz';
     const tabLbl = tabLabels[tab] || tab;
-    if (tab === 'clientes') {
-      // No hay sub-jerarquia mas alla de Recursos > Clientes (todavia)
-      h = '<a onclick="navigate({view:\'projects\'})">Proyectos</a> <span class="sep">›</span> ' +
-          '<a onclick="navigate({view:\'recursos\'})">Recursos</a> <span class="sep">›</span> ' + tabLbl;
-    } else {
-      h = '<a onclick="navigate({view:\'projects\'})">Proyectos</a> <span class="sep">›</span> ' +
-          '<a onclick="navigate({view:\'recursos\'})">Recursos</a> <span class="sep">›</span> ' + tabLbl;
-    }
+    h = '<a onclick="navigate({view:\'projects\'})">Proyectos</a> <span class="sep">›</span> ' +
+        '<a onclick="navigate({view:\'recursos\'})">Recursos</a> <span class="sep">›</span> ' + tabLbl;
   } else if (nav.view === 'productoMatriz') {
     const prod = productosMatriz.find(p => p.id === nav.productoId);
     const cliLbl = prod && prod.cliente_id ? clN(prod.cliente_id) : 'Productos Genéricos';
@@ -976,7 +969,13 @@ function render() {
   if (nav.view === 'newProject') return renderNewProjectForm();
   if (nav.view === 'project') return renderProjectDetail();
   if (nav.view === 'item') return renderItemDetail();
-  if (nav.view === 'clientes') return renderClientesList();
+  if (nav.view === 'clientes') {
+    // Compatibilidad v59: la vista standalone de clientes se reemplazó por la
+    // pestaña Clientes dentro de Recursos. Redirigimos para que cualquier link
+    // viejo siga funcionando.
+    nav = { view: 'recursos', tab: 'clientes' };
+    return renderRecursos();
+  }
   if (nav.view === 'recursos') return renderRecursos();
   if (nav.view === 'productoMatriz') return renderProductoMatrizDetail();
 }
@@ -1582,6 +1581,9 @@ let newProjectMatrizSelection = null;
 //   - fromGrupo:  label del conjunto/subconjunto origen (visual)
 //   - ignorarValidaciones: true si se importó con "Cargar igualmente"
 let newProjectItemsBuffer = [];
+// Memoria del último tab visitado en Recursos (sesión). Se preserva al navegar
+// entre módulos pero se pierde con F5.
+let _recursosLastTab = null;
 
 function renderNewProjectForm() {
   const main = document.getElementById('main');
@@ -3471,7 +3473,7 @@ function _afmRenderConjuntoNode(c) {
   let h = '<div style="background:#fff;border:1px solid #C8C6BE;border-radius:6px;margin-bottom:6px;overflow:hidden">';
   h += '<div style="display:flex;align-items:center;padding:8px 12px;gap:8px">';
   h += '<button onclick="afmToggleExpand(\'' + key + '\')" style="background:transparent;border:none;padding:4px;font-size:14px;color:#5F5E5A;cursor:pointer;flex:0 0 auto">' + (expanded ? '▼' : '▶') + '</button>';
-  h += '<span style="font-size:14px;flex:0 0 auto">📦</span>';
+  h += '<span style="font-size:22px;flex:0 0 auto;line-height:1">📦</span>';
   h += '<div style="flex:1;min-width:0;cursor:pointer" onclick="afmToggleExpand(\'' + key + '\')">';
   h += '<div style="font-weight:600;color:#5F5E5A;font-size:13px">' + escapeHtml(c.nombre) + warn + '</div>';
   h += '<div style="font-size:11px;color:#888;margin-top:1px">' + escapeHtml(cliLbl) + ' · ' + numUnicos + ' tipo(s) de producto · ' + totalUnidades + ' unidad(es) total</div>';
@@ -3518,7 +3520,7 @@ function _afmRenderSubconjuntoNode(sub) {
   let h = '<div style="background:#fff;border:1px solid #C8C6BE;border-radius:6px;margin-bottom:6px;overflow:hidden">';
   h += '<div style="display:flex;align-items:center;padding:8px 12px;gap:8px">';
   h += '<button onclick="afmToggleExpand(\'' + key + '\')" style="background:transparent;border:none;padding:4px;font-size:14px;color:#5F5E5A;cursor:pointer;flex:0 0 auto">' + (expanded ? '▼' : '▶') + '</button>';
-  h += '<span style="font-size:14px;flex:0 0 auto">🔧</span>';
+  h += '<span style="font-size:14px;flex:0 0 auto;line-height:1">📦</span>';
   h += '<div style="flex:1;min-width:0;cursor:pointer" onclick="afmToggleExpand(\'' + key + '\')">';
   h += '<div style="font-weight:600;color:#5F5E5A;font-size:13px">' + escapeHtml(sub.nombre) + warn + '</div>';
   h += '<div style="font-size:11px;color:#888;margin-top:1px">' + numUnicos + ' tipo(s) de producto · ' + totalUnidades + ' unidad(es) total</div>';
@@ -3561,7 +3563,7 @@ function _afmRenderProductoLeaf(p, cantOpt) {
   if (p.foto_url) {
     h += '<img src="' + escapeHtml(p.foto_url) + '" style="width:32px;height:32px;object-fit:cover;border-radius:3px;flex:0 0 auto">';
   } else {
-    h += '<div style="width:32px;height:32px;background:#E8E6DF;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:14px;flex:0 0 auto">📦</div>';
+    h += '<div style="width:32px;height:32px;background:#E8E6DF;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:14px;flex:0 0 auto">🔧</div>';
   }
   h += '<div style="flex:1;min-width:0">';
   h += '<div style="font-weight:600;font-size:12px">' + escapeHtml(p.descripcion || '') + warn + cantSuffix + '</div>';
@@ -4657,7 +4659,9 @@ function renderItemDetail() {
   h += '<b>Proyecto:</b> ' + escapeHtml(proj.descripcion || '(sin descripcion)') + '<br>';
   h += '<b>Cliente:</b> ' + escapeHtml(clN(item.cliente_id)) + (proj.cliente_final ? ' (para ' + escapeHtml(proj.cliente_final) + ')' : '') + '<br>';
   h += '<b>Pedido:</b> ' + escapeHtml(proj.pedido_nro || '—') + ' &nbsp; <b>Cantidad:</b> ' + item.cantidad + '<br>';
-  h += '<b>Material:</b> ' + escapeHtml(item.material || '—') + ' &nbsp; <b>Presentacion:</b> ' + escapeHtml(item.presentacion_mat_prima || '—') + '<br>';
+  // material_id es la columna nueva (FK a materiales). 'item.material' es legacy.
+  const itemMatLbl = item.material_id ? ((materiales.find(m => m.id === item.material_id) || {}).nombre || '') : (item.material || '');
+  h += '<b>Material:</b> ' + escapeHtml(itemMatLbl || '—') + ' &nbsp; <b>Presentacion:</b> ' + escapeHtml(item.presentacion_mat_prima || '—') + '<br>';
   h += '<b>Ingreso:</b> ' + fmt(proj.fecha_ingreso) + ' &nbsp; <b>Fin estipulado:</b> ' + fmt(item.fecha_fin_estipulada) + '<br>';
   if (item.estado === 'Anulado' && item.observaciones_anulacion) {
     h += '<div style="margin-top:6px;padding:6px 8px;background:#FEF0F0;color:#A32D2D;border-radius:4px;border:1px solid #FEDADA"><b>Anulado:</b> ' + escapeHtml(item.observaciones_anulacion) + '</div>';
@@ -5670,8 +5674,10 @@ function clearPhoto(kind) {
   }
 }
 
-function renderClientesList() {
-  const main = document.getElementById('main');
+// Render del listado de clientes (cuerpo HTML, sin main.innerHTML).
+// Usado por la pestaña Clientes en Recursos. Se mantiene renderClientesList
+// como wrapper legacy por si algún link directo lo invoca.
+function renderClientesTab() {
   let h = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">';
   h += '<h2 style="font-size:16px;font-weight:600">Clientes</h2>';
   h += '<button class="b b-p" onclick="showClienteForm(null)">+ Nuevo cliente</button></div>';
@@ -5695,7 +5701,13 @@ function renderClientesList() {
       h += '</div></div>';
     });
   }
-  main.innerHTML = h;
+  return h;
+}
+
+function renderClientesList() {
+  // Mantenido por compatibilidad. Renderiza la lista directamente al main, pero
+  // la nueva ubicación canónica es Recursos > Clientes (renderClientesTab).
+  document.getElementById('main').innerHTML = renderClientesTab();
 }
 
 // ============================================================================
@@ -5706,15 +5718,19 @@ function renderClientesList() {
 // La tab activa se determina por nav.tab.
 function renderRecursos() {
   const main = document.getElementById('main');
-  const activeTab = nav.tab || 'clientes';
+  // Default: Matriz de Productos. Si vinimos navegando a un tab específico
+  // (nav.tab), usamos ese. Si no, y hay memoria del último tab visitado en esta
+  // sesión, usamos ese. Solo si nada de eso aplica, cae en 'matriz'.
+  const activeTab = nav.tab || _recursosLastTab || 'matriz';
+  _recursosLastTab = activeTab;
   let h = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">';
   h += '<h2 style="font-size:16px;font-weight:600;margin:0">Recursos</h2>';
   h += '</div>';
-  // Tabs - orden: Clientes, Matriz de Productos, RRHH, Máquinas
+  // Tabs - orden: Matriz de Productos, Clientes, RRHH, Máquinas, Materiales
   h += '<div style="display:flex;gap:0;border-bottom:1px solid #C8C6BE;margin-bottom:14px;flex-wrap:wrap">';
   const tabs = [
-    ['clientes', 'Clientes'],
     ['matriz', 'Matriz de Productos'],
+    ['clientes', 'Clientes'],
     ['rrhh', 'RRHH'],
     ['maquinas', 'Máquinas'],
     ['materiales', 'Materiales']
@@ -5740,12 +5756,7 @@ function renderRecursos() {
     h += '<div style="font-size:12px;margin-top:6px">Próximamente. Aquí vas a poder gestionar los perfiles de los operarios (horarios, vacaciones, máquinas que manejan, etc.).</div>';
     h += '</div>';
   } else if (activeTab === 'clientes') {
-    h += '<div class="list-empty" style="text-align:center;padding:30px 20px;color:#5F5E5A">';
-    h += '<div style="font-size:32px;margin-bottom:8px">🏢</div>';
-    h += '<div><b>Clientes</b></div>';
-    h += '<div style="font-size:12px;margin-top:6px">La gestión de clientes está disponible en el botón <b>Clientes</b> de la barra superior. En una próxima iteración la moveremos a este módulo.</div>';
-    h += '<div style="margin-top:14px"><button class="b b-p" onclick="navigate({view:\'clientes\'})">Ir a Clientes</button></div>';
-    h += '</div>';
+    h += renderClientesTab();
   }
   main.innerHTML = h;
 }
@@ -8916,6 +8927,8 @@ function generateCarpeta(itemId) {
     pedido_nro: proj.pedido_nro || ''
   };
   const cliente = clientes.find(c => c.id === item.cliente_id);
+  // Resolver nombre del material (campo material_id es la columna nueva; 'material' es legacy)
+  const itemMatLbl = item.material_id ? ((materiales.find(m => m.id === item.material_id) || {}).nombre || '') : (item.material || '');
   const fmt = d => { if (!d) return ''; const [y, m, da] = d.split('-'); return da + '/' + m + '/' + y; };
   const itemFoto = item.foto_url || meta.foto_proyecto_url || null;
   const clienteDisplay = (cliente ? cliente.nombre : '?') +
@@ -9132,7 +9145,7 @@ body { font-family: Arial, sans-serif; font-size: 11px; color: #000; }
         <td class="label label-r">TELEFONO:</td><td class="value value-fit"><div class="fit-content">${escapeHtml(cliente && cliente.telefono ? cliente.telefono : '')}</div></td>
       </tr>
       <tr class="shade">
-        <td class="label">MATERIAL:</td><td class="value value-fit"><div class="fit-content">${escapeHtml(item.material || '')}</div></td>
+        <td class="label">MATERIAL:</td><td class="value value-fit"><div class="fit-content">${escapeHtml(itemMatLbl)}</div></td>
         <td class="label label-r">FORMA MP:</td><td class="value value-fit"><div class="fit-content">${escapeHtml(item.presentacion_mat_prima || '')}</div></td>
       </tr>
       <tr>
@@ -9343,7 +9356,7 @@ function renderOT(p, idx, total, item, meta, clienteDisplay) {
     <table class="ot-info">
       <tr>
         <td class="label" style="width:14%">Material:</td>
-        <td class="value-fit" style="width:38%"><div class="fit-content">${escapeHtml(item.material || '')}</div></td>
+        <td class="value-fit" style="width:38%"><div class="fit-content">${escapeHtml(itemMatLbl)}</div></td>
         <td class="label" style="width:14%">Forma inicial:</td>
         <td class="value-fit" style="width:34%"><div class="fit-content">${escapeHtml(item.presentacion_mat_prima || '')}</div></td>
       </tr>
