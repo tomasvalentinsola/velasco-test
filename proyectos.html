@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v56</title>
+<title>Velasco App 2.0 — Proyectos v57</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -1665,48 +1665,194 @@ function renderNewProjectForm() {
 }
 
 // Render del buffer de items pendientes (lista plana en v56; vista anidada en v57).
+// Set de groupKeys y subKeys expandidos en la lista de items del Nuevo Proyecto.
+// Por defecto, todo arranca expandido (los grupos nuevos se agregan acá).
+let npExpanded = new Set();
+
+function npToggleExpand(key) {
+  if (npExpanded.has(key)) npExpanded.delete(key);
+  else npExpanded.add(key);
+  _refreshNpItemsList();
+}
+
+// Render anidado del buffer:
+//   📦 Conjunto: X         [▼ expandido]  [Quitar grupo]
+//      📦 Subconjunto: Y   [▼ expandido]
+//          🔧 Producto P1  x2  [Editar][Quitar]
+//      🔧 Producto P2 (directo del conjunto)  [Editar][Quitar]
+//   ── Items sueltos ──
+//   🔧 Producto suelto  [Editar][Quitar]
+//
+// Iconos:
+//   📦 grande (font-size 26) = Conjunto
+//   📦 normal (font-size 18) = Subconjunto
+//   🔧                       = Producto (hoja)
 function _renderNpItemsListHtml() {
   if (!newProjectItemsBuffer || newProjectItemsBuffer.length === 0) {
     return '<div style="font-size:12px;color:#888;font-style:italic;text-align:center;padding:20px">Aún no hay items. Apretá "+ Agregar item" o "+ Agregar desde Matriz" para empezar.</div>';
   }
-  let h = '';
+
+  // Agrupar items por groupKey, preservando el orden de aparición.
+  // groupKey === null = item suelto (no grupal).
+  const groupsOrder = [];   // [groupKey | null]
+  const groupsMap = new Map(); // groupKey -> {nombre, items: [{idx, item}]}
   newProjectItemsBuffer.forEach((it, idx) => {
-    // Resolver labels
-    const matLbl = it.material_id ? ((materiales.find(m => m.id === it.material_id) || {}).nombre || '') : '';
-    const matricesInfo = it.fromMatriz
-      ? '<span style="font-size:10px;background:#E8F2FC;color:#0C447C;padding:1px 6px;border-radius:8px;margin-left:6px">de matriz</span>'
-      : '';
-    const grupoInfo = it.fromGrupo
-      ? '<span style="font-size:10px;background:#FFF4D5;color:#854F0B;padding:1px 6px;border-radius:8px;margin-left:6px">' + escapeHtml(it.fromGrupo) + '</span>'
-      : '';
-    // Procesos: si viene de matriz, los del producto matriz; si es libre, ninguno
-    let procsInfo = '';
-    if (it.fromMatriz && it.fromMatriz.productoId) {
-      const cnt = productosMatrizProcesos.filter(pr => pr.producto_id === it.fromMatriz.productoId).length;
-      procsInfo = ' · ' + cnt + ' proceso(s)';
+    const key = it.groupKey || null;
+    if (!groupsMap.has(key)) {
+      groupsOrder.push(key);
+      groupsMap.set(key, {
+        nombre: it.fromGrupo || null,
+        items: []
+      });
     }
-    h += '<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:#fff;border:1px solid #E8E6DF;border-radius:5px;margin-bottom:6px">';
-    if (it.foto_url) {
-      h += '<img src="' + escapeHtml(it.foto_url) + '" style="width:48px;height:48px;object-fit:cover;border-radius:4px;flex:0 0 auto">';
-    } else {
-      h += '<div style="width:48px;height:48px;background:#E8E6DF;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:20px;flex:0 0 auto">📦</div>';
-    }
-    h += '<div style="flex:1;min-width:0">';
-    h += '<div style="font-weight:600;font-size:13px">' + escapeHtml(it.descripcion || '(sin descripción)') + matricesInfo + grupoInfo + '</div>';
-    const subInfo = [matLbl, it.codigo_cliente, it.presentacion_mat_prima].filter(Boolean).join(' · ');
-    if (subInfo) h += '<div style="font-size:11px;color:#888;margin-top:2px">' + escapeHtml(subInfo) + procsInfo + '</div>';
-    h += '</div>';
-    // Cantidad inline editable
-    h += '<label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#5F5E5A;flex:0 0 auto">Cant.:';
-    h += '<input type="number" min="1" step="1" value="' + (it.cantidad || 1) + '" onchange="newProjectChangeItemCantidad(' + idx + ', this.value)" style="width:60px;padding:2px 4px;border:1px solid #C8C6BE;border-radius:3px;font-size:11px">';
-    h += '</label>';
-    h += '<div style="display:flex;flex-direction:column;gap:3px">';
-    h += '<button class="b b-icon" onclick="newProjectEditItem(' + idx + ')" style="font-size:10px;padding:2px 8px">Editar</button>';
-    h += '<button class="b b-icon b-d" onclick="newProjectRemoveItem(' + idx + ')" style="font-size:10px;padding:2px 8px">Quitar</button>';
-    h += '</div>';
-    h += '</div>';
+    groupsMap.get(key).items.push({ idx, item: it });
   });
+
+  let h = '';
+  // Primero los grupos (orden de importación)
+  groupsOrder.forEach(key => {
+    if (key === null) return;  // los sueltos van al final
+    h += _renderNpGroupCard(key, groupsMap.get(key));
+  });
+  // Items sueltos al final
+  if (groupsMap.has(null)) {
+    const sueltos = groupsMap.get(null);
+    h += '<div style="margin-top:8px;font-size:11px;font-weight:700;color:#5F5E5A;text-transform:uppercase;letter-spacing:0.5px;padding:8px 4px 4px;border-top:1px solid #E8E6DF">Items sueltos</div>';
+    sueltos.items.forEach(({ idx, item }) => {
+      h += _renderNpItemLeaf(idx, item, false);
+    });
+  }
   return h;
+}
+
+// Renderiza la tarjeta de un grupo (conjunto) con sus subconjuntos y productos.
+function _renderNpGroupCard(groupKey, groupData) {
+  const expanded = !npExpanded.has(groupKey + '__col');  // por default expandido; el set guarda los colapsados
+  // Total de items en el grupo
+  const totalItems = groupData.items.length;
+  const totalUnidades = groupData.items.reduce((acc, x) => acc + (x.item.cantidad || 1), 0);
+
+  // Subdividir por subconjunto dentro del grupo. Cada subconjunto se muestra como
+  // sub-card expandible. Productos directos del conjunto van fuera de subconjuntos.
+  const subsMap = new Map();  // subLabel -> [{idx, item}]
+  const directos = [];
+  groupData.items.forEach(({ idx, item }) => {
+    if (item.fromSubconjunto) {
+      if (!subsMap.has(item.fromSubconjunto)) subsMap.set(item.fromSubconjunto, []);
+      subsMap.get(item.fromSubconjunto).push({ idx, item });
+    } else {
+      directos.push({ idx, item });
+    }
+  });
+
+  let h = '<div style="background:#fff;border:1px solid #C8C6BE;border-radius:6px;margin-bottom:8px;overflow:hidden">';
+  // Header del conjunto
+  h += '<div style="display:flex;align-items:center;padding:10px 12px;gap:10px;background:#F5F3EC">';
+  h += '<button type="button" onclick="npToggleExpand(\'' + groupKey + '__col\')" style="background:transparent;border:none;padding:4px;font-size:14px;color:#5F5E5A;cursor:pointer;flex:0 0 auto">' + (expanded ? '▼' : '▶') + '</button>';
+  h += '<span style="font-size:26px;flex:0 0 auto;line-height:1">📦</span>';
+  h += '<div style="flex:1;min-width:0;cursor:pointer" onclick="npToggleExpand(\'' + groupKey + '__col\')">';
+  h += '<div style="font-weight:700;color:#5F5E5A;font-size:14px">' + escapeHtml(groupData.nombre || 'Grupo') + '</div>';
+  h += '<div style="font-size:11px;color:#888;margin-top:1px">' + totalItems + ' item(s) · ' + totalUnidades + ' unidad(es) total</div>';
+  h += '</div>';
+  h += '<button class="b b-icon b-d" onclick="newProjectRemoveGroup(\'' + groupKey + '\')" style="font-size:10px;padding:3px 8px;flex:0 0 auto">Quitar grupo</button>';
+  h += '</div>';
+  if (expanded) {
+    h += '<div style="border-top:1px solid #E8E6DF;background:#FAFAF7;padding:8px 8px 8px 24px">';
+    // Subconjuntos primero
+    subsMap.forEach((items, subLabel) => {
+      h += _renderNpSubconjuntoCard(groupKey, subLabel, items);
+    });
+    // Productos directos del conjunto
+    directos.forEach(({ idx, item }) => {
+      h += _renderNpItemLeaf(idx, item, true);
+    });
+    if (subsMap.size === 0 && directos.length === 0) {
+      h += '<div style="font-size:11px;color:#888;font-style:italic;padding:4px 0">Sin items.</div>';
+    }
+    h += '</div>';
+  }
+  h += '</div>';
+  return h;
+}
+
+// Renderiza la sub-tarjeta de un subconjunto con sus productos.
+function _renderNpSubconjuntoCard(groupKey, subLabel, items) {
+  const subKey = groupKey + '__sub__' + subLabel;
+  const expanded = !npExpanded.has(subKey + '__col');
+  const totalUnidades = items.reduce((acc, x) => acc + (x.item.cantidad || 1), 0);
+
+  let h = '<div style="background:#fff;border:1px solid #C8C6BE;border-radius:5px;margin-bottom:6px;overflow:hidden">';
+  h += '<div style="display:flex;align-items:center;padding:8px 10px;gap:8px">';
+  h += '<button type="button" onclick="npToggleExpand(\'' + subKey + '__col\')" style="background:transparent;border:none;padding:4px;font-size:12px;color:#5F5E5A;cursor:pointer;flex:0 0 auto">' + (expanded ? '▼' : '▶') + '</button>';
+  h += '<span style="font-size:18px;flex:0 0 auto;line-height:1">📦</span>';
+  h += '<div style="flex:1;min-width:0;cursor:pointer" onclick="npToggleExpand(\'' + subKey + '__col\')">';
+  h += '<div style="font-weight:600;color:#5F5E5A;font-size:12px">' + escapeHtml(subLabel) + '</div>';
+  h += '<div style="font-size:10px;color:#888;margin-top:1px">' + items.length + ' item(s) · ' + totalUnidades + ' unidad(es)</div>';
+  h += '</div>';
+  h += '</div>';
+  if (expanded) {
+    h += '<div style="border-top:1px solid #E8E6DF;background:#FAFAF7;padding:6px 6px 6px 20px">';
+    items.forEach(({ idx, item }) => {
+      h += _renderNpItemLeaf(idx, item, true);
+    });
+    h += '</div>';
+  }
+  h += '</div>';
+  return h;
+}
+
+// Renderiza un item hoja (producto). insideGroup = true para usar fondo más claro
+// (ya estamos dentro de una tarjeta de grupo).
+function _renderNpItemLeaf(idx, it, insideGroup) {
+  const matLbl = it.material_id ? ((materiales.find(m => m.id === it.material_id) || {}).nombre || '') : '';
+  const fromMatrizChip = it.fromMatriz
+    ? '<span style="font-size:10px;background:#E8F2FC;color:#0C447C;padding:1px 6px;border-radius:8px;margin-left:6px">de matriz</span>'
+    : '';
+  let procsInfo = '';
+  if (it.fromMatriz && it.fromMatriz.productoId) {
+    const cnt = productosMatrizProcesos.filter(pr => pr.producto_id === it.fromMatriz.productoId).length;
+    procsInfo = ' · ' + cnt + ' proceso(s)';
+  }
+  const bg = insideGroup ? '#fff' : '#fff';
+  let h = '<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;background:' + bg + ';border:1px solid #E8E6DF;border-radius:5px;margin-bottom:5px">';
+  // Icono / foto del producto (llave 🔧 + foto miniatura si tiene)
+  if (it.foto_url) {
+    h += '<img src="' + escapeHtml(it.foto_url) + '" style="width:42px;height:42px;object-fit:cover;border-radius:4px;flex:0 0 auto">';
+  } else {
+    h += '<div style="width:42px;height:42px;background:#E8E6DF;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:20px;flex:0 0 auto">🔧</div>';
+  }
+  h += '<div style="flex:1;min-width:0">';
+  h += '<div style="font-weight:600;font-size:13px">' + escapeHtml(it.descripcion || '(sin descripción)') + fromMatrizChip + '</div>';
+  const subInfo = [matLbl, it.codigo_cliente, it.presentacion_mat_prima].filter(Boolean).join(' · ');
+  if (subInfo) h += '<div style="font-size:11px;color:#888;margin-top:2px">' + escapeHtml(subInfo) + procsInfo + '</div>';
+  h += '</div>';
+  h += '<label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#5F5E5A;flex:0 0 auto">Cant.:';
+  h += '<input type="number" min="1" step="1" value="' + (it.cantidad || 1) + '" onchange="newProjectChangeItemCantidad(' + idx + ', this.value)" style="width:60px;padding:2px 4px;border:1px solid #C8C6BE;border-radius:3px;font-size:11px">';
+  h += '</label>';
+  h += '<div style="display:flex;flex-direction:column;gap:3px">';
+  h += '<button class="b b-icon" onclick="newProjectEditItem(' + idx + ')" style="font-size:10px;padding:2px 8px">Editar</button>';
+  h += '<button class="b b-icon b-d" onclick="newProjectRemoveItem(' + idx + ')" style="font-size:10px;padding:2px 8px">Quitar</button>';
+  h += '</div>';
+  h += '</div>';
+  return h;
+}
+
+// Quitar todos los items de un grupo (conjunto importado) del buffer.
+function newProjectRemoveGroup(groupKey) {
+  const itemsDelGrupo = newProjectItemsBuffer.filter(it => it.groupKey === groupKey);
+  if (itemsDelGrupo.length === 0) return;
+  const nombreGrupo = itemsDelGrupo[0].fromGrupo || 'el grupo';
+  confirmModal({
+    titulo: 'Quitar grupo',
+    mensaje: '¿Quitar el grupo "' + nombreGrupo + '" y sus ' + itemsDelGrupo.length + ' item(s) del proyecto?',
+    textoConfirmar: 'Quitar grupo',
+    onConfirm: () => {
+      newProjectItemsBuffer = newProjectItemsBuffer.filter(it => it.groupKey !== groupKey);
+      try { newProjectDraft = _newProjectCaptureFormValues(); } catch (e) {}
+      renderNewProjectForm();
+      toast('Grupo "' + nombreGrupo + '" quitado');
+    }
+  });
 }
 
 // Cambia la cantidad de un item del buffer.
@@ -3489,6 +3635,57 @@ function _expandirSubconjunto(subconjuntoId, multiplicador) {
   };
 }
 
+// Variante JERARQUICA de _expandirConjunto: NO colapsa productos repetidos.
+// Devuelve la estructura por nivel para que la vista anidada pueda mostrarla.
+//
+// Retorna:
+// {
+//   productosDirectos: [{prodId, cant}],   // productos del conjunto SIN subconjunto
+//   subconjuntos: [
+//     { subId, subNombre, cantSub, productos: [{prodId, cant}] }
+//   ],
+//   problemas: [prodId, ...]
+// }
+//
+// Las cantidades de productos dentro de subconjuntos ya están multiplicadas por
+// (multiplicador del conjunto × cantidad del subconjunto en el conjunto).
+function _expandirConjuntoJerarquico(conjuntoId, multiplicador) {
+  const problemas = new Set();
+  // 1. Productos directos del conjunto (sin subconjunto)
+  const productosDirectos = [];
+  const ubicsDirect = productosMatrizUbicaciones.filter(u =>
+    u.conjunto_id === conjuntoId && !u.subconjunto_id);
+  const productosYaContados = new Set();
+  ubicsDirect.forEach(u => {
+    if (productosYaContados.has(u.producto_id)) return;
+    productosYaContados.add(u.producto_id);
+    const cant = (u.cantidad || 1) * multiplicador;
+    productosDirectos.push({ prodId: u.producto_id, cant: cant });
+    if (_matrizProductoTieneProblemas(u.producto_id)) problemas.add(u.producto_id);
+  });
+  // 2. Subconjuntos del conjunto
+  const subconjuntosArr = [];
+  const subRels = subconjuntosConjuntos.filter(sc => sc.conjunto_id === conjuntoId);
+  subRels.forEach(sc => {
+    const sub = subconjuntos.find(s => s.id === sc.subconjunto_id);
+    if (!sub) return;
+    const cantSub = (sc.cantidad || 1) * multiplicador;
+    const subExp = _expandirSubconjunto(sc.subconjunto_id, cantSub);
+    subconjuntosArr.push({
+      subId: sub.id,
+      subNombre: sub.nombre,
+      cantSub: cantSub,
+      productos: subExp.productos
+    });
+    subExp.problemas.forEach(p => problemas.add(p));
+  });
+  return {
+    productosDirectos: productosDirectos,
+    subconjuntos: subconjuntosArr,
+    problemas: [...problemas]
+  };
+}
+
 // ----- Helpers de filtros del modal "Agregar desde Matriz" -----
 // Reusan la logica de applyMatrizFilters pero leyendo de state.filters
 // en lugar de matrizFilters global.
@@ -3804,7 +4001,10 @@ function afmSeleccionarProducto(productoId) {
             ubicaciones: ubics,
             procesos: procesosFinales,
             ignorarValidaciones: ignorarValidaciones
-          }
+          },
+          fromGrupo: null,
+          fromSubconjunto: null,
+          groupKey: null
         });
         const modalAfm = document.getElementById('add-from-matriz-modal');
         if (modalAfm) modalAfm.remove();
@@ -3953,7 +4153,8 @@ function _confirmarImportGrupal(mode) {
   // Ejecutar import segun el modo (project / newProject)
   const stateAfm = agregarDesdeMatrizState;
   if (stateAfm && stateAfm.modo === 'newProject') {
-    _seleccionarGrupoParaNewProject(opts, expansion, fechaFin, estado, force);
+    // Pasamos el multiplicador para que la versión jerárquica lo aplique
+    _seleccionarGrupoParaNewProject(Object.assign({}, opts, { multiplicador: cant }), expansion, fechaFin, estado, force);
   } else {
     _ejecutarImportGrupalProyecto(expansion, fechaFin, estado, force, opts.nombreGrupo);
   }
@@ -4034,60 +4235,122 @@ async function _ejecutarImportGrupalProyecto(expansion, fechaFin, estado, ignora
 // Para modo newProject: el usuario eligió un conjunto/subconjunto. Se expande
 // y se agrega cada producto al buffer como un item, marcado con fromGrupo
 // para visualizar de qué conjunto/subconjunto vino.
+// Genera un groupKey único para cada importación de grupo. Permite distinguir
+// importaciones repetidas del mismo conjunto (se muestran como grupos separados).
+let _afmGroupKeyCounter = 0;
+function _afmNextGroupKey() { _afmGroupKeyCounter++; return 'g' + Date.now() + '_' + _afmGroupKeyCounter; }
+
+// Helper: crea el objeto de item para el buffer a partir de un producto matriz.
+// Aplica ignorarValidaciones a procesos (blanquea operario/maquina inactivos).
+function _crearItemBufferDesdeProducto(prodId, cant, fechaFin, estado, force, fromGrupoLabel, fromSubconjuntoLabel, groupKey) {
+  const prod = productosMatriz.find(p => p.id === prodId);
+  if (!prod) return null;
+  const ubics = productosMatrizUbicaciones.filter(u => u.producto_id === prodId);
+  const procs = productosMatrizProcesos.filter(pr => pr.producto_id === prodId)
+    .sort((a, b) => (a.orden || 999999) - (b.orden || 999999));
+  const procesosFinales = procs.map(pp => {
+    const copia = Object.assign({}, pp);
+    if (force) {
+      if (copia.maquina_ideal_id) {
+        const mq = maquinas.find(m => m.id === copia.maquina_ideal_id);
+        if (mq && mq.activo === false) copia.maquina_ideal_id = null;
+      }
+      if (copia.operario_ideal_id) {
+        const op = operarios.find(o => o.id === copia.operario_ideal_id);
+        if (op && op.activo === false) copia.operario_ideal_id = null;
+      }
+      copia.maquinas_suplentes = (copia.maquinas_suplentes || []).filter(id => {
+        const mq = maquinas.find(m => m.id === parseInt(id));
+        return !mq || mq.activo !== false;
+      });
+      copia.operarios_suplentes = (copia.operarios_suplentes || []).filter(id => {
+        const op = operarios.find(o => o.id === parseInt(id));
+        return !op || op.activo !== false;
+      });
+    }
+    return copia;
+  });
+  return {
+    descripcion: prod.descripcion,
+    codigo_cliente: prod.codigo_cliente,
+    material_id: prod.material_id,
+    presentacion_mat_prima: prod.presentacion_mat_prima,
+    cantidad: cant,
+    fecha_fin_estipulada: fechaFin,
+    estado: estado || 'Espera MP',
+    foto_url: prod.foto_url,
+    fromMatriz: {
+      productoId: prod.id,
+      ubicaciones: ubics,
+      procesos: procesosFinales,
+      ignorarValidaciones: !!force
+    },
+    fromGrupo: fromGrupoLabel,
+    fromSubconjunto: fromSubconjuntoLabel,
+    groupKey: groupKey
+  };
+}
+
+// Importar conjunto o subconjunto al buffer, preservando jerarquía.
+// Cada importación genera un groupKey único, así múltiples importaciones del
+// mismo conjunto se muestran como grupos separados.
 function _seleccionarGrupoParaNewProject(opts, expansion, fechaFin, estado, force) {
   const labelTipo = opts.tipo === 'conjunto' ? 'Conjunto' : 'Subconjunto';
-  expansion.productos.forEach(({ prodId, cant }) => {
-    const prod = productosMatriz.find(p => p.id === prodId);
-    if (!prod) return;
-    const ubics = productosMatrizUbicaciones.filter(u => u.producto_id === prodId);
-    const procs = productosMatrizProcesos.filter(pr => pr.producto_id === prodId)
-      .sort((a, b) => (a.orden || 999999) - (b.orden || 999999));
-    const procesosFinales = procs.map(pp => {
-      const copia = Object.assign({}, pp);
-      if (force) {
-        if (copia.maquina_ideal_id) {
-          const mq = maquinas.find(m => m.id === copia.maquina_ideal_id);
-          if (mq && mq.activo === false) copia.maquina_ideal_id = null;
-        }
-        if (copia.operario_ideal_id) {
-          const op = operarios.find(o => o.id === copia.operario_ideal_id);
-          if (op && op.activo === false) copia.operario_ideal_id = null;
-        }
-        copia.maquinas_suplentes = (copia.maquinas_suplentes || []).filter(id => {
-          const mq = maquinas.find(m => m.id === parseInt(id));
-          return !mq || mq.activo !== false;
-        });
-        copia.operarios_suplentes = (copia.operarios_suplentes || []).filter(id => {
-          const op = operarios.find(o => o.id === parseInt(id));
-          return !op || op.activo !== false;
-        });
+  const groupKey = _afmNextGroupKey();
+  const fromGrupoLabel = labelTipo + ': ' + opts.nombreGrupo;
+  let cantItems = 0;
+
+  if (opts.tipo === 'subconjunto') {
+    // Subconjunto: todos sus productos son hojas, sin nivel intermedio.
+    // _expandirSubconjunto sigue siendo aplanado (no necesita jerarquía interna).
+    const subExp = _expandirSubconjunto(opts.grupoId, 1);  // cantidad ya multiplicada en el modal
+    // En realidad, expansion ya viene multiplicada (de _confirmarImportGrupal con la cantidad).
+    // Pero como ese flujo va a opts.multiplicador * cant_base, usamos expansion.productos.
+    expansion.productos.forEach(({ prodId, cant }) => {
+      const it = _crearItemBufferDesdeProducto(prodId, cant, fechaFin, estado, force, fromGrupoLabel, null, groupKey);
+      if (it) {
+        newProjectItemsBuffer.push(it);
+        cantItems++;
       }
-      return copia;
     });
-    newProjectItemsBuffer.push({
-      descripcion: prod.descripcion,
-      codigo_cliente: prod.codigo_cliente,
-      material_id: prod.material_id,
-      presentacion_mat_prima: prod.presentacion_mat_prima,
-      cantidad: cant,
-      fecha_fin_estipulada: fechaFin,
-      estado: estado || 'Espera MP',
-      foto_url: prod.foto_url,
-      fromMatriz: {
-        productoId: prod.id,
-        ubicaciones: ubics,
-        procesos: procesosFinales,
-        ignorarValidaciones: !!force
-      },
-      fromGrupo: labelTipo + ': ' + opts.nombreGrupo
+  } else {
+    // Conjunto: usar versión JERÁRQUICA para preservar subconjuntos.
+    // El multiplicador externo es la cantidad de conjuntos elegida por el usuario.
+    // expansion ya viene calculada con ese multiplicador. Replico el cálculo aquí.
+    // El multiplicador efectivo es expansion.productos[0].cant / cant_base_producto;
+    // pero más simple: recalculamos llamando _expandirConjuntoJerarquico con
+    // el mismo multiplicador que usó _confirmarImportGrupal.
+    // Como _confirmarImportGrupal pasa `cant` como el number del input, lo
+    // recuperamos del valor original; o, mejor, lo pasamos como opts.multiplicador.
+    const mult = opts.multiplicador || 1;
+    const exp = _expandirConjuntoJerarquico(opts.grupoId, mult);
+    // Productos directos del conjunto (sin subconjunto)
+    exp.productosDirectos.forEach(({ prodId, cant }) => {
+      const it = _crearItemBufferDesdeProducto(prodId, cant, fechaFin, estado, force, fromGrupoLabel, null, groupKey);
+      if (it) {
+        newProjectItemsBuffer.push(it);
+        cantItems++;
+      }
     });
-  });
+    // Productos via subconjuntos
+    exp.subconjuntos.forEach(s => {
+      const fromSubLabel = 'Subconjunto: ' + s.subNombre;
+      s.productos.forEach(({ prodId, cant }) => {
+        const it = _crearItemBufferDesdeProducto(prodId, cant, fechaFin, estado, force, fromGrupoLabel, fromSubLabel, groupKey);
+        if (it) {
+          newProjectItemsBuffer.push(it);
+          cantItems++;
+        }
+      });
+    });
+  }
+
   const modalAfm = document.getElementById('add-from-matriz-modal');
   if (modalAfm) modalAfm.remove();
   // Capturar el form actual para preservarlo al re-renderizar
   try { newProjectDraft = _newProjectCaptureFormValues(); } catch (e) {}
   renderNewProjectForm();
-  toast(opts.tipo + ' agregado: "' + opts.nombreGrupo + '" (' + expansion.productos.length + ' tipo(s) de producto agregado(s) al proyecto)');
+  toast(opts.tipo + ' agregado: "' + opts.nombreGrupo + '" (' + cantItems + ' item(s) agregado(s) al proyecto)');
 }
 
 // Importar producto matriz al proyecto: abre primero un modal para que el
