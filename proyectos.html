@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v59</title>
+<title>Velasco App 2.0 — Proyectos v60</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -148,6 +148,7 @@ let conjuntosEquipos = [];        // pivot N:M
 let subconjuntosConjuntos = [];   // pivot N:M
 let productosMatrizUbicaciones = [];
 let productosMatrizCorrelatividades = [];  // D2.5
+let fotos = [];  // v60: tabla polimórfica de fotos {entidad_tipo, entidad_id, url, orden, descripcion}
 let itemsUbicaciones = [];   // Entrega A: ubicaciones de items en proyectos
 let nav = { view: 'projects' };
 // Default filter for projects list: all states except closed/anulado/perdido
@@ -863,7 +864,7 @@ async function loadAll() {
   // rompe la app y queda como arrays vacios. Cuando se aplique el SQL, ya
   // funciona sin tocar nada).
   try {
-    const [pm, pmp, mat, sec, eq, con, sub, ce, sc, pmu, iu, pmc] = await Promise.all([
+    const [pm, pmp, mat, sec, eq, con, sub, ce, sc, pmu, iu, pmc, ph] = await Promise.all([
       sb.from('productos_matriz').select('*').order('descripcion'),
       sb.from('productos_matriz_procesos').select('*').order('orden', { ascending: true, nullsFirst: false }),
       sb.from('materiales').select('*').order('nombre'),
@@ -875,7 +876,8 @@ async function loadAll() {
       sb.from('subconjuntos_conjuntos').select('*'),
       sb.from('productos_matriz_ubicaciones').select('*'),
       sb.from('items_ubicaciones').select('*'),
-      sb.from('productos_matriz_correlatividades').select('*')
+      sb.from('productos_matriz_correlatividades').select('*'),
+      sb.from('fotos').select('*').order('entidad_tipo').order('entidad_id').order('orden')
     ]);
     productosMatriz = pm.data || [];
     productosMatrizProcesos = pmp.data || [];
@@ -889,6 +891,7 @@ async function loadAll() {
     productosMatrizUbicaciones = pmu.data || [];
     itemsUbicaciones = iu.data || [];
     productosMatrizCorrelatividades = pmc.data || [];
+    fotos = ph.data || [];
   } catch(e) {
     console.warn('[loadAll] Tablas matriz/jerarquia no disponibles aun:', e);
     productosMatriz = [];
@@ -903,6 +906,7 @@ async function loadAll() {
     productosMatrizUbicaciones = [];
     itemsUbicaciones = [];
     productosMatrizCorrelatividades = [];
+    fotos = [];
   }
 }
 
@@ -2418,7 +2422,7 @@ function renderProjectDetail() {
   }
 
   h += '<div style="display:flex;gap:20px;margin-bottom:14px">';
-  h += '<div style="flex-shrink:0"><div class="ef-l">Foto del proyecto</div>' + buildPhotoWrapHtml(proj.foto_url, 'proj') + '</div>';
+  h += '<div style="flex-shrink:0;max-width:330px"><div class="ef-l">Fotos del proyecto</div>' + buildPhotoGalleryHtml('proyecto', proj.id, 'proj') + '</div>';
   h += '<div style="flex:1">';
   h += '<div class="row">';
   // Cliente: editable salvo si el proyecto esta Confirmado/Cerrado/Anulado.
@@ -4612,6 +4616,131 @@ async function _importarProductoCore(productoId, valores, ignorarValidaciones) {
   return { itemId: newItem.id, actIds: newActIds, pmpToActMap: pmpToActMap, productoId: productoId };
 }
 
+// Duplica un item del proyecto: crea una copia con todos sus procesos,
+// correlatividades intra-item, ubicaciones y fotos. La descripción del nuevo
+// item lleva " (copia)" como sufijo. Permite agregar variaciones rápidas.
+async function duplicarItem(itemId) {
+  const orig = items.find(i => i.id === itemId);
+  if (!orig) return;
+  confirmModal({
+    titulo: 'Duplicar item',
+    mensaje: '¿Crear una copia de "' + orig.descripcion + '" con todos sus procesos y datos?',
+    textoConfirmar: 'Duplicar',
+    peligroso: false,
+    onConfirm: async () => {
+      showSpinner('Duplicando item...');
+      try {
+        // 1. Crear el item copia (sin foto_url; las fotos las insertamos aparte)
+        const itemPayload = {
+          proyecto_id: orig.proyecto_id,
+          cliente_id: orig.cliente_id,
+          pedido_nro: orig.pedido_nro,
+          descripcion: (orig.descripcion || '') + ' (copia)',
+          cantidad: orig.cantidad,
+          foto_url: orig.foto_url,
+          material_id: orig.material_id || null,
+          codigo_cliente: orig.codigo_cliente || null,
+          presentacion_mat_prima: orig.presentacion_mat_prima || null,
+          fecha_fin_estipulada: orig.fecha_fin_estipulada || null,
+          estado: orig.estado || 'Espera MP',
+          imported_from_matriz_id: orig.imported_from_matriz_id || null
+        };
+        const { data: newItem, error: itErr } = await sb.from('items').insert(itemPayload).select().single();
+        if (itErr) { toast('Error: ' + itErr.message, true); return; }
+
+        // 2. Ubicaciones
+        const ubics = itemsUbicaciones.filter(u => u.item_id === itemId);
+        if (ubics.length > 0) {
+          const ubicInserts = ubics.map(u => ({
+            item_id: newItem.id,
+            cliente_id: u.cliente_id,
+            sector_id: u.sector_id,
+            equipo_id: u.equipo_id,
+            conjunto_id: u.conjunto_id,
+            subconjunto_id: u.subconjunto_id
+          }));
+          await sb.from('items_ubicaciones').insert(ubicInserts);
+        }
+
+        // 3. Procesos (en batch, en mismo orden)
+        const procs = actividades.filter(a => a.item_id === itemId && !a.proceso_eliminado)
+          .sort((a, b) => (a.orden || 999999) - (b.orden || 999999));
+        const actInserts = procs.map((p, i) => ({
+          item_id: newItem.id,
+          cliente_id: p.cliente_id,
+          pedido_nro: p.pedido_nro,
+          descripcion: p.descripcion,
+          descripcion_proyecto: p.descripcion_proyecto,
+          descripcion_trabajo: p.descripcion_trabajo,
+          proceso: p.proceso,
+          duracion_estimada_min: p.duracion_estimada_min,
+          duracion_margen_min: p.duracion_margen_min || 0,
+          duracion_operario_min: p.duracion_operario_min,
+          duracion_planificador_min: p.duracion_planificador_min,
+          tipo: p.tipo,
+          maquina_ideal_id: p.maquina_ideal_id,
+          maquina_ideal_nombre: p.maquina_ideal_nombre,
+          maquinas_suplentes_ids: p.maquinas_suplentes_ids,
+          operario_ideal_id: p.operario_ideal_id,
+          operarios_suplentes_ids: p.operarios_suplentes_ids,
+          urgencia: p.urgencia,
+          foto_proyecto_url: p.foto_proyecto_url,
+          foto_url: p.foto_url,
+          fecha_ingreso: p.fecha_ingreso,
+          cliente_final: p.cliente_final,
+          orden: i + 1,
+          estado: 'sin_planificar',
+          fecha: '1900-01-01',
+          hora_inicio: '06:00:00',
+          estado_proceso: 'Planificación Pendiente'
+        }));
+        let newActIds = [];
+        let oldToNewActMap = {};
+        if (actInserts.length > 0) {
+          const { data: actsData, error: actErr } = await sb.from('actividades_tablero').insert(actInserts).select('id');
+          if (actErr) { toast('Error procesos: ' + actErr.message, true); return; }
+          newActIds = (actsData || []).map(x => x.id);
+          procs.forEach((p, idx) => { if (newActIds[idx]) oldToNewActMap[p.id] = newActIds[idx]; });
+        }
+
+        // 4. Correlatividades intra-item (mismo predecesor y sucesor entre procesos del item)
+        const oldActIds = new Set(procs.map(p => p.id));
+        const corrsIntra = await sb.from('correlatividades').select('*');
+        const corrsRelevantes = (corrsIntra.data || []).filter(c =>
+          oldActIds.has(c.predecesor_id) && oldActIds.has(c.sucesor_id));
+        if (corrsRelevantes.length > 0) {
+          const corrInserts = corrsRelevantes
+            .map(c => ({
+              predecesor_id: oldToNewActMap[c.predecesor_id],
+              sucesor_id: oldToNewActMap[c.sucesor_id]
+            }))
+            .filter(c => c.predecesor_id && c.sucesor_id);
+          if (corrInserts.length > 0) await sb.from('correlatividades').insert(corrInserts);
+        }
+
+        // 5. Fotos del item original → copiar al nuevo
+        const fotosOrig = getFotos('item', itemId);
+        if (fotosOrig.length > 0) {
+          const fotosInserts = fotosOrig.map((f, idx) => ({
+            entidad_tipo: 'item',
+            entidad_id: newItem.id,
+            url: f.url,
+            orden: idx,
+            descripcion: f.descripcion
+          }));
+          await sb.from('fotos').insert(fotosInserts);
+        }
+
+        await loadAll();
+        toast('Item duplicado: "' + newItem.descripcion + '"');
+        navigate({ view: 'item', projectId: newItem.proyecto_id, itemId: newItem.id });
+      } finally {
+        hideSpinner();
+      }
+    }
+  });
+}
+
 async function confirmDeleteItem(itemId) {
   const item = items.find(i => i.id === itemId);
   if (!item) return;
@@ -4651,9 +4780,8 @@ function renderItemDetail() {
   h += '<span>Item: ' + escapeHtml(item.descripcion) + (item.cantidad > 1 ? ' <span style="color:#5F5E5A;font-weight:400;font-size:13px">×' + item.cantidad + '</span>' : '') + itBadge + '</span>';
   h += '<button class="b b-p" ' + (procesos.length === 0 ? 'disabled title="Agrega procesos para generar la carpeta"' : 'onclick="generateCarpeta(' + item.id + ')"') + '>📄 Generar carpeta</button>';
   h += '</div>';
-  h += '<div style="display:flex;gap:20px;margin-bottom:14px"><div style="flex-shrink:0">';
-  if (item.foto_url) h += '<img src="' + escapeHtml(item.foto_url) + '" style="width:120px;height:120px;object-fit:cover;border-radius:6px">';
-  else h += '<div class="card-img-empty" style="width:120px;height:120px">sin foto</div>';
+  h += '<div style="display:flex;gap:20px;margin-bottom:14px"><div style="flex-shrink:0;max-width:330px">';
+  h += '<div class="ef-l">Fotos del item</div>' + buildPhotoGalleryHtml('item', item.id, 'item');
   h += '</div>';
   h += '<div style="flex:1;font-size:12px;color:#5F5E5A;line-height:1.8">';
   h += '<b>Proyecto:</b> ' + escapeHtml(proj.descripcion || '(sin descripcion)') + '<br>';
@@ -4666,7 +4794,11 @@ function renderItemDetail() {
   if (item.estado === 'Anulado' && item.observaciones_anulacion) {
     h += '<div style="margin-top:6px;padding:6px 8px;background:#FEF0F0;color:#A32D2D;border-radius:4px;border:1px solid #FEDADA"><b>Anulado:</b> ' + escapeHtml(item.observaciones_anulacion) + '</div>';
   }
-  h += '<button class="b b-icon" style="margin-top:8px" onclick="showItemForm(' + item.id + ')">Editar item</button></div></div>';
+  h += '<div style="margin-top:8px;display:flex;gap:6px">';
+  h += '<button class="b b-icon" onclick="showItemForm(' + item.id + ')">Editar item</button>';
+  h += '<button class="b b-icon" onclick="duplicarItem(' + item.id + ')" title="Crea una copia del item con todos sus procesos">📑 Duplicar item</button>';
+  h += '</div>';
+  h += '</div></div>';
   h += '<div class="section-t">Procesos del item <button class="b b-p" onclick="showProcesoForm(null)">+ Agregar proceso</button></div>';
   if (procesos.length === 0) {
     h += '<div class="list-empty" style="padding:20px">Aun no hay procesos cargados. Sin procesos, este item no genera actividades en el tablero.</div>';
@@ -5516,6 +5648,249 @@ function removeChip(kind, id) {
 // - Drag & drop sobre el slot -> sube el archivo a ese slot.
 // La activacion es exclusiva: solo un slot puede estar activo a la vez.
 // Si solo hay un slot visible, queda activo automaticamente.
+// ============================================================================
+// API DE FOTOS MULTIPLES (v60)
+// ============================================================================
+// Esquema: tabla `fotos` polimorfica con {entidad_tipo, entidad_id, url, orden}.
+// La primera foto (orden=0) se sincroniza con foto_url de la tabla origen
+// para compatibilidad con todas las vistas que usan foto_url.
+
+// Devuelve las fotos de una entidad ordenadas por orden ascendente.
+function getFotos(entidadTipo, entidadId) {
+  if (!entidadId) return [];
+  return fotos.filter(f => f.entidad_tipo === entidadTipo && f.entidad_id === entidadId)
+    .sort((a, b) => (a.orden || 0) - (b.orden || 0));
+}
+
+// Devuelve la foto principal (orden=0) o null.
+function getFotoPrincipal(entidadTipo, entidadId) {
+  const arr = getFotos(entidadTipo, entidadId);
+  return arr.length > 0 ? arr[0] : null;
+}
+
+// Agrega una foto a una entidad. Si es la primera, también sincroniza foto_url
+// en la tabla origen para compat. Retorna {error?, foto?}.
+async function agregarFoto(entidadTipo, entidadId, url) {
+  if (!entidadId || !url) return { error: 'Datos faltantes' };
+  const existentes = getFotos(entidadTipo, entidadId);
+  const orden = existentes.length;
+  const { data, error } = await sb.from('fotos').insert({
+    entidad_tipo: entidadTipo,
+    entidad_id: entidadId,
+    url: url,
+    orden: orden
+  }).select().single();
+  if (error) return { error: error.message };
+  // Si es la primera, sincronizar foto_url en la tabla origen
+  if (orden === 0) {
+    await _sincronizarFotoUrl(entidadTipo, entidadId, url);
+  }
+  await loadAll();
+  return { foto: data };
+}
+
+// Elimina una foto. Si era orden=0, promueve la siguiente a principal.
+async function eliminarFoto(fotoId) {
+  const f = fotos.find(x => x.id === fotoId);
+  if (!f) return { error: 'Foto no encontrada' };
+  const { error } = await sb.from('fotos').delete().eq('id', fotoId);
+  if (error) return { error: error.message };
+  // Re-ordenar las restantes para que orden quede 0..N-1
+  const restantes = getFotos(f.entidad_tipo, f.entidad_id).filter(x => x.id !== fotoId);
+  for (let i = 0; i < restantes.length; i++) {
+    if ((restantes[i].orden || 0) !== i) {
+      await sb.from('fotos').update({ orden: i }).eq('id', restantes[i].id);
+    }
+  }
+  // Sincronizar foto_url con la nueva primera (o null si no quedan)
+  const nuevaPrincipal = restantes.length > 0 ? restantes[0].url : null;
+  await _sincronizarFotoUrl(f.entidad_tipo, f.entidad_id, nuevaPrincipal);
+  await loadAll();
+  return {};
+}
+
+// Mueve una foto en el orden. direction = -1 (subir) o +1 (bajar).
+async function moverFoto(fotoId, direction) {
+  const f = fotos.find(x => x.id === fotoId);
+  if (!f) return;
+  const arr = getFotos(f.entidad_tipo, f.entidad_id);
+  const idx = arr.findIndex(x => x.id === fotoId);
+  const newIdx = idx + direction;
+  if (newIdx < 0 || newIdx >= arr.length) return;  // fuera de rango
+  const otra = arr[newIdx];
+  // Intercambiar ordenes
+  await sb.from('fotos').update({ orden: newIdx }).eq('id', f.id);
+  await sb.from('fotos').update({ orden: idx }).eq('id', otra.id);
+  // Si cualquiera de las afectadas era orden=0 antes o ahora, sincronizar foto_url
+  if (idx === 0 || newIdx === 0) {
+    const nuevasFotos = getFotos(f.entidad_tipo, f.entidad_id);
+    // Recargar antes de leer la nueva primera. Como loadAll viene despues,
+    // hacemos un fetch directo de la primera.
+    const { data: nueva } = await sb.from('fotos').select('url')
+      .eq('entidad_tipo', f.entidad_tipo).eq('entidad_id', f.entidad_id).eq('orden', 0)
+      .maybeSingle();
+    await _sincronizarFotoUrl(f.entidad_tipo, f.entidad_id, nueva ? nueva.url : null);
+  }
+  await loadAll();
+}
+
+// Sincroniza foto_url en la tabla origen con la URL de la foto principal.
+async function _sincronizarFotoUrl(entidadTipo, entidadId, url) {
+  const tablaMap = {
+    'proyecto': 'proyectos',
+    'item': 'items',
+    'producto_matriz': 'productos_matriz',
+    'actividad': 'actividades_tablero'
+  };
+  const tabla = tablaMap[entidadTipo];
+  if (!tabla) return;
+  await sb.from(tabla).update({ foto_url: url }).eq('id', entidadId);
+}
+
+// ============================================================================
+// UI: GALERIA DE FOTOS
+// ============================================================================
+// Construye el HTML de una galería de fotos para una entidad.
+// Si la entidad todavía no existe (entidadId=null, ej. form de creación),
+// renderiza un wrap simple con el comportamiento clásico (una foto en
+// hidden input). La gestión múltiple solo se habilita después de crear la entidad.
+
+function buildPhotoGalleryHtml(entidadTipo, entidadId, kind) {
+  // kind: identificador del slot para paste/drop (proj, item, etc.)
+  if (!entidadId) {
+    // Entidad nueva: usamos el wrap clásico (una sola foto, hidden input)
+    return buildPhotoWrapHtml(null, kind);
+  }
+  const arr = getFotos(entidadTipo, entidadId);
+  let h = '<div class="photo-gallery" id="photo-gallery-' + kind + '" data-entidad-tipo="' + entidadTipo + '" data-entidad-id="' + entidadId + '">';
+  h += '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start">';
+  arr.forEach((f, idx) => {
+    const esPrincipal = idx === 0;
+    h += '<div class="photo-thumb" style="position:relative;width:90px;height:90px;border:' + (esPrincipal ? '2px solid #0C447C' : '1px solid #C8C6BE') + ';border-radius:6px;overflow:hidden;background:#FAFAF7">';
+    h += '<img src="' + escapeHtml(f.url) + '" style="width:100%;height:100%;object-fit:cover;cursor:pointer" onclick="abrirFotoLightbox(\'' + escapeHtml(f.url) + '\')">';
+    // Badge "principal"
+    if (esPrincipal) {
+      h += '<div style="position:absolute;top:2px;left:2px;background:#0C447C;color:#fff;font-size:9px;padding:1px 4px;border-radius:3px">Principal</div>';
+    }
+    // Botón eliminar
+    h += '<button type="button" class="b" onclick="confirmEliminarFoto(' + f.id + ')" title="Eliminar foto" style="position:absolute;top:2px;right:2px;background:rgba(163,45,45,0.9);color:#fff;border:none;padding:1px 5px;font-size:11px;line-height:1;border-radius:3px;cursor:pointer">×</button>';
+    // Flechas de orden
+    h += '<div style="position:absolute;bottom:2px;left:2px;display:flex;gap:2px">';
+    if (idx > 0) {
+      h += '<button type="button" class="b" onclick="moverFotoUI(' + f.id + ',-1)" title="Subir orden" style="background:rgba(255,255,255,0.9);border:1px solid #C8C6BE;padding:0 4px;font-size:11px;line-height:1.2;cursor:pointer">◄</button>';
+    }
+    if (idx < arr.length - 1) {
+      h += '<button type="button" class="b" onclick="moverFotoUI(' + f.id + ',1)" title="Bajar orden" style="background:rgba(255,255,255,0.9);border:1px solid #C8C6BE;padding:0 4px;font-size:11px;line-height:1.2;cursor:pointer">►</button>';
+    }
+    h += '</div>';
+    h += '</div>';
+  });
+  // Slot "+ Agregar foto" al final
+  h += '<div class="photo-add-slot" style="width:90px;height:90px;border:2px dashed #C8C6BE;border-radius:6px;display:flex;align-items:center;justify-content:center;cursor:pointer;background:#FAFAF7" onclick="agregarFotoUI(\'' + entidadTipo + '\',' + entidadId + ',\'' + kind + '\')">';
+  h += '<div style="text-align:center;color:#5F5E5A;font-size:11px"><div style="font-size:20px;line-height:1">+</div><div>Agregar</div></div>';
+  h += '</div>';
+  h += '</div>';
+  // Hidden input para reusar el flujo de paste/drop existente (acepta la primera foto agregada como url temporal)
+  h += '<input type="file" id="photo-input-' + kind + '" accept="image/*" style="display:none" onchange="onPhotoFileGallery(event,\'' + entidadTipo + '\',' + entidadId + ',\'' + kind + '\')">';
+  h += '</div>';
+  return h;
+}
+
+// Click en "+ Agregar foto": abre el selector de archivo. También se pueden
+// pegar imágenes con Ctrl+V si la galería está activa.
+function agregarFotoUI(entidadTipo, entidadId, kind) {
+  document.getElementById('photo-input-' + kind).click();
+}
+
+// Procesa una imagen seleccionada por el input de la galería. Sube a Storage y
+// agrega a la tabla `fotos`.
+async function onPhotoFileGallery(event, entidadTipo, entidadId, kind) {
+  const file = event.target.files && event.target.files[0];
+  if (!file) return;
+  showSpinner('Subiendo foto...');
+  try {
+    const url = await uploadImagenABucket(file);
+    if (!url) { toast('Error subiendo la foto', true); return; }
+    const res = await agregarFoto(entidadTipo, entidadId, url);
+    if (res.error) { toast('Error: ' + res.error, true); return; }
+    toast('Foto agregada');
+    render();
+  } finally {
+    hideSpinner();
+    event.target.value = '';
+  }
+}
+
+// Confirma y elimina una foto.
+function confirmEliminarFoto(fotoId) {
+  confirmModal({
+    titulo: 'Eliminar foto',
+    mensaje: '¿Eliminar esta foto? La acción no se puede deshacer.',
+    textoConfirmar: 'Eliminar',
+    onConfirm: async () => {
+      showSpinner('Eliminando foto...');
+      try {
+        const res = await eliminarFoto(fotoId);
+        if (res.error) { toast('Error: ' + res.error, true); return; }
+        toast('Foto eliminada');
+        render();
+      } finally {
+        hideSpinner();
+      }
+    }
+  });
+}
+
+// Mover foto en el orden y re-renderizar
+async function moverFotoUI(fotoId, direction) {
+  showSpinner('Reordenando...');
+  try {
+    await moverFoto(fotoId, direction);
+    render();
+  } finally {
+    hideSpinner();
+  }
+}
+
+// Lightbox simple para ver foto en grande
+function abrirFotoLightbox(url) {
+  const existing = document.getElementById('foto-lightbox');
+  if (existing) existing.remove();
+  const bd = document.createElement('div');
+  bd.className = 'mo';
+  bd.id = 'foto-lightbox';
+  bd.style.cursor = 'pointer';
+  bd.onclick = () => bd.remove();
+  const img = document.createElement('img');
+  img.src = url;
+  img.style.cssText = 'max-width:90vw;max-height:90vh;border-radius:6px;box-shadow:0 4px 20px rgba(0,0,0,0.4)';
+  img.onclick = (e) => e.stopPropagation();
+  // Botón copiar
+  const btn = document.createElement('button');
+  btn.className = 'b';
+  btn.textContent = '📋 Copiar imagen';
+  btn.style.cssText = 'position:absolute;bottom:20px;left:50%;transform:translateX(-50%);background:#fff';
+  btn.onclick = (e) => { e.stopPropagation(); copyImageToClipboard(url); };
+  bd.appendChild(img);
+  bd.appendChild(btn);
+  document.body.appendChild(bd);
+}
+
+// Sube un File al bucket de Supabase Storage y retorna la URL pública.
+// Reusable desde la galería y otros flujos.
+async function uploadImagenABucket(file) {
+  if (!file) return null;
+  const ext = (file.name || '').split('.').pop().toLowerCase() || 'jpg';
+  const filename = 'foto_' + Date.now() + '_' + Math.random().toString(36).substring(2, 9) + '.' + ext;
+  const { data, error } = await sb.storage.from(PHOTO_BUCKET).upload(filename, file, { contentType: file.type });
+  if (error) {
+    console.error('Error subiendo foto:', error);
+    return null;
+  }
+  const { data: pub } = sb.storage.from(PHOTO_BUCKET).getPublicUrl(filename);
+  return pub ? pub.publicUrl : null;
+}
+
 function buildPhotoWrapHtml(currentUrl, kind) {
   let h = '<div class="photo-wrap" id="photo-wrap-' + kind + '" data-kind="' + kind + '" onclick="onSlotClick(event,\'' + kind + '\')" ondragover="onSlotDragOver(event)" ondragleave="onSlotDragLeave(event)" ondrop="onSlotDrop(event,\'' + kind + '\')">';
   if (currentUrl) {
