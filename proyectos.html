@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v61</title>
+<title>Velasco App 2.0 — Proyectos v62</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -149,6 +149,10 @@ let subconjuntosConjuntos = [];   // pivot N:M
 let productosMatrizUbicaciones = [];
 let productosMatrizCorrelatividades = [];  // D2.5
 let fotos = [];  // v60: tabla polimórfica de fotos {entidad_tipo, entidad_id, url, orden, descripcion}
+let clienteContactos = [];  // v62: contactos de cliente
+// v62: toggles "mostrar inactivos" por módulo (solo dentro del módulo Recursos).
+// Cada uno es una llave booleana que se setea desde la UI.
+let mostrarInactivos = { clientes: false, materiales: false, operarios: false, maquinas: false };
 let itemsUbicaciones = [];   // Entrega A: ubicaciones de items en proyectos
 let nav = { view: 'projects' };
 // Default filter for projects list: all states except closed/anulado/perdido
@@ -579,6 +583,17 @@ function toast(msg, isErr) {
 }
 function clN(id){const c=clientes.find(x=>x.id===id);return c?c.nombre:'?'}
 function mN(id){const m=maquinas.find(x=>x.id===id);return m?m.nombre:'?'}
+// Devuelve el nombre completo de un contacto (apellido, nombre) o "?".
+function contN(id){
+  const c=clienteContactos.find(x=>x.id===id);
+  if(!c)return '?';
+  const partes=[c.apellido,c.nombre].filter(Boolean);
+  return partes.join(', ');
+}
+// Devuelve los contactos activos de un cliente.
+function contactosDeCliente(clienteId){
+  return clienteContactos.filter(c=>c.cliente_id===clienteId && c.activo!==false);
+}
 function opN(id){const o=operarios.find(x=>x.id===id);return o?o.nombre:'?'}
 function escapeHtml(s){if(s===null||s===undefined)return'';return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c])}
 function validCuit(s){return /^\d{11}$/.test(s)}
@@ -864,7 +879,7 @@ async function loadAll() {
   // rompe la app y queda como arrays vacios. Cuando se aplique el SQL, ya
   // funciona sin tocar nada).
   try {
-    const [pm, pmp, mat, sec, eq, con, sub, ce, sc, pmu, iu, pmc, ph] = await Promise.all([
+    const [pm, pmp, mat, sec, eq, con, sub, ce, sc, pmu, iu, pmc, ph, cc] = await Promise.all([
       sb.from('productos_matriz').select('*').order('descripcion'),
       sb.from('productos_matriz_procesos').select('*').order('orden', { ascending: true, nullsFirst: false }),
       sb.from('materiales').select('*').order('nombre'),
@@ -877,7 +892,8 @@ async function loadAll() {
       sb.from('productos_matriz_ubicaciones').select('*'),
       sb.from('items_ubicaciones').select('*'),
       sb.from('productos_matriz_correlatividades').select('*'),
-      sb.from('fotos').select('*').order('entidad_tipo').order('entidad_id').order('orden')
+      sb.from('fotos').select('*').order('entidad_tipo').order('entidad_id').order('orden'),
+      sb.from('cliente_contactos').select('*').order('apellido').order('nombre')
     ]);
     productosMatriz = pm.data || [];
     productosMatrizProcesos = pmp.data || [];
@@ -892,6 +908,7 @@ async function loadAll() {
     itemsUbicaciones = iu.data || [];
     productosMatrizCorrelatividades = pmc.data || [];
     fotos = ph.data || [];
+    clienteContactos = cc.data || [];
   } catch(e) {
     console.warn('[loadAll] Tablas matriz/jerarquia no disponibles aun:', e);
     productosMatriz = [];
@@ -907,6 +924,7 @@ async function loadAll() {
     itemsUbicaciones = [];
     productosMatrizCorrelatividades = [];
     fotos = [];
+    clienteContactos = [];
   }
 }
 
@@ -1420,7 +1438,7 @@ function advClienteSuggest() {
   const q = inp.value.trim().toLowerCase();
   // Si vacio y no esta enfocado, no mostrar nada (al focus siempre mostrar top 10)
   const sel = new Set((advFiltersDraft.clientes || []).map(id => parseInt(id)));
-  let matches = clientes.filter(c => !sel.has(c.id));
+  let matches = clientes.filter(c => !sel.has(c.id) && c.activo !== false);
   if (q !== '') {
     matches = matches.filter(c => (c.nombre || '').toLowerCase().includes(q));
   }
@@ -1608,13 +1626,19 @@ function renderNewProjectForm() {
   h += '<input type="hidden" id="f-cliente" value="">';
   h += '<div id="f-cliente-list" class="combo-list" style="display:none"></div>';
   h += '</div>';
-  h += '<div style="margin-top:6px"><button type="button" class="b" style="padding:4px 10px;font-size:11px" onclick="showClienteForm(null)">+ Nuevo cliente</button></div></div>';
+  h += '</div>';
   h += '<div class="ef" style="flex:1"><div class="ef-l">Estado <span style="color:#A32D2D">*</span></div>';
   h += '<select class="ef-i" id="f-estado" onchange="onStateChangeNew()">';
   ['Proyectando', 'Presupuestar', 'Confirmado'].forEach(st => {
     h += '<option value="' + st + '"' + (st === 'Proyectando' ? ' selected' : '') + '>' + st + '</option>';
   });
   h += '</select></div></div>';
+  // Contacto del proyecto: combo con los contactos del cliente seleccionado.
+  // Warning amarillo si no se asigna. Recomendado pero no obligatorio (TácticaSoft).
+  h += '<div class="ef"><div class="ef-l">Contacto del proyecto <span style="color:#A32D2D">*</span></div>';
+  h += '<select class="ef-i" id="f-contacto"><option value="">— Seleccioná un cliente primero —</option></select>';
+  h += '<div id="f-contacto-warn" style="display:none;font-size:11px;color:#854F0B;background:#FFF8E1;padding:4px 8px;border-radius:3px;margin-top:3px;border:1px solid #FFE5A0">⚠ Falta asignar contacto del proyecto. En TácticaSoft es obligatorio.</div>';
+  h += '</div>';
   h += '<div class="ef"><div class="ef-l">Cliente final (opcional)</div>';
   h += '<input type="text" class="ef-i" id="f-clifinal" placeholder="Ej. GDLP">';
   h += '<div class="ef-help">Para casos como stock interno donde el destinatario real es otro.</div></div>';
@@ -1987,7 +2011,7 @@ function renderNpItMaterialCombo() {
   const list = document.getElementById('np-it-material-list');
   if (!search || !list) return;
   const q = search.value.trim().toLowerCase();
-  const filtered = materiales.filter(m => !q || m.nombre.toLowerCase().includes(q));
+  const filtered = materiales.filter(m => m.activo !== false && (!q || m.nombre.toLowerCase().includes(q)));
   let h = '';
   filtered.forEach(m => {
     h += '<div class="combo-item" onmousedown="selectNpItMaterial(' + m.id + ', \'' + m.nombre.replace(/'/g, "\\'") + '\')">' + escapeHtml(m.nombre) + '</div>';
@@ -2114,16 +2138,78 @@ function renderClienteCombo() {
   const list = document.getElementById('f-cliente-list');
   if (!search || !list) return;
   const q = search.value.trim().toLowerCase();
-  const filtered = clientes.filter(c => !q || c.nombre.toLowerCase().includes(q));
+  // Filtrar inactivos siempre (toggle solo aplica en Recursos > Clientes)
+  const filtered = clientes.filter(c => c.activo !== false && (!q || c.nombre.toLowerCase().includes(q)));
+  let html = '';
   if (filtered.length === 0) {
-    list.innerHTML = '<div class="combo-empty">No hay clientes que coincidan con "' + escapeHtml(q) + '"</div>';
+    html += '<div class="combo-empty">No hay clientes que coincidan con "' + escapeHtml(q) + '"</div>';
   } else {
-    list.innerHTML = filtered.map(c =>
+    html += filtered.map(c =>
       '<div class="combo-item" onmousedown="selectClienteCombo(' + c.id + ', \'' + c.nombre.replace(/'/g, "\\'") + '\')">' +
       escapeHtml(c.nombre) + '</div>'
     ).join('');
   }
+  // Opción "+ Nuevo cliente" siempre al final
+  html += '<div class="combo-item" style="border-top:1px solid #E8E6DF;color:#0C447C;font-weight:600" onmousedown="abrirClienteNuevoDesdeCombo()">+ Nuevo cliente</div>';
+  list.innerHTML = html;
   list.style.display = 'block';
+}
+
+// Abre el modal de cliente. Al guardar, lo selecciona automáticamente en el combo.
+function abrirClienteNuevoDesdeCombo() {
+  window._clienteFormCallback = (newId) => {
+    const c = clientes.find(x => x.id === newId);
+    if (!c) return;
+    selectClienteCombo(c.id, c.nombre);
+    _llenarComboContactoProj(c.id, null);
+  };
+  showClienteForm(null);
+}
+
+// Llena el <select id="f-contacto"> con los contactos activos del cliente.
+// selectedId: si se pasa, deja ese contacto seleccionado. Si no, primer
+// contacto o vacío.
+function _llenarComboContactoProj(clienteId, selectedId) {
+  const sel = document.getElementById('f-contacto');
+  if (!sel) return;
+  if (!clienteId) {
+    sel.innerHTML = '<option value="">— Seleccioná un cliente primero —</option>';
+    sel.disabled = true;
+    _toggleContactoWarn(true);
+    return;
+  }
+  sel.disabled = false;
+  const contactos = contactosDeCliente(clienteId);
+  let h = '<option value="">— Sin asignar —</option>';
+  contactos.forEach(c => {
+    const lbl = [c.apellido, c.nombre].filter(Boolean).join(', ') || '(sin nombre)';
+    const sel_ = selectedId && selectedId === c.id ? ' selected' : '';
+    h += '<option value="' + c.id + '"' + sel_ + '>' + escapeHtml(lbl) + '</option>';
+  });
+  h += '<option value="__nuevo__" style="color:#0C447C;font-weight:600">+ Nuevo contacto</option>';
+  sel.innerHTML = h;
+  sel.onchange = onContactoComboChange;
+  // Mostrar warning si no hay valor seleccionado (es decir, "Sin asignar")
+  _toggleContactoWarn(!selectedId);
+}
+
+function _toggleContactoWarn(showWarn) {
+  const w = document.getElementById('f-contacto-warn');
+  if (w) w.style.display = showWarn ? 'block' : 'none';
+}
+
+function onContactoComboChange() {
+  const sel = document.getElementById('f-contacto');
+  if (!sel) return;
+  if (sel.value === '__nuevo__') {
+    const cliId = parseInt(document.getElementById('f-cliente').value);
+    if (!cliId) { toast('Elegí un cliente primero', true); sel.value = ''; return; }
+    // Restaurar el select a vacío para no quedar trabado en "+ Nuevo"
+    sel.value = '';
+    showContactoForm(null, cliId);
+    return;
+  }
+  _toggleContactoWarn(!sel.value);
 }
 function selectClienteCombo(id, nombre) {
   // Si cambia el cliente y hay items en el buffer (especialmente los que vinieron
@@ -2141,9 +2227,9 @@ function selectClienteCombo(id, nombre) {
           document.getElementById('f-cliente').value = id;
           document.getElementById('f-cliente-search').value = nombre;
           document.getElementById('f-cliente-list').style.display = 'none';
+          _llenarComboContactoProj(id, null);
         }
       });
-      // No aplicar el cambio hasta que confirme
       const search = document.getElementById('f-cliente-search');
       if (search) search.value = clN(currentCliId) || '';
       return;
@@ -2152,6 +2238,8 @@ function selectClienteCombo(id, nombre) {
   document.getElementById('f-cliente').value = id;
   document.getElementById('f-cliente-search').value = nombre;
   document.getElementById('f-cliente-list').style.display = 'none';
+  // v62: recargar combo de contactos para este cliente
+  _llenarComboContactoProj(id, null);
 }
 
 // Captura/restaura valores del form de Nuevo Proyecto (excepto los del primer item
@@ -2201,6 +2289,10 @@ async function saveNewProject() {
   const fechaIngreso = document.getElementById('f-fechaing').value || null;
   const fechaEntrega = document.getElementById('f-fechaentrega').value || null;
   const clienteFinal = document.getElementById('f-clifinal').value.trim() || null;
+  // v62: contacto_id (opcional pero con warning amarillo)
+  const contactoSel = document.getElementById('f-contacto');
+  const contacto_id = contactoSel && contactoSel.value && contactoSel.value !== '__nuevo__'
+    ? parseInt(contactoSel.value) : null;
   const errPedido = document.getElementById('err-pedido');
   errPedido.style.display = 'none';
   if (!cliente_id) { toast('Elegi un cliente', true); return; }
@@ -2222,7 +2314,7 @@ async function saveNewProject() {
     const { data: newProj, error: projErr } = await sb.from('proyectos').insert({
       cliente_id, pedido_nro, descripcion, urgencia, foto_url: fotoUrl,
       fecha_ingreso: fechaIngreso, fecha_entrega: fechaEntrega,
-      cliente_final: clienteFinal, estado
+      cliente_final: clienteFinal, estado, contacto_id
     }).select().single();
     if (projErr) { toast('Error creando proyecto: ' + projErr.message, true); return; }
 
@@ -2457,6 +2549,23 @@ function renderProjectDetail() {
   h += '<input type="date" class="ef-i" id="f-fechaentrega" value="' + (proj.fecha_entrega || '') + '"' + (!proj.fecha_entrega ? ' style="border-color:#A32D2D;background:#FEF5F5"' : '') + '></div></div>';
   h += '<div class="ef"><div class="ef-l">Cliente final (opcional)</div>';
   h += '<input type="text" class="ef-i" id="f-clifinal" value="' + escapeHtml(proj.cliente_final || '') + '" placeholder="Solo si el destinatario real es otro"></div>';
+  // v62: contacto del proyecto
+  h += '<div class="ef"><div class="ef-l">Contacto del proyecto <span style="color:#A32D2D">*</span></div>';
+  const contactosCli = contactosDeCliente(proj.cliente_id);
+  h += '<select class="ef-i" id="f-contacto">';
+  h += '<option value="">— Sin asignar —</option>';
+  let huboMatch = false;
+  contactosCli.forEach(c => {
+    const lbl = [c.apellido, c.nombre].filter(Boolean).join(', ') || '(sin nombre)';
+    const isSel = proj.contacto_id === c.id;
+    if (isSel) huboMatch = true;
+    h += '<option value="' + c.id + '"' + (isSel ? ' selected' : '') + '>' + escapeHtml(lbl) + '</option>';
+  });
+  h += '<option value="__nuevo__" style="color:#0C447C;font-weight:600">+ Nuevo contacto</option>';
+  h += '</select>';
+  const mostrarWarn = !proj.contacto_id || !huboMatch;
+  h += '<div id="f-contacto-warn" style="' + (mostrarWarn ? '' : 'display:none;') + 'font-size:11px;color:#854F0B;background:#FFF8E1;padding:4px 8px;border-radius:3px;margin-top:3px;border:1px solid #FFE5A0">⚠ Falta asignar contacto del proyecto. En TácticaSoft es obligatorio.</div>';
+  h += '</div>';
   // Observaciones que se incluyen en "Copiar mail" - campo libre con editor rico
   h += '<div class="ef"><div class="ef-l">Observaciones para mail estandarizado</div>';
   h += renderRichEditor('f-obs-mail', proj.observaciones_mail || '', 'Texto opcional que aparecera en la fila Observaciones del mail');
@@ -2515,6 +2624,9 @@ function renderProjectDetail() {
   h += '</div>';
   main.innerHTML = h;
   setupPhotoPaste();
+  // v62: bindear cambio del combo de contacto en el form de edit (si existe)
+  const contSel = document.getElementById('f-contacto');
+  if (contSel) contSel.onchange = onContactoComboChange;
 }
 
 async function confirmDeleteItemFromList(itemId) {
@@ -2555,6 +2667,10 @@ async function saveProjectMeta() {
     if (!isNaN(v) && v > 0) nuevoClienteId = v;
   }
   if (!descripcion) { toast('Descripcion requerida', true); return; }
+  // v62: contacto_id (opcional, con warning si no se asigna)
+  const contactoSel = document.getElementById('f-contacto');
+  const contacto_id = contactoSel && contactoSel.value && contactoSel.value !== '__nuevo__'
+    ? parseInt(contactoSel.value) : null;
   // Check unique pedido_nro
   if (pedidoNro) {
     const dup = proyectos.find(p => p.pedido_nro === pedidoNro && p.id !== proj.id);
@@ -2565,7 +2681,8 @@ async function saveProjectMeta() {
     descripcion, urgencia, foto_url: foto, fecha_ingreso: fechaIngreso,
     fecha_entrega: fechaEntrega,
     cliente_final: clienteFinal, pedido_nro: pedidoNro,
-    observaciones_mail: obsMail
+    observaciones_mail: obsMail,
+    contacto_id
   }).eq('id', proj.id);
   // Propagate cliente_id to items y activities tambien (item.cliente_id se usa
   // en la portada y en el tablero)
@@ -2839,7 +2956,8 @@ function _renderItemModal(item, proj) {
       value: v.material_id,
       valueLabel: v.material_label,
       placeholder: 'Buscar o cargar nuevo...',
-      options: materiales.map(x => ({ id: x.id, label: x.nombre })),
+      // v62: ocultar inactivos en el combo, salvo si está el seleccionado actual
+      options: materiales.filter(x => x.activo !== false || x.id === v.material_id).map(x => ({ id: x.id, label: x.nombre })),
       onCreateLabel: '+ Cargar nuevo material',
       onCreateFnName: 'itCargarMaterial'
     });
@@ -2973,7 +3091,7 @@ function _itRenderCompatModal() {
     valueLabel: cliLbl,
     placeholder: 'Buscar cliente...',
     disabled: !itCompatState.habilitarTodos,
-    options: clientes.map(c => ({ id: c.id, label: c.nombre, sublabel: c.codigo || '' })),
+    options: clientes.filter(c => c.activo !== false || c.id === cliV).map(c => ({ id: c.id, label: c.nombre, sublabel: c.codigo || '' })),
     onSelectFnName: 'itcOnCliente'
   });
   h += '</div>';
@@ -4891,9 +5009,8 @@ function renderProductoMatrizDetail() {
   h += '<div class="form-t" style="display:flex;justify-content:space-between;align-items:center">';
   h += '<span>Producto: ' + escapeHtml(prod.descripcion) + '</span>';
   h += '</div>';
-  h += '<div style="display:flex;gap:20px;margin-bottom:14px"><div style="flex-shrink:0">';
-  if (prod.foto_url) h += '<img src="' + escapeHtml(prod.foto_url) + '" style="width:120px;height:120px;object-fit:cover;border-radius:6px">';
-  else h += '<div class="card-img-empty" style="width:120px;height:120px">sin foto</div>';
+  h += '<div style="display:flex;gap:20px;margin-bottom:14px"><div style="flex-shrink:0;max-width:330px">';
+  h += '<div class="ef-l">Fotos del producto</div>' + buildPhotoGalleryHtml('producto_matriz', prod.id, 'pm-detail');
   h += '</div>';
   h += '<div style="flex:1;font-size:12px;color:#5F5E5A;line-height:1.8">';
   h += '<b>Cliente:</b> ' + escapeHtml(cliLbl) + (cliCodigo ? ' <span style="display:inline-block;padding:1px 5px;border-radius:3px;font-size:10px;background:#0C447C;color:#fff;font-weight:500;margin-left:4px">' + escapeHtml(cliCodigo) + '</span>' : '') + '<br>';
@@ -4957,6 +5074,7 @@ function renderProductoMatrizDetail() {
   }
   h += '</div>';
   main.innerHTML = h;
+  setupPhotoPaste();
 }
 
 // Mover un proceso del producto matriz: cambia el orden con el adyacente.
@@ -6126,31 +6244,124 @@ function clearPhoto(kind) {
 // Render del listado de clientes (cuerpo HTML, sin main.innerHTML).
 // Usado por la pestaña Clientes en Recursos. Se mantiene renderClientesList
 // como wrapper legacy por si algún link directo lo invoca.
+// v62: buffer del filtro de búsqueda de clientes (texto que matchea nombre/CUIT/codigo).
+let _clientesSearch = '';
+
 function renderClientesTab() {
-  let h = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">';
-  h += '<h2 style="font-size:16px;font-weight:600">Clientes</h2>';
-  h += '<button class="b b-p" onclick="showClienteForm(null)">+ Nuevo cliente</button></div>';
-  if (clientes.length === 0) {
-    h += '<div class="list-empty">No hay clientes cargados.</div>';
+  let h = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;gap:10px">';
+  h += '<h2 style="font-size:16px;font-weight:600;flex:0 0 auto">Clientes</h2>';
+  // Buscador
+  h += '<div style="flex:1;max-width:360px"><input type="text" class="ef-i" id="cli-search" placeholder="Buscar por nombre, CUIT o código..." value="' + escapeHtml(_clientesSearch) + '" oninput="onClienteSearch(this.value)" style="font-size:12px"></div>';
+  // Toggle mostrar inactivos
+  h += '<label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#5F5E5A;flex:0 0 auto;cursor:pointer">';
+  h += '<input type="checkbox" ' + (mostrarInactivos.clientes ? 'checked' : '') + ' onchange="toggleMostrarInactivos(\'clientes\')"> Mostrar inactivos';
+  h += '</label>';
+  h += '<button class="b b-p" onclick="showClienteForm(null)" style="flex:0 0 auto">+ Nuevo cliente</button>';
+  h += '</div>';
+
+  // Filtrar
+  const q = (_clientesSearch || '').trim().toLowerCase();
+  let filtrados = clientes.filter(c => {
+    if (!mostrarInactivos.clientes && c.activo === false) return false;
+    if (!q) return true;
+    return (c.nombre || '').toLowerCase().includes(q)
+      || (c.cuit || '').toLowerCase().includes(q)
+      || (c.codigo || '').toLowerCase().includes(q);
+  });
+
+  if (filtrados.length === 0) {
+    if (q) {
+      h += '<div class="list-empty">No hay clientes que coincidan con "' + escapeHtml(_clientesSearch) + '".</div>';
+    } else if (!mostrarInactivos.clientes && clientes.some(c => c.activo === false)) {
+      h += '<div class="list-empty">No hay clientes activos. Activá "Mostrar inactivos" para ver los inhabilitados.</div>';
+    } else {
+      h += '<div class="list-empty">No hay clientes cargados.</div>';
+    }
   } else {
-    clientes.forEach(c => {
-      const projCount = getProjects().filter(p => p.cliente_id === c.id).length;
-      h += '<div class="card">';
-      h += '<div class="card-img-empty">' + escapeHtml(c.nombre.charAt(0).toUpperCase()) + '</div>';
-      h += '<div class="card-body">';
-      // Codigo como chip al lado del nombre
-      let title = escapeHtml(c.nombre);
-      if (c.codigo) title += ' <span style="display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;background:#0C447C;color:#fff;font-weight:500;margin-left:6px;letter-spacing:0.5px">' + escapeHtml(c.codigo) + '</span>';
-      else title += ' <span title="Falta cargar el código" style="color:#A32D2D;margin-left:6px;font-size:11px">⚠ sin código</span>';
-      h += '<div class="card-t">' + title + '</div>';
-      h += '<div class="card-s">CUIT: ' + escapeHtml(c.cuit || '—') + ' · ' + projCount + ' proyecto(s)</div></div>';
-      h += '<div class="card-actions">';
-      h += '<button class="b b-icon" onclick="showClienteForm(' + c.id + ')">Editar</button>';
-      if (projCount === 0) h += '<button class="b b-icon b-d" onclick="confirmDeleteCliente(' + c.id + ')">Eliminar</button>';
-      h += '</div></div>';
+    filtrados.forEach(c => {
+      h += renderClienteCard(c);
     });
   }
   return h;
+}
+
+// Tarjeta individual del cliente (v62: más compacta, con "pedidos pendientes",
+// botón Inhabilitar/Reactivar en lugar de Eliminar).
+function renderClienteCard(c) {
+  const pedidosPendientes = getProjects().filter(p =>
+    p.cliente_id === c.id && p.estado === 'Confirmado'
+  ).length;
+  const inactivo = c.activo === false;
+  let h = '<div class="card" style="padding:6px 10px;align-items:center;' + (inactivo ? 'opacity:0.55' : '') + '">';
+  // Imagen / letra inicial (tamaño actual, no la achicamos)
+  h += '<div class="card-img-empty" style="flex:0 0 auto">' + escapeHtml((c.nombre || '?').charAt(0).toUpperCase()) + '</div>';
+  h += '<div class="card-body" style="padding:0">';
+  // Titulo con chip de codigo
+  let title = escapeHtml(c.nombre);
+  if (c.codigo) title += ' <span style="display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;background:#0C447C;color:#fff;font-weight:500;margin-left:6px;letter-spacing:0.5px">' + escapeHtml(c.codigo) + '</span>';
+  else title += ' <span title="Falta cargar el código" style="color:#A32D2D;margin-left:6px;font-size:11px">⚠ sin código</span>';
+  if (inactivo) title += ' <span style="font-size:10px;background:#FEDADA;color:#A32D2D;padding:1px 6px;border-radius:8px;margin-left:6px">Inactivo</span>';
+  h += '<div class="card-t" style="margin:0;font-size:13px">' + title + '</div>';
+  h += '<div class="card-s" style="margin:0;font-size:11px">CUIT: ' + escapeHtml(c.cuit || '—') + ' · ' + pedidosPendientes + ' pedido(s) pendiente(s)</div>';
+  h += '</div>';
+  h += '<div class="card-actions" style="flex:0 0 auto">';
+  h += '<button class="b b-icon" onclick="showClienteForm(' + c.id + ')">Editar</button>';
+  if (inactivo) {
+    h += '<button class="b b-icon" style="color:#0C447C" onclick="reactivarCliente(' + c.id + ')">Reactivar</button>';
+  } else {
+    h += '<button class="b b-icon b-d" onclick="inhabilitarCliente(' + c.id + ')" title="No se elimina, queda oculto. Podés reactivarlo después.">Inhabilitar</button>';
+  }
+  h += '</div></div>';
+  return h;
+}
+
+function onClienteSearch(value) {
+  _clientesSearch = value;
+  // Solo re-render del cuerpo, no recargar todo el form
+  const tab = document.getElementById('main');
+  if (tab) {
+    const main = document.getElementById('main');
+    // Mantener foco y posición del cursor
+    const cursorPos = document.getElementById('cli-search').selectionStart;
+    render();
+    setTimeout(() => {
+      const input = document.getElementById('cli-search');
+      if (input) {
+        input.focus();
+        try { input.setSelectionRange(cursorPos, cursorPos); } catch(e) {}
+      }
+    }, 0);
+  }
+}
+
+function toggleMostrarInactivos(modulo) {
+  mostrarInactivos[modulo] = !mostrarInactivos[modulo];
+  render();
+}
+
+async function inhabilitarCliente(clienteId) {
+  const c = clientes.find(x => x.id === clienteId);
+  if (!c) return;
+  confirmModal({
+    titulo: 'Inhabilitar cliente',
+    mensaje: 'Inhabilitar "' + c.nombre + '"? El cliente queda oculto de los listados pero podés reactivarlo en cualquier momento. Sus proyectos existentes no se ven afectados.',
+    textoConfirmar: 'Inhabilitar',
+    onConfirm: async () => {
+      const { error } = await sb.from('clientes').update({ activo: false }).eq('id', clienteId);
+      if (error) { toast('Error: ' + error.message, true); return; }
+      await loadAll();
+      toast('Cliente inhabilitado');
+      render();
+    }
+  });
+}
+
+async function reactivarCliente(clienteId) {
+  const { error } = await sb.from('clientes').update({ activo: true }).eq('id', clienteId);
+  if (error) { toast('Error: ' + error.message, true); return; }
+  await loadAll();
+  toast('Cliente reactivado');
+  render();
 }
 
 function renderClientesList() {
@@ -6327,28 +6538,37 @@ let materialesSearch = '';
 function renderMaterialesTab() {
   let h = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;gap:10px;flex-wrap:wrap">';
   h += '<input type="text" id="mat-search" value="' + escapeHtml(materialesSearch) + '" placeholder="Buscar material..." oninput="materialesSearchInput(event)" style="padding:6px 10px;border:1px solid #C8C6BE;border-radius:5px;font-size:12px;width:260px">';
+  // v62: toggle inactivos
+  h += '<label style="display:flex;align-items:center;gap:4px;font-size:11px;color:#5F5E5A;flex:0 0 auto;cursor:pointer">';
+  h += '<input type="checkbox" ' + (mostrarInactivos.materiales ? 'checked' : '') + ' onchange="toggleMostrarInactivos(\'materiales\')"> Mostrar inactivos';
+  h += '</label>';
   h += '<button class="b b-p" onclick="showMaterialForm(null)">+ Nuevo material</button>';
   h += '</div>';
   // Filtrar
   let lista = materiales.slice();
+  if (!mostrarInactivos.materiales) {
+    lista = lista.filter(m => m.activo !== false);
+  }
   if (materialesSearch.trim()) {
     const q = materialesSearch.trim().toLowerCase();
     lista = lista.filter(m => (m.nombre || '').toLowerCase().includes(q) ||
       (m.descripcion || '').toLowerCase().includes(q));
   }
   lista.sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
-  // Lista
   if (lista.length === 0) {
     h += '<div class="list-empty">' + (materialesSearch.trim() ? 'No hay materiales que coincidan con la búsqueda.' : 'No hay materiales cargados. Apretá "+ Nuevo material" para empezar.') + '</div>';
   } else {
     h += '<div id="mat-list">';
     lista.forEach(m => {
-      // Contar productos que usan este material
+      const inactivo = m.activo === false;
       const usosProd = productosMatriz.filter(p => p.material_id === m.id).length;
       const usosItem = items.filter(it => it.material_id === m.id).length;
-      h += '<div style="background:#fff;border:1px solid #C8C6BE;border-radius:6px;padding:10px 14px;margin-bottom:6px;display:flex;align-items:center;gap:12px">';
+      h += '<div style="background:#fff;border:1px solid #C8C6BE;border-radius:6px;padding:10px 14px;margin-bottom:6px;display:flex;align-items:center;gap:12px;' + (inactivo ? 'opacity:0.55' : '') + '">';
       h += '<div style="flex:1;min-width:0">';
-      h += '<div style="font-weight:600;font-size:13px">' + escapeHtml(m.nombre) + '</div>';
+      let nombre = '<div style="font-weight:600;font-size:13px">' + escapeHtml(m.nombre);
+      if (inactivo) nombre += ' <span style="font-size:10px;background:#FEDADA;color:#A32D2D;padding:1px 6px;border-radius:8px;margin-left:6px">Inactivo</span>';
+      nombre += '</div>';
+      h += nombre;
       const subInfo = [];
       if (m.descripcion) subInfo.push(escapeHtml(m.descripcion));
       const usosInfo = [];
@@ -6361,7 +6581,11 @@ function renderMaterialesTab() {
       h += '</div>';
       h += '<div class="card-actions" style="flex:0 0 auto;display:flex;gap:4px">';
       h += '<button class="b b-icon" onclick="showMaterialForm(' + m.id + ')">Editar</button>';
-      h += '<button class="b b-icon b-d" onclick="confirmDeleteMaterial(' + m.id + ')">Eliminar</button>';
+      if (inactivo) {
+        h += '<button class="b b-icon" style="color:#0C447C" onclick="reactivarMaterial(' + m.id + ')">Reactivar</button>';
+      } else {
+        h += '<button class="b b-icon b-d" onclick="inhabilitarMaterial(' + m.id + ')" title="No se elimina, queda oculto. Podés reactivarlo después.">Inhabilitar</button>';
+      }
       h += '</div>';
       h += '</div>';
     });
@@ -6471,31 +6695,42 @@ async function saveMaterial(materialId) {
   render();
 }
 
-async function confirmDeleteMaterial(materialId) {
+async function inhabilitarMaterial(materialId) {
   const mat = materiales.find(m => m.id === materialId);
   if (!mat) return;
   const usosProd = productosMatriz.filter(p => p.material_id === materialId).length;
   const usosItem = items.filter(it => it.material_id === materialId).length;
+  let extraMsg = '';
   if (usosProd > 0 || usosItem > 0) {
     const parts = [];
     if (usosProd > 0) parts.push(usosProd + ' producto(s) matriz');
     if (usosItem > 0) parts.push(usosItem + ' item(s) de proyecto');
-    toast('No se puede eliminar: usado en ' + parts.join(' y '), true);
-    return;
+    extraMsg = '\n\nEstá siendo usado por ' + parts.join(' y ') + '. No afecta a los existentes; solo queda oculto al cargar nuevos.';
   }
   confirmModal({
-    titulo: 'Eliminar material',
-    mensaje: 'Eliminar el material "' + mat.nombre + '"?',
-    textoConfirmar: 'Eliminar',
+    titulo: 'Inhabilitar material',
+    mensaje: 'Inhabilitar "' + mat.nombre + '"? El material queda oculto pero podés reactivarlo después.' + extraMsg,
+    textoConfirmar: 'Inhabilitar',
     onConfirm: async () => {
-      const { error } = await sb.from('materiales').delete().eq('id', materialId);
+      const { error } = await sb.from('materiales').update({ activo: false }).eq('id', materialId);
       if (error) { toast('Error: ' + error.message, true); return; }
       await loadAll();
-      toast('Material eliminado');
+      toast('Material inhabilitado');
       render();
     }
   });
 }
+
+async function reactivarMaterial(materialId) {
+  const { error } = await sb.from('materiales').update({ activo: true }).eq('id', materialId);
+  if (error) { toast('Error: ' + error.message, true); return; }
+  await loadAll();
+  toast('Material reactivado');
+  render();
+}
+
+// Alias de compatibilidad: si algo viejo todavía llama confirmDeleteMaterial, va a inhabilitar.
+async function confirmDeleteMaterial(materialId) { return inhabilitarMaterial(materialId); }
 
 function renderMaquinasTab() {
   // Lista de procesos disponibles (mismo set que el modal de maquina)
@@ -6873,7 +7108,7 @@ async function showCargarMaterial(initialName, callbackPickerId) {
     // En su lugar: actualizamos manualmente el picker pasandole el option recien
     // creado, y refrescamos el cache de opciones.
     if (callbackPickerId && window.__pickerCache && window.__pickerCache[callbackPickerId]) {
-      window.__pickerCache[callbackPickerId].options = materiales.map(x => ({ id: x.id, label: x.nombre }));
+      window.__pickerCache[callbackPickerId].options = materiales.filter(x => x.activo !== false).map(x => ({ id: x.id, label: x.nombre }));
       pickerSetValue(callbackPickerId, data.id, data.nombre);
     }
   };
@@ -8354,7 +8589,7 @@ function _renderPmModal(prod) {
     value: v.material_id,
     valueLabel: v.material_label,
     placeholder: 'Buscar o cargar nuevo...',
-    options: materiales.map(x => ({ id: x.id, label: x.nombre })),
+    options: materiales.filter(x => x.activo !== false || x.id === v.material_id).map(x => ({ id: x.id, label: x.nombre })),
     onCreateLabel: '+ Cargar nuevo material',
     onCreateFnName: 'pmCargarMaterial'
   });
@@ -8507,7 +8742,7 @@ function _pmRenderCompatModal() {
     value: cliV || '',
     valueLabel: cliLbl,
     placeholder: 'Buscar cliente...',
-    options: clientes.map(c => ({ id: c.id, label: c.nombre, sublabel: c.codigo || '' })),
+    options: clientes.filter(c => c.activo !== false || c.id === cliV).map(c => ({ id: c.id, label: c.nombre, sublabel: c.codigo || '' })),
     onSelectFnName: 'pmcOnCliente'
   });
   h += '</div>';
@@ -8712,6 +8947,15 @@ async function saveProductoMatriz(productoId) {
     const { data, error } = await sb.from('productos_matriz').insert(payload).select().single();
     if (error) { toast('Error: ' + error.message, true); console.error(error); return; }
     savedProductoId = data.id;
+    // v62: si el usuario cargó foto en el modal, la migramos como primera de la galería
+    if (foto_url) {
+      await sb.from('fotos').insert({
+        entidad_tipo: 'producto_matriz',
+        entidad_id: savedProductoId,
+        url: foto_url,
+        orden: 0
+      });
+    }
   }
 
   // Sincronizar ubicaciones: borrar las viejas, insertar las nuevas con cantidad.
@@ -8921,17 +9165,13 @@ async function confirmDeleteProductoMatriz(productoId) {
 function showClienteForm(clienteId) {
   const cliente = clienteId ? clientes.find(c => c.id === clienteId) : null;
   const isNew = !cliente;
-  // Codigo: 4 caracteres alfanumericos mayusculas, unico, opcional para clientes
-  // viejos (los que ya estan cargados sin codigo). Una vez asignado, no se puede
-  // cambiar (campo deshabilitado en edicion si ya tiene valor).
   const tieneCodigo = cliente && cliente.codigo;
   const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'cli-modal';
-  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '480px';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '560px'; m.style.maxHeight = '90vh'; m.style.overflowY = 'auto';
   let h = '<div class="md-t">' + (isNew ? 'Nuevo cliente' : 'Editar cliente') + '</div>';
   h += '<div class="row">';
   h += '<div class="ef" style="flex:2"><div class="ef-l">Nombre <span style="color:#A32D2D">*</span></div>';
   h += '<input type="text" class="ef-i" id="c-nombre" value="' + escapeHtml(cliente ? cliente.nombre : '') + '" placeholder="Ej. Gente de la Pampa"></div>';
-  // Codigo: rojo si falta y es edicion (cliente viejo sin codigo), deshabilitado si ya esta cargado.
   const codigoFaltante = !isNew && !tieneCodigo;
   h += '<div class="ef" style="flex:1"><div class="ef-l">Código' + (codigoFaltante ? ' <span style="color:#A32D2D" title="Falta completar">*</span>' : (isNew ? ' <span style="color:#A32D2D">*</span>' : '')) + '</div>';
   const codigoStyle = codigoFaltante ? 'border-color:#A32D2D;background:#FEF5F5;text-transform:uppercase' : 'text-transform:uppercase';
@@ -8943,23 +9183,174 @@ function showClienteForm(clienteId) {
   h += '<input type="text" class="ef-i" id="c-cuit" value="' + escapeHtml(cliente && cliente.cuit ? cliente.cuit : '') + '" placeholder="11 digitos sin guiones" maxlength="11">';
   h += '<div class="ef-help">Ej: 30712345678 (11 digitos exactos, sin guiones).</div>';
   h += '<div class="ef-err" id="err-cuit" style="display:none"></div></div>';
-  h += '<div class="row">';
-  h += '<div class="ef" style="flex:2"><div class="ef-l">Contacto</div>';
-  h += '<input type="text" class="ef-i" id="c-contacto" value="' + escapeHtml(cliente && cliente.contacto ? cliente.contacto : '') + '" placeholder="Nombre de la persona de contacto"></div>';
-  h += '<div class="ef" style="flex:1"><div class="ef-l">Telefono</div>';
-  h += '<input type="text" class="ef-i" id="c-telefono" value="' + escapeHtml(cliente && cliente.telefono ? cliente.telefono : '') + '" placeholder="Ej. 2302-XXXXXX"></div>';
-  h += '</div>';
+
+  // Campos legacy: "contacto" (texto libre) y "telefono" del cliente quedan
+  // ocultos en v62 (los reemplazan los contactos múltiples). Conservamos en DB
+  // pero no se editan desde acá. Si el cliente ya tenía valores, se ven como info.
+  if (cliente && (cliente.contacto || cliente.telefono)) {
+    h += '<div style="background:#FFF8E1;padding:6px 10px;border-radius:4px;font-size:11px;color:#854F0B;margin-bottom:10px">';
+    h += '<b>Datos antiguos (legacy):</b> ';
+    if (cliente.contacto) h += 'Contacto: ' + escapeHtml(cliente.contacto) + '. ';
+    if (cliente.telefono) h += 'Teléfono: ' + escapeHtml(cliente.telefono) + '. ';
+    h += '<br><span style="font-size:10px">Estos datos quedaron de la versión anterior. Ahora los contactos se gestionan en la sección de abajo.</span>';
+    h += '</div>';
+  }
+
+  // Sección de contactos (solo si el cliente ya existe; al crear nuevo, se
+  // agrega después de guardar)
+  if (!isNew) {
+    h += '<div class="section-t" style="margin-top:14px"><span>Contactos del cliente</span>';
+    h += '<button class="b b-p" type="button" onclick="showContactoForm(null,' + cliente.id + ')" style="font-size:11px;padding:3px 10px">+ Nuevo contacto</button>';
+    h += '</div>';
+    h += '<div id="contactos-list-cli">' + _renderContactosListHtml(cliente.id) + '</div>';
+  } else {
+    h += '<div style="background:#E8F2FC;padding:8px 12px;border-radius:5px;font-size:11px;color:#0C447C;margin-top:14px">';
+    h += 'Después de crear el cliente vas a poder agregar contactos (nombre, apellido, teléfono y mail).';
+    h += '</div>';
+  }
+
   h += '<div class="actions">';
-  h += '<button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button>';
+  h += '<button class="b" onclick="this.closest(\'.mo\').remove()">Cerrar</button>';
   h += '<button class="b b-p" onclick="saveCliente(' + (clienteId || 'null') + ')">' + (isNew ? 'Crear' : 'Guardar') + '</button></div>';
   m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
+}
+
+// HTML de la lista de contactos para mostrar dentro del modal de cliente.
+// Solo muestra activos. Cada uno con botón Editar e Inhabilitar/Reactivar.
+function _renderContactosListHtml(clienteId) {
+  // Mostrar todos (activos primero, luego inactivos)
+  const contactos = clienteContactos.filter(c => c.cliente_id === clienteId)
+    .sort((a, b) => {
+      if (a.activo !== b.activo) return a.activo ? -1 : 1;
+      const aL = ((a.apellido || '') + ' ' + (a.nombre || '')).toLowerCase();
+      const bL = ((b.apellido || '') + ' ' + (b.nombre || '')).toLowerCase();
+      return aL.localeCompare(bL);
+    });
+  if (contactos.length === 0) {
+    return '<div style="font-size:12px;color:#888;font-style:italic;padding:10px;text-align:center;background:#FAFAF7;border-radius:4px">Aún no hay contactos. Apretá "+ Nuevo contacto".</div>';
+  }
+  let h = '';
+  contactos.forEach(c => {
+    const inactivo = c.activo === false;
+    h += '<div style="display:flex;align-items:center;gap:10px;padding:6px 10px;background:#fff;border:1px solid #E8E6DF;border-radius:4px;margin-bottom:5px;' + (inactivo ? 'opacity:0.55' : '') + '">';
+    h += '<div style="flex:1;min-width:0">';
+    let nombre = '<b>' + escapeHtml(c.apellido || '') + (c.apellido && c.nombre ? ', ' : '') + escapeHtml(c.nombre || '') + '</b>';
+    if (inactivo) nombre += ' <span style="font-size:10px;background:#FEDADA;color:#A32D2D;padding:1px 6px;border-radius:8px;margin-left:6px">Inactivo</span>';
+    h += '<div style="font-size:12px">' + nombre + '</div>';
+    const meta = [c.telefono, c.mail].filter(Boolean).join(' · ');
+    if (meta) h += '<div style="font-size:10px;color:#888;margin-top:1px">' + escapeHtml(meta) + '</div>';
+    h += '</div>';
+    h += '<div style="display:flex;gap:3px;flex-shrink:0">';
+    h += '<button type="button" class="b b-icon" onclick="showContactoForm(' + c.id + ',' + clienteId + ')" style="font-size:10px;padding:2px 8px">Editar</button>';
+    if (inactivo) {
+      h += '<button type="button" class="b b-icon" onclick="reactivarContacto(' + c.id + ')" style="font-size:10px;padding:2px 8px;color:#0C447C">Reactivar</button>';
+    } else {
+      h += '<button type="button" class="b b-icon b-d" onclick="inhabilitarContacto(' + c.id + ')" style="font-size:10px;padding:2px 8px">Inhabilitar</button>';
+    }
+    h += '</div>';
+    h += '</div>';
+  });
+  return h;
+}
+
+// Modal para crear/editar un contacto del cliente.
+function showContactoForm(contactoId, clienteId) {
+  // Si contactoId es null, es nuevo. Si tiene valor, es edición.
+  const contacto = contactoId ? clienteContactos.find(c => c.id === contactoId) : null;
+  const isNew = !contacto;
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'cont-modal';
+  bd.style.zIndex = '1100';  // Por encima del modal del cliente
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '420px';
+  let h = '<div class="md-t">' + (isNew ? 'Nuevo contacto' : 'Editar contacto') + '</div>';
+  h += '<div class="row">';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Nombre <span style="color:#A32D2D">*</span></div>';
+  h += '<input type="text" class="ef-i" id="ct-nombre" value="' + escapeHtml(contacto ? contacto.nombre : '') + '"></div>';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Apellido</div>';
+  h += '<input type="text" class="ef-i" id="ct-apellido" value="' + escapeHtml(contacto && contacto.apellido ? contacto.apellido : '') + '"></div>';
+  h += '</div>';
+  // Telefono y mail: visibles pero deshabilitados (próxima iteración)
+  h += '<div class="ef"><div class="ef-l">Teléfono <span style="font-size:10px;color:#888">(próxima iteración)</span></div>';
+  h += '<input type="text" class="ef-i" id="ct-telefono" value="' + escapeHtml(contacto && contacto.telefono ? contacto.telefono : '') + '" disabled style="background:#F0EEE7"></div>';
+  h += '<div class="ef"><div class="ef-l">Mail <span style="font-size:10px;color:#888">(próxima iteración)</span></div>';
+  h += '<input type="email" class="ef-i" id="ct-mail" value="' + escapeHtml(contacto && contacto.mail ? contacto.mail : '') + '" disabled style="background:#F0EEE7"></div>';
+  h += '<div class="actions">';
+  h += '<button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button>';
+  h += '<button class="b b-p" onclick="saveContacto(' + (contactoId || 'null') + ',' + clienteId + ')">' + (isNew ? 'Crear' : 'Guardar') + '</button></div>';
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
+}
+
+async function saveContacto(contactoId, clienteId) {
+  const nombre = document.getElementById('ct-nombre').value.trim();
+  const apellido = document.getElementById('ct-apellido').value.trim() || null;
+  if (!nombre) { toast('Ingresá el nombre del contacto', true); return; }
+  const payload = { cliente_id: clienteId, nombre, apellido };
+  let savedId = contactoId;
+  if (contactoId) {
+    const { error } = await sb.from('cliente_contactos').update(payload).eq('id', contactoId);
+    if (error) { toast('Error: ' + error.message, true); return; }
+    toast('Contacto actualizado');
+  } else {
+    const { data, error } = await sb.from('cliente_contactos').insert(payload).select().single();
+    if (error) { toast('Error: ' + error.message, true); return; }
+    savedId = data.id;
+    toast('Contacto creado');
+  }
+  await loadAll();
+  document.getElementById('cont-modal').remove();
+  // Si hay form de proyecto abierto con este cliente: seleccionar el contacto nuevo
+  const cliSel = document.getElementById('f-cliente');
+  if (cliSel && parseInt(cliSel.value) === clienteId) {
+    _llenarComboContactoProj(clienteId, savedId);
+  }
+  // Refrescar la lista dentro del modal del cliente si está abierto
+  const listEl = document.getElementById('contactos-list-cli');
+  if (listEl) listEl.innerHTML = _renderContactosListHtml(clienteId);
+}
+
+async function inhabilitarContacto(contactoId) {
+  const c = clienteContactos.find(x => x.id === contactoId);
+  if (!c) return;
+  confirmModal({
+    titulo: 'Inhabilitar contacto',
+    mensaje: '¿Inhabilitar a "' + [c.apellido, c.nombre].filter(Boolean).join(', ') + '"? El contacto queda oculto pero podés reactivarlo.',
+    textoConfirmar: 'Inhabilitar',
+    onConfirm: async () => {
+      const { error } = await sb.from('cliente_contactos').update({ activo: false }).eq('id', contactoId);
+      if (error) { toast('Error: ' + error.message, true); return; }
+      await loadAll();
+      toast('Contacto inhabilitado');
+      const listEl = document.getElementById('contactos-list-cli');
+      if (listEl) listEl.innerHTML = _renderContactosListHtml(c.cliente_id);
+    }
+  });
+}
+
+async function reactivarContacto(contactoId) {
+  const c = clienteContactos.find(x => x.id === contactoId);
+  if (!c) return;
+  const { error } = await sb.from('cliente_contactos').update({ activo: true }).eq('id', contactoId);
+  if (error) { toast('Error: ' + error.message, true); return; }
+  await loadAll();
+  toast('Contacto reactivado');
+  const listEl = document.getElementById('contactos-list-cli');
+  if (listEl) listEl.innerHTML = _renderContactosListHtml(c.cliente_id);
+}
+
+// Si hay un combo de contactos en el form de proyecto visible para este
+// cliente, lo refrescamos para que el nuevo contacto aparezca disponible.
+function _refrescarComboContactoSiVisible(clienteId) {
+  const combo = document.getElementById('f-contacto');
+  if (!combo) return;
+  // Identificar qué cliente está seleccionado
+  const cliSel = document.getElementById('f-cliente');
+  if (!cliSel || parseInt(cliSel.value) !== clienteId) return;
+  // Re-renderizar el contenido del combo
+  _llenarComboContactoProj(clienteId, combo.value);
 }
 
 async function saveCliente(clienteId) {
   const nombre = document.getElementById('c-nombre').value.trim();
   const cuit = document.getElementById('c-cuit').value.trim();
-  const contacto = document.getElementById('c-contacto').value.trim() || null;
-  const telefono = document.getElementById('c-telefono').value.trim() || null;
   const errCuit = document.getElementById('err-cuit');
   const errCodigo = document.getElementById('err-codigo');
   errCuit.style.display = 'none';
@@ -8976,40 +9367,53 @@ async function saveCliente(clienteId) {
   const tieneCodigo = cliente && cliente.codigo;
   let codigo = cliente ? cliente.codigo : null;  // por defecto, mantenemos el actual
   if (!tieneCodigo) {
-    // Editable: leemos del input
     const codigoInput = document.getElementById('c-codigo').value.trim().toUpperCase();
     if (!clienteId) {
-      // Nuevo cliente: codigo OBLIGATORIO
       if (!codigoInput) { errCodigo.textContent = 'Código requerido'; errCodigo.style.display = 'block'; return; }
       if (!/^[A-Z0-9]{4}$/.test(codigoInput)) { errCodigo.textContent = 'Código debe tener exactamente 4 caracteres alfanuméricos (A-Z, 0-9)'; errCodigo.style.display = 'block'; return; }
-      // Unicidad case-insensitive
       const dupCod = clientes.find(c => c.codigo && c.codigo.toUpperCase() === codigoInput);
       if (dupCod) { errCodigo.textContent = 'Ya existe un cliente con ese código: ' + dupCod.nombre; errCodigo.style.display = 'block'; return; }
       codigo = codigoInput;
     } else {
-      // Edicion de cliente viejo sin codigo: opcional. Si lo cargo, validar.
       if (codigoInput) {
         if (!/^[A-Z0-9]{4}$/.test(codigoInput)) { errCodigo.textContent = 'Código debe tener exactamente 4 caracteres alfanuméricos (A-Z, 0-9)'; errCodigo.style.display = 'block'; return; }
         const dupCod = clientes.find(c => c.codigo && c.codigo.toUpperCase() === codigoInput && c.id !== clienteId);
         if (dupCod) { errCodigo.textContent = 'Ya existe un cliente con ese código: ' + dupCod.nombre; errCodigo.style.display = 'block'; return; }
         codigo = codigoInput;
       } else {
-        codigo = null;  // queda sin codigo
+        codigo = null;
       }
     }
   }
 
-  const payload = { nombre, cuit, contacto, telefono, codigo };
+  const payload = { nombre, cuit, codigo };
+  let savedId = clienteId;
   if (clienteId) {
     const { error } = await sb.from('clientes').update(payload).eq('id', clienteId);
     if (error) { toast('Error: ' + error.message, true); return; }
     toast('Cliente actualizado');
   } else {
-    const { error } = await sb.from('clientes').insert(payload);
+    const { data, error } = await sb.from('clientes').insert(payload).select().single();
     if (error) { toast('Error: ' + error.message, true); return; }
+    savedId = data.id;
     toast('Cliente creado');
   }
   await loadAll();
+  // Si veníamos del flujo "+ Cliente nuevo" en el form de proyecto, queremos
+  // dejarlo seleccionado.
+  if (window._clienteFormCallback) {
+    const cb = window._clienteFormCallback;
+    window._clienteFormCallback = null;
+    document.getElementById('cli-modal').remove();
+    cb(savedId);
+    return;
+  }
+  // Si era cliente nuevo, reabrir el modal en modo edición para poder agregar contactos
+  if (!clienteId) {
+    document.getElementById('cli-modal').remove();
+    showClienteForm(savedId);
+    return;
+  }
   document.getElementById('cli-modal').remove();
   render();
 }
