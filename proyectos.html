@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v63</title>
+<title>Velasco App 2.0 — Proyectos v64</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -934,6 +934,21 @@ async function loadAll() {
 let newProjectDraft = null;
 
 function navigate(newNav) {
+  // v64: si salimos de la vista de un proyecto con cambios sin guardar
+  // (y no estamos navegando dentro del mismo proyecto), mostrar modal.
+  // _projectNavBypass permite saltearse el chequeo desde "Guardar" / "Descartar".
+  if (!_projectNavBypass && nav && nav.view === 'project' &&
+      _projectEditSnapshot && _projectEditSnapshot.projectId === nav.projectId) {
+    const saliendoDelProyecto = newNav.view !== 'project' || newNav.projectId !== nav.projectId;
+    if (saliendoDelProyecto && _projectHasUnsavedChanges()) {
+      _showUnsavedChangesModal(newNav);
+      return;  // bloquear navegación hasta que el usuario decida
+    }
+    // Si no hay cambios, limpiar snapshot al salir del proyecto
+    if (saliendoDelProyecto) _projectEditSnapshot = null;
+  }
+  _projectNavBypass = false;
+
   // Si estamos saliendo del form de Nuevo Proyecto a otra vista (no a si mismo),
   // guardar el estado actual del form para restaurarlo si el usuario vuelve.
   try {
@@ -941,13 +956,54 @@ function navigate(newNav) {
       newProjectDraft = _newProjectCaptureFormValues();
     }
   } catch (e) {
-    // Si algun campo del form no existe (ej. recien creado), ignoramos.
     console.warn('[navigate] no se pudo capturar draft:', e);
   }
-  // Limpiar slot pendiente de galería al navegar (no queda colgado)
   _galPendingSlot = null;
   nav = newNav;
   render();
+}
+
+// v64: Modal "Hay cambios sin guardar" al salir de la vista de un proyecto editado.
+// Botones: Guardar y salir, Descartar y salir, Cancelar (queda en el proyecto).
+function _showUnsavedChangesModal(targetNav) {
+  const existing = document.getElementById('unsaved-modal');
+  if (existing) existing.remove();
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'unsaved-modal';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '480px'; m.style.zIndex = '1100';
+  let h = '<div class="md-t">Cambios sin guardar</div>';
+  h += '<div style="font-size:13px;color:#5F5E5A;line-height:1.5;margin-bottom:14px">Hiciste cambios en este proyecto que todavía no guardaste (incluye fotos agregadas o reordenadas). ¿Qué querés hacer?</div>';
+  h += '<div class="actions">';
+  h += '<button class="b" onclick="document.getElementById(\'unsaved-modal\').remove()">Cancelar</button>';
+  h += '<button class="b" style="background:#A32D2D;color:#fff;border-color:#A32D2D" onclick="_unsavedModalDescartar()">Descartar y salir</button>';
+  h += '<button class="b b-p" onclick="_unsavedModalGuardar()">Guardar y salir</button>';
+  h += '</div>';
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd);
+  window._unsavedModalTargetNav = targetNav;
+}
+
+async function _unsavedModalGuardar() {
+  document.getElementById('unsaved-modal').remove();
+  const target = window._unsavedModalTargetNav;
+  window._unsavedModalTargetNav = null;
+  try {
+    await saveProjectMeta();
+    // saveProjectMeta llama loadAll y render. Después navegamos al destino.
+    _projectEditSnapshot = null;
+    _projectNavBypass = true;
+    navigate(target);
+  } catch (e) {
+    console.error(e);
+    toast('Error al guardar', true);
+  }
+}
+
+async function _unsavedModalDescartar() {
+  document.getElementById('unsaved-modal').remove();
+  const target = window._unsavedModalTargetNav;
+  window._unsavedModalTargetNav = null;
+  await _revertProjectChanges();
+  _projectNavBypass = true;
+  navigate(target);
 }
 
 function renderCrumbs() {
@@ -1611,6 +1667,14 @@ let newProjectItemsBuffer = [];
 // Memoria del último tab visitado en Recursos (sesión). Se preserva al navegar
 // entre módulos pero se pierde con F5.
 let _recursosLastTab = null;
+// v64: snapshot del proyecto cuando se entra a la vista de detalle, para
+// detectar cambios sin guardar al salir.
+// Estructura: { projectId, campos: {...}, fotosProj: [{id, url, orden}],
+//   fotosNuevasUrls: Set<url>, fotosEliminadas: [{url, orden, descripcion}] }
+let _projectEditSnapshot = null;
+// Bandera: si true, navigate() omite el chequeo de cambios pendientes
+// (para usarlo desde el flujo "Descartar/Guardar" del propio modal).
+let _projectNavBypass = false;
 
 function renderNewProjectForm() {
   const main = document.getElementById('main');
@@ -2635,6 +2699,145 @@ function renderProjectDetail() {
   // v62: bindear cambio del combo de contacto en el form de edit (si existe)
   const contSel = document.getElementById('f-contacto');
   if (contSel) contSel.onchange = onContactoComboChange;
+  // v64: tomar snapshot del estado al entrar a la vista (solo si el snapshot
+  // actual no es para este proyecto - así no lo perdemos al re-renderizar
+  // tras acciones internas como agregar/eliminar items, fotos, etc.)
+  if (!_projectEditSnapshot || _projectEditSnapshot.projectId !== proj.id) {
+    _takeProjectSnapshot(proj.id);
+  }
+}
+
+// v64: Captura snapshot de los campos editables del proyecto + fotos.
+// Lo usamos para detectar cambios sin guardar al salir, y para revertir si
+// el usuario elige "Descartar".
+function _takeProjectSnapshot(projectId) {
+  const proj = getProject(projectId);
+  if (!proj) { _projectEditSnapshot = null; return; }
+  const fotosProj = getFotos('proyecto', projectId).map(f => ({ id: f.id, url: f.url, orden: f.orden, descripcion: f.descripcion }));
+  _projectEditSnapshot = {
+    projectId,
+    campos: {
+      descripcion: proj.descripcion || '',
+      urgencia: proj.urgencia || 'media',
+      pedido_nro: proj.pedido_nro || '',
+      cliente_id: proj.cliente_id || null,
+      cliente_final: proj.cliente_final || '',
+      fecha_ingreso: proj.fecha_ingreso || '',
+      fecha_entrega: proj.fecha_entrega || '',
+      contacto_id: proj.contacto_id || null,
+      observaciones_mail: proj.observaciones_mail || ''
+    },
+    fotosProj,
+    // URLs de fotos agregadas durante esta edición (las marcamos al subirlas
+    // para poder borrarlas del bucket si el usuario descarta).
+    fotosNuevasUrls: new Set()
+  };
+}
+
+// v64: Devuelve true si el form/galería tienen cambios respecto del snapshot.
+function _projectHasUnsavedChanges() {
+  if (!_projectEditSnapshot) return false;
+  const projId = _projectEditSnapshot.projectId;
+  // Si el snapshot es de otro proyecto que el actualmente en nav, ignorar.
+  if (nav.view !== 'project' || nav.projectId !== projId) return false;
+  const snap = _projectEditSnapshot.campos;
+  // Campos del form
+  const getVal = id => { const el = document.getElementById(id); return el ? el.value : null; };
+  const descripcion = (getVal('f-desc') || '').trim();
+  const urgencia = getVal('f-urg') || '';
+  const pedido_nro = (getVal('f-pedido') || '').trim();
+  const cliente_id_raw = getVal('f-cliente');
+  const cliente_id = cliente_id_raw ? parseInt(cliente_id_raw) : null;
+  const cliente_final = (getVal('f-clifinal') || '').trim();
+  const fecha_ingreso = getVal('f-fechaing') || '';
+  const fecha_entrega = getVal('f-fechaentrega') || '';
+  const contactoSel = document.getElementById('f-contacto');
+  const contacto_id = contactoSel && contactoSel.value && contactoSel.value !== '__nuevo__'
+    ? parseInt(contactoSel.value) : null;
+  // El editor rico no es <input>, usamos readRichEditor si existe
+  let obsMail = '';
+  try { obsMail = readRichEditor('f-obs-mail') || ''; } catch (e) { obsMail = ''; }
+  if (descripcion !== (snap.descripcion || '')) return true;
+  if (urgencia !== (snap.urgencia || '')) return true;
+  if (pedido_nro !== (snap.pedido_nro || '')) return true;
+  if (cliente_id !== (snap.cliente_id || null)) return true;
+  if (cliente_final !== (snap.cliente_final || '')) return true;
+  if (fecha_ingreso !== (snap.fecha_ingreso || '')) return true;
+  if (fecha_entrega !== (snap.fecha_entrega || '')) return true;
+  if (contacto_id !== (snap.contacto_id || null)) return true;
+  if (obsMail !== (snap.observaciones_mail || '')) return true;
+  // Comparar fotos (ids + orden)
+  const actuales = getFotos('proyecto', projId);
+  if (actuales.length !== _projectEditSnapshot.fotosProj.length) return true;
+  for (let i = 0; i < actuales.length; i++) {
+    const a = actuales[i];
+    const s = _projectEditSnapshot.fotosProj[i];
+    if (!s || a.id !== s.id || a.orden !== s.orden) return true;
+  }
+  return false;
+}
+
+// v64: Descarta los cambios revirtiendo lo modificado durante la edición.
+// - Fotos nuevas: las elimina de la tabla `fotos` y del bucket de Storage.
+// - Fotos eliminadas durante la edición: las re-inserta. NOTA: en v64 todavía
+//   no implementamos el tracking de "eliminadas". Si el usuario eliminó una
+//   foto durante la edición, ese cambio se mantiene (no se restaura). El
+//   archivo del bucket sí queda hasta que limpiemos, pero la galería no la
+//   muestra. Mejora futura: trackear eliminadas y restaurarlas.
+// - Orden de fotos: lo restauramos al snapshot.
+// - Campos: forzamos re-render desde la DB (los inputs vuelven a los valores
+//   guardados).
+async function _revertProjectChanges() {
+  if (!_projectEditSnapshot) return;
+  const projId = _projectEditSnapshot.projectId;
+  showSpinner('Descartando cambios...');
+  try {
+    // 1. Eliminar fotos NUEVAS (las que se agregaron durante la edición)
+    const fotosActuales = getFotos('proyecto', projId);
+    const idsSnapshot = new Set(_projectEditSnapshot.fotosProj.map(f => f.id));
+    const fotosNuevas = fotosActuales.filter(f => !idsSnapshot.has(f.id));
+    for (const f of fotosNuevas) {
+      try {
+        // Borrar de la tabla
+        await sb.from('fotos').delete().eq('id', f.id);
+        // Borrar del bucket si la URL pertenece al bucket
+        const path = _extractBucketPath(f.url);
+        if (path) {
+          await sb.storage.from(PHOTO_BUCKET).remove([path]);
+        }
+      } catch (e) {
+        console.warn('No pude borrar foto nueva durante descarte:', f.url, e);
+      }
+    }
+    // 2. Restaurar el orden de las fotos que existían en el snapshot.
+    //    (Si el usuario las reordenó, las dejamos como estaban antes de editar.)
+    for (const snap of _projectEditSnapshot.fotosProj) {
+      try {
+        await sb.from('fotos').update({ orden: snap.orden }).eq('id', snap.id);
+      } catch (e) {
+        console.warn('No pude restaurar orden de foto:', snap.id, e);
+      }
+    }
+    // 3. Re-sincronizar foto_url del proyecto con la primera foto del snapshot
+    const primeraFoto = _projectEditSnapshot.fotosProj.find(f => f.orden === 0);
+    await _sincronizarFotoUrl('proyecto', projId, primeraFoto ? primeraFoto.url : null);
+  } finally {
+    hideSpinner();
+  }
+  // Limpiar snapshot para que al re-renderizar tome uno nuevo del estado fresco
+  _projectEditSnapshot = null;
+  await loadAll();
+}
+
+// v64: Extrae el path del archivo dentro del bucket a partir de la URL pública.
+// La URL típica es:
+//   https://<proj>.supabase.co/storage/v1/object/public/proyecto-fotos/<archivo>
+function _extractBucketPath(url) {
+  if (!url) return null;
+  const marker = '/object/public/' + PHOTO_BUCKET + '/';
+  const idx = url.indexOf(marker);
+  if (idx < 0) return null;
+  return url.substring(idx + marker.length);
 }
 
 async function confirmDeleteItemFromList(itemId) {
@@ -2661,12 +2864,16 @@ async function confirmDeleteItemFromList(itemId) {
 // estaba sucio porque hubo guardadas parciales (otras tabs), hacemos un loadAll
 // para asegurar.
 async function descartarCambiosProyecto() {
+  if (!_projectHasUnsavedChanges()) {
+    toast('No hay cambios para descartar');
+    return;
+  }
   confirmModal({
     titulo: 'Descartar cambios',
-    mensaje: '¿Descartar los cambios sin guardar? Vas a perder lo que tipiaste en este formulario.',
+    mensaje: '¿Descartar los cambios sin guardar? Vas a perder lo que tipiaste en este formulario y las fotos agregadas.',
     textoConfirmar: 'Descartar',
     onConfirm: async () => {
-      await loadAll();
+      await _revertProjectChanges();
       toast('Cambios descartados');
       render();
     }
@@ -2722,6 +2929,8 @@ async function saveProjectMeta() {
     }).eq('item_id', it.id);
   }
   toast('Proyecto actualizado');
+  // v64: tras guardar, limpiar snapshot para que se re-tome con los nuevos valores
+  _projectEditSnapshot = null;
   await loadAll();
   render();
 }
@@ -5829,9 +6038,14 @@ async function agregarFoto(entidadTipo, entidadId, url) {
     orden: orden
   }).select().single();
   if (error) return { error: error.message };
-  // Si es la primera, sincronizar foto_url en la tabla origen
   if (orden === 0) {
     await _sincronizarFotoUrl(entidadTipo, entidadId, url);
+  }
+  // v64: si estamos editando un proyecto, marcar la URL como agregada en
+  // esta edición. Permite revertir si el usuario descarta cambios.
+  if (entidadTipo === 'proyecto' && _projectEditSnapshot &&
+      _projectEditSnapshot.projectId === entidadId) {
+    _projectEditSnapshot.fotosNuevasUrls.add(url);
   }
   await loadAll();
   return { foto: data };
@@ -8692,32 +8906,63 @@ function pmCambiarCantidadUbicacion(idx, value) {
   pmFormState.ubicacionesPendientes[idx].cantidad = n;
 }
 
-// Helpers de navegación que pre-expanden la matriz anidada hasta un nivel
-// específico. Cada función agrega las keys necesarias a matrizExpanded y
-// navega a la vista anidada (matrizView=clientes).
-function _matrizNavExpand(keys) {
-  keys.forEach(k => matrizExpanded.add(k));
+// v64: Helpers de navegación que LIMPIAN todos los filtros, aplican los del
+// nivel clickeado, expanden la rama y navegan a la vista anidada. La
+// vista anidada respeta `matrizFilters`, así que ya filtra automáticamente.
+function _matrizNavConFiltros(filtros, expandKeys) {
+  // Limpiar todos los filtros actuales
+  matrizFilters.search = '';
+  matrizFilters.codigos = '';
+  matrizFilters.clienteIds = [];
+  matrizFilters.sectorIds = [];
+  matrizFilters.equipoIds = [];
+  matrizFilters.conjuntoIds = [];
+  matrizFilters.subconjuntoIds = [];
+  // Aplicar los del nivel
+  Object.assign(matrizFilters, filtros);
+  saveMatrizFilters();
+  // Expandir ramas
+  expandKeys.forEach(k => matrizExpanded.add(k));
   navigate({ view: 'recursos', tab: 'matriz', matrizView: 'clientes' });
 }
 
 function navMatrizACliente(clienteId) {
   if (clienteId == null) {
-    _matrizNavExpand(['gen']);
+    // Genéricos: no hay filtro por cliente; mostramos solo "Productos Genéricos"
+    // expandido. La vista anidada igual mostrará otros clientes con productos.
+    // Para limitarlo a genéricos solamente, no hay filtro existente — dejamos
+    // que el usuario filtre manualmente. Solo limpiamos y expandimos genéricos.
+    _matrizNavConFiltros({}, ['gen']);
   } else {
-    _matrizNavExpand(['cli:' + clienteId]);
+    _matrizNavConFiltros(
+      { clienteIds: [clienteId] },
+      ['cli:' + clienteId]
+    );
   }
 }
 function navMatrizASector(clienteId, sectorId) {
-  _matrizNavExpand(['cli:' + clienteId, 'sec:' + sectorId]);
+  _matrizNavConFiltros(
+    { clienteIds: [clienteId], sectorIds: [sectorId] },
+    ['cli:' + clienteId, 'sec:' + sectorId]
+  );
 }
 function navMatrizAEquipo(clienteId, sectorId, equipoId) {
-  _matrizNavExpand(['cli:' + clienteId, 'sec:' + sectorId, 'eq:' + equipoId]);
+  _matrizNavConFiltros(
+    { clienteIds: [clienteId], sectorIds: [sectorId], equipoIds: [equipoId] },
+    ['cli:' + clienteId, 'sec:' + sectorId, 'eq:' + equipoId]
+  );
 }
 function navMatrizAConjunto(clienteId, sectorId, equipoId, conjuntoId) {
-  _matrizNavExpand(['cli:' + clienteId, 'sec:' + sectorId, 'eq:' + equipoId, 'con:' + conjuntoId]);
+  _matrizNavConFiltros(
+    { clienteIds: [clienteId], sectorIds: [sectorId], equipoIds: [equipoId], conjuntoIds: [conjuntoId] },
+    ['cli:' + clienteId, 'sec:' + sectorId, 'eq:' + equipoId, 'con:' + conjuntoId]
+  );
 }
 function navMatrizASubconjunto(clienteId, sectorId, equipoId, conjuntoId, subconjuntoId) {
-  _matrizNavExpand(['cli:' + clienteId, 'sec:' + sectorId, 'eq:' + equipoId, 'con:' + conjuntoId, 'sub:' + subconjuntoId]);
+  _matrizNavConFiltros(
+    { clienteIds: [clienteId], sectorIds: [sectorId], equipoIds: [equipoId], conjuntoIds: [conjuntoId], subconjuntoIds: [subconjuntoId] },
+    ['cli:' + clienteId, 'sec:' + sectorId, 'eq:' + equipoId, 'con:' + conjuntoId, 'sub:' + subconjuntoId]
+  );
 }
 
 // Construye la ruta clickeable Cliente > Sector > Equipo > Conjunto > Subconjunto.
