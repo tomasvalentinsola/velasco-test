@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v60</title>
+<title>Velasco App 2.0 — Proyectos v61</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -925,6 +925,8 @@ function navigate(newNav) {
     // Si algun campo del form no existe (ej. recien creado), ignoramos.
     console.warn('[navigate] no se pudo capturar draft:', e);
   }
+  // Limpiar slot pendiente de galería al navegar (no queda colgado)
+  _galPendingSlot = null;
   nav = newNav;
   render();
 }
@@ -2505,6 +2507,7 @@ function renderProjectDetail() {
       // Actions
       h += '<div style="display:flex;gap:4px;flex-shrink:0">';
       h += '<button class="b b-icon" onclick="event.stopPropagation();showItemForm(' + it.id + ')" title="Editar">Editar</button>';
+      h += '<button class="b b-icon" onclick="event.stopPropagation();duplicarItem(' + it.id + ')" title="Duplicar item con sus procesos">📑</button>';
       h += '<button class="b b-icon b-d" onclick="event.stopPropagation();confirmDeleteItemFromList(' + it.id + ')" title="Eliminar">🗑</button>';
       h += '</div></div>';
     });
@@ -4855,6 +4858,7 @@ function renderItemDetail() {
   }
   h += '</div>';
   main.innerHTML = h;
+  setupPhotoPaste();
 }
 
 // ============================================================================
@@ -5755,6 +5759,13 @@ async function _sincronizarFotoUrl(entidadTipo, entidadId, url) {
 // renderiza un wrap simple con el comportamiento clásico (una foto en
 // hidden input). La gestión múltiple solo se habilita después de crear la entidad.
 
+// Estado del slot pendiente de la galería: cuando el usuario aprieta
+// "+ Agregar foto", aparece un slot vacío activo donde puede pegar con Ctrl+V,
+// arrastrar archivo, o clickear "Insertar". Solo una galería puede tener slot
+// pendiente a la vez (más simple).
+// Si está activo, _galPendingSlot = { entidadTipo, entidadId, kind }
+let _galPendingSlot = null;
+
 function buildPhotoGalleryHtml(entidadTipo, entidadId, kind) {
   // kind: identificador del slot para paste/drop (proj, item, etc.)
   if (!entidadId) {
@@ -5768,13 +5779,10 @@ function buildPhotoGalleryHtml(entidadTipo, entidadId, kind) {
     const esPrincipal = idx === 0;
     h += '<div class="photo-thumb" style="position:relative;width:90px;height:90px;border:' + (esPrincipal ? '2px solid #0C447C' : '1px solid #C8C6BE') + ';border-radius:6px;overflow:hidden;background:#FAFAF7">';
     h += '<img src="' + escapeHtml(f.url) + '" style="width:100%;height:100%;object-fit:cover;cursor:pointer" onclick="abrirFotoLightbox(\'' + escapeHtml(f.url) + '\')">';
-    // Badge "principal"
     if (esPrincipal) {
       h += '<div style="position:absolute;top:2px;left:2px;background:#0C447C;color:#fff;font-size:9px;padding:1px 4px;border-radius:3px">Principal</div>';
     }
-    // Botón eliminar
     h += '<button type="button" class="b" onclick="confirmEliminarFoto(' + f.id + ')" title="Eliminar foto" style="position:absolute;top:2px;right:2px;background:rgba(163,45,45,0.9);color:#fff;border:none;padding:1px 5px;font-size:11px;line-height:1;border-radius:3px;cursor:pointer">×</button>';
-    // Flechas de orden
     h += '<div style="position:absolute;bottom:2px;left:2px;display:flex;gap:2px">';
     if (idx > 0) {
       h += '<button type="button" class="b" onclick="moverFotoUI(' + f.id + ',-1)" title="Subir orden" style="background:rgba(255,255,255,0.9);border:1px solid #C8C6BE;padding:0 4px;font-size:11px;line-height:1.2;cursor:pointer">◄</button>';
@@ -5785,25 +5793,57 @@ function buildPhotoGalleryHtml(entidadTipo, entidadId, kind) {
     h += '</div>';
     h += '</div>';
   });
-  // Slot "+ Agregar foto" al final
-  h += '<div class="photo-add-slot" style="width:90px;height:90px;border:2px dashed #C8C6BE;border-radius:6px;display:flex;align-items:center;justify-content:center;cursor:pointer;background:#FAFAF7" onclick="agregarFotoUI(\'' + entidadTipo + '\',' + entidadId + ',\'' + kind + '\')">';
-  h += '<div style="text-align:center;color:#5F5E5A;font-size:11px"><div style="font-size:20px;line-height:1">+</div><div>Agregar</div></div>';
+  // Slot pendiente: si está activo Y es para esta galería, renderizarlo aquí
+  const pendienteActivoAca = _galPendingSlot &&
+    _galPendingSlot.entidadTipo === entidadTipo &&
+    _galPendingSlot.entidadId === entidadId;
+  if (pendienteActivoAca) {
+    // Wrap clásico estilo el "photo-wrap" tradicional, pero embebido en la galería.
+    // Tiene paste/drop/insert. Cuando recibe imagen, se llama a uploadPhotoFile,
+    // que detecta el prefijo "gal:" y agrega a la tabla fotos.
+    const slotKind = 'gal:' + entidadTipo + ':' + entidadId;
+    h += '<div style="width:90px;height:90px;flex-shrink:0">';
+    h += '<div class="photo-wrap active" id="photo-wrap-' + slotKind + '" data-kind="' + slotKind + '" onclick="onSlotClick(event,\'' + slotKind + '\')" ondragover="onSlotDragOver(event)" ondragleave="onSlotDragLeave(event)" ondrop="onSlotDrop(event,\'' + slotKind + '\')" style="width:90px;height:90px;border:2px dashed #378ADD;background:#E8F2FC">';
+    h += '<button type="button" class="photo-insert-btn" onclick="event.stopPropagation();document.getElementById(\'photo-input-' + slotKind + '\').click()" style="font-size:10px">Insertar</button>';
+    // Botón × para cancelar el slot pendiente
+    h += '<div class="photo-x" onclick="event.stopPropagation();cancelarSlotPendiente()" style="background:#A32D2D;color:#fff" title="Cancelar">&times;</div>';
+    h += '</div>';
+    h += '<input type="file" id="photo-input-' + slotKind + '" accept="image/*" style="display:none" onchange="onPhotoFile(event,\'' + slotKind + '\')">';
+    h += '<input type="hidden" id="photo-url-' + slotKind + '" value="">';
+    h += '</div>';
+  } else {
+    // Slot "+ Agregar" (no activo): al click, activa el slot pendiente
+    h += '<div class="photo-add-slot" style="width:90px;height:90px;border:2px dashed #C8C6BE;border-radius:6px;display:flex;align-items:center;justify-content:center;cursor:pointer;background:#FAFAF7" onclick="abrirSlotPendiente(\'' + entidadTipo + '\',' + entidadId + ',\'' + kind + '\')">';
+    h += '<div style="text-align:center;color:#5F5E5A;font-size:11px"><div style="font-size:20px;line-height:1">+</div><div>Agregar</div></div>';
+    h += '</div>';
+  }
   h += '</div>';
-  h += '</div>';
-  // Hidden input para reusar el flujo de paste/drop existente (acepta la primera foto agregada como url temporal)
-  h += '<input type="file" id="photo-input-' + kind + '" accept="image/*" style="display:none" onchange="onPhotoFileGallery(event,\'' + entidadTipo + '\',' + entidadId + ',\'' + kind + '\')">';
   h += '</div>';
   return h;
 }
 
-// Click en "+ Agregar foto": abre el selector de archivo. También se pueden
-// pegar imágenes con Ctrl+V si la galería está activa.
-function agregarFotoUI(entidadTipo, entidadId, kind) {
-  document.getElementById('photo-input-' + kind).click();
+// Activa el slot pendiente para que el usuario pueda pegar / arrastrar / insertar.
+function abrirSlotPendiente(entidadTipo, entidadId, kind) {
+  _galPendingSlot = { entidadTipo, entidadId, kind };
+  render();
+  // Activar el slot recién renderizado para que paste funcione
+  setTimeout(() => {
+    const slotKind = 'gal:' + entidadTipo + ':' + entidadId;
+    setActiveSlot(slotKind);
+  }, 50);
 }
 
-// Procesa una imagen seleccionada por el input de la galería. Sube a Storage y
-// agrega a la tabla `fotos`.
+function cancelarSlotPendiente() {
+  _galPendingSlot = null;
+  render();
+}
+
+// DEPRECATED v61: agregarFotoUI ahora abre el slot pendiente en lugar de file picker directo.
+function agregarFotoUI(entidadTipo, entidadId, kind) {
+  abrirSlotPendiente(entidadTipo, entidadId, kind);
+}
+
+// onPhotoFileGallery: ya no se usa con el slot pendiente, pero la dejo por compat.
 async function onPhotoFileGallery(event, entidadTipo, entidadId, kind) {
   const file = event.target.files && event.target.files[0];
   if (!file) return;
@@ -6007,9 +6047,45 @@ async function onPhotoFile(event, kind) {
 }
 
 async function uploadPhotoFile(file, kind) {
+  // Caso especial: si kind tiene prefijo "gal:", es un slot pendiente de
+  // galería. Sube la foto, agrega a la tabla `fotos` y re-renderiza la galería.
+  if (kind.startsWith('gal:')) {
+    const parts = kind.split(':');
+    const entidadTipo = parts[1];
+    const entidadId = parseInt(parts[2]);
+    const wrap = document.getElementById('photo-wrap-' + kind);
+    if (wrap) wrap.innerHTML = '<div class="photo-loading" style="font-size:11px;color:#888">Subiendo...</div>';
+    try {
+      const ext = (file.name && file.name.split('.').pop()) || (file.type.split('/')[1]) || 'png';
+      const filename = 'gal-' + entidadTipo + '-' + entidadId + '-' + Date.now() + '-' + Math.random().toString(36).substring(2, 8) + '.' + ext;
+      const { error: errUp } = await sb.storage.from(PHOTO_BUCKET).upload(filename, file, { contentType: file.type });
+      if (errUp) throw errUp;
+      const { data } = sb.storage.from(PHOTO_BUCKET).getPublicUrl(filename);
+      const url = data.publicUrl;
+      // Agregar a la tabla `fotos`
+      const res = await agregarFoto(entidadTipo, entidadId, url);
+      if (res.error) {
+        toast('Error: ' + res.error, true);
+        return;
+      }
+      toast('Foto agregada');
+      // Re-renderizar: dejamos el slot pendiente activo para que el usuario
+      // pueda pegar más sin clickear "+ Agregar". El estado _galPendingSlot
+      // se mantiene apuntando a la misma galería.
+      render();
+      // Re-activar el slot pendiente recién renderizado para que paste siga funcionando
+      setTimeout(() => {
+        setActiveSlot(kind);
+      }, 50);
+    } catch (err) {
+      console.error(err);
+      toast('Error al subir foto: ' + (err.message || err), true);
+    }
+    return;
+  }
+  // Caso clásico (wrap único con hidden input): comportamiento previo
   const wrap = document.getElementById('photo-wrap-' + kind);
   if (!wrap) return;
-  // No destruimos el slot - solo cambiamos el contenido visual
   wrap.innerHTML = '<div class="photo-loading" style="font-size:11px;color:#888">Subiendo...</div>';
   try {
     const ext = (file.name && file.name.split('.').pop()) || (file.type.split('/')[1]) || 'png';
@@ -6019,9 +6095,7 @@ async function uploadPhotoFile(file, kind) {
     const { data } = sb.storage.from(PHOTO_BUCKET).getPublicUrl(filename);
     const url = data.publicUrl;
     document.getElementById('photo-url-' + kind).value = url;
-    // Reconstruir el contenido del slot con la imagen + "X" para borrar
     wrap.innerHTML = '<img src="' + url + '"><div class="photo-x" onclick="event.stopPropagation();clearPhoto(\'' + kind + '\')">&times;</div>';
-    // Re-agregar el hint si es el slot activo
     if (wrap.classList.contains('active')) {
       const hint = document.createElement('div');
       hint.className = 'photo-paste-hint';
@@ -7563,11 +7637,11 @@ function _matrizProductoCardHtml(p) {
   h += '<div style="display:flex;align-items:center;padding:8px 12px;gap:10px">';
   // Flecha para expandir
   h += '<button class="b" onclick="matrizToggleExpandProd(' + p.id + ')" style="background:transparent;border:none;padding:4px;font-size:14px;color:#5F5E5A;cursor:pointer;flex:0 0 auto">' + (expanded ? '▼' : '▶') + '</button>';
-  // Foto o placeholder
+  // Foto o placeholder con ícono llave
   if (p.foto_url) {
     h += '<div class="card-img" style="flex:0 0 auto"><img src="' + escapeHtml(p.foto_url) + '" alt=""></div>';
   } else {
-    h += '<div class="card-img-empty" style="flex:0 0 auto">📦</div>';
+    h += '<div class="card-img-empty" style="flex:0 0 auto">🔧</div>';
   }
   // Body
   h += '<div style="flex:1;min-width:0">';
@@ -7865,12 +7939,13 @@ function _matrizCountProdsDelSubconjunto(subId) {
 //   color: color del titulo (HEX)
 //   indent: paddingLeft del bloque expandido (px)
 //   childrenHtml: callback que devuelve el HTML interior cuando esta expandido
-function _matrizRenderNode(key, icon, title, meta, color, indent, childrenHtml) {
+function _matrizRenderNode(key, icon, title, meta, color, indent, childrenHtml, iconSize) {
   const expanded = matrizExpanded.has(key);
   let h = '<div style="background:#fff;border:1px solid #C8C6BE;border-radius:6px;margin-bottom:6px;overflow:hidden">';
   h += '<div style="display:flex;align-items:center;padding:8px 12px;gap:8px;cursor:pointer" onclick="matrizToggleExpand(\'' + key + '\')">';
   h += '<span style="font-size:13px;color:#5F5E5A;flex:0 0 auto;width:14px">' + (expanded ? '▼' : '▶') + '</span>';
-  if (icon) h += '<span style="font-size:14px;flex:0 0 auto">' + icon + '</span>';
+  const size = iconSize || 14;
+  if (icon) h += '<span style="font-size:' + size + 'px;flex:0 0 auto;line-height:1">' + icon + '</span>';
   h += '<div style="flex:1;min-width:0">';
   h += '<div style="font-weight:600;color:' + color + ';font-size:13px">' + title + '</div>';
   if (meta) h += '<div style="font-size:11px;color:#888;margin-top:1px">' + meta + '</div>';
@@ -7901,11 +7976,11 @@ function _matrizRenderProductoCardNested(p) {
   h += '<div style="display:flex;align-items:center;padding:6px 10px;gap:8px;cursor:pointer" onclick="navigate({view:\'productoMatriz\',productoId:' + p.id + '})">';
   // Flecha (a la izquierda) con stopPropagation para no abrir la vista
   h += '<button class="b" onclick="event.stopPropagation();matrizToggleExpand(\'prod:' + p.id + '\')" style="background:transparent;border:none;padding:2px;font-size:13px;color:#5F5E5A;cursor:pointer;flex:0 0 auto">' + (expanded ? '▼' : '▶') + '</button>';
-  // Foto
+  // Foto del producto (si tiene); si no, ícono 🔧
   if (p.foto_url) {
     h += '<img src="' + escapeHtml(p.foto_url) + '" style="width:32px;height:32px;object-fit:cover;border-radius:3px;flex:0 0 auto">';
   } else {
-    h += '<div style="width:32px;height:32px;background:#E8E6DF;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:14px;flex:0 0 auto">📦</div>';
+    h += '<div style="width:32px;height:32px;background:#E8E6DF;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:14px;flex:0 0 auto">🔧</div>';
   }
   // Body
   h += '<div style="flex:1;min-width:0">';
@@ -8074,7 +8149,7 @@ function _matrizRenderEquipoNode(eq, cliId) {
   const warn = _matrizNivelTieneProblemas({ equipoId: eq.id }) ? _warningIconHtml('Algún producto debajo requiere atención') : '';
   return _matrizRenderNode(
     'eq:' + eq.id,
-    '⚙',
+    '🤖',
     escapeHtml(eq.nombre) + codeChip + warn,
     cnt + ' producto(s)',
     '#5F5E5A',
@@ -8120,10 +8195,6 @@ function _matrizRenderConjuntoNode(con, cliId) {
         if (cnt2 === 0) return;
         inner += _matrizRenderSubconjuntoNode(sub, cliId);
       });
-      // Productos del conjunto (ubicacion termina en conjunto, sin subconjunto)
-      // Como el producto puede tener varias ubicaciones a este conjunto desde
-      // distintos equipos, podemos verlo aparecer una sola vez dentro del
-      // conjunto. _matrizProductosEnNivel devuelve distintos por id.
       const directos = _matrizProductosEnNivel({
         conjuntoId: con.id, subconjuntoId: null
       });
@@ -8132,7 +8203,8 @@ function _matrizRenderConjuntoNode(con, cliId) {
       });
       if (!inner) inner = '<div style="font-size:11px;color:#888;font-style:italic;padding:4px 0">Sin subconjuntos ni productos.</div>';
       return inner;
-    }
+    },
+    22  // iconSize: Conjunto más grande
   );
 }
 
@@ -8141,7 +8213,7 @@ function _matrizRenderSubconjuntoNode(sub, cliId) {
   const warn = _matrizNivelTieneProblemas({ subconjuntoId: sub.id }) ? _warningIconHtml('Algún producto debajo requiere atención') : '';
   return _matrizRenderNode(
     'sub:' + sub.id,
-    '🔧',
+    '📦',
     escapeHtml(sub.nombre) + warn,
     cnt + ' producto(s)',
     '#5F5E5A',
@@ -8154,7 +8226,8 @@ function _matrizRenderSubconjuntoNode(sub, cliId) {
       });
       if (!inner) inner = '<div style="font-size:11px;color:#888;font-style:italic;padding:4px 0">Sin productos.</div>';
       return inner;
-    }
+    },
+    14  // iconSize: Subconjunto más chico
   );
 }
 
