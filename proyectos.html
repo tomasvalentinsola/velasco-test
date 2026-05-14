@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v65</title>
+<title>Velasco App 2.0 — Proyectos v66</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -939,7 +939,13 @@ function navigate(newNav) {
   // _projectNavBypass permite saltearse el chequeo desde "Guardar" / "Descartar".
   if (!_projectNavBypass && nav && nav.view === 'project' &&
       _projectEditSnapshot && _projectEditSnapshot.projectId === nav.projectId) {
-    const saliendoDelProyecto = newNav.view !== 'project' || newNav.projectId !== nav.projectId;
+    // v66: navegar a un item del MISMO proyecto NO se considera "salir del
+    // proyecto" — el usuario está bajando un nivel a un item del proyecto que
+    // está editando. Tampoco dispara modal navegar al mismo proyecto.
+    const sigueEnProyecto =
+      (newNav.view === 'project' && newNav.projectId === nav.projectId) ||
+      (newNav.view === 'item' && newNav.projectId === nav.projectId);
+    const saliendoDelProyecto = !sigueEnProyecto;
     if (saliendoDelProyecto && _projectHasUnsavedChanges()) {
       _showUnsavedChangesModal(newNav);
       return;  // bloquear navegación hasta que el usuario decida
@@ -2733,6 +2739,45 @@ function renderProjectDetail() {
 // v64: Captura snapshot de los campos editables del proyecto + fotos.
 // Lo usamos para detectar cambios sin guardar al salir, y para revertir si
 // el usuario elige "Descartar".
+// v66: normaliza una fecha que puede venir como "2025-05-14" o
+// "2025-05-14T00:00:00+00:00" o vacía. Devuelve solo "YYYY-MM-DD" o "".
+function _normDate(d) {
+  if (!d) return '';
+  const s = String(d);
+  // Si tiene "T", recortar al primer "T"
+  const idxT = s.indexOf('T');
+  return idxT >= 0 ? s.substring(0, idxT) : s;
+}
+
+// v66: HTML "vacío" desde el editor rich text puede ser "", "<br>", "<p></p>",
+// "<p><br></p>", " ", etc. Devuelve true si el HTML no tiene contenido textual.
+function _isHtmlEmpty(html) {
+  if (!html) return true;
+  // Quitar tags y &nbsp;, dejar solo texto plano
+  const tmp = document.createElement('div');
+  tmp.innerHTML = String(html);
+  const text = (tmp.textContent || '').replace(/\u00a0/g, ' ').trim();
+  return text === '';
+}
+
+// v66: Compara dos HTMLs ignorando diferencias triviales de formato (espacios,
+// envoltura en <p>, vacíos equivalentes). NO compara formato fino (negrita,
+// estilos). Para el caso de comparar snapshot vs DOM de un editor rich text.
+function _htmlEquivalent(a, b) {
+  const aEmpty = _isHtmlEmpty(a);
+  const bEmpty = _isHtmlEmpty(b);
+  if (aEmpty && bEmpty) return true;
+  if (aEmpty !== bEmpty) return false;
+  // Comparar texto plano (suficiente para nuestros casos donde el editor
+  // re-renderiza el HTML guardado en DB y puede normalizar tags).
+  const norm = (h) => {
+    const tmp = document.createElement('div');
+    tmp.innerHTML = String(h);
+    return (tmp.textContent || '').replace(/\s+/g, ' ').trim();
+  };
+  return norm(a) === norm(b);
+}
+
 function _takeProjectSnapshot(projectId) {
   const proj = getProject(projectId);
   if (!proj) { _projectEditSnapshot = null; return; }
@@ -2745,8 +2790,8 @@ function _takeProjectSnapshot(projectId) {
       pedido_nro: proj.pedido_nro || '',
       cliente_id: proj.cliente_id || null,
       cliente_final: proj.cliente_final || '',
-      fecha_ingreso: proj.fecha_ingreso || '',
-      fecha_entrega: proj.fecha_entrega || '',
+      fecha_ingreso: _normDate(proj.fecha_ingreso),
+      fecha_entrega: _normDate(proj.fecha_entrega),
       contacto_id: proj.contacto_id || null,
       observaciones_mail: proj.observaciones_mail || ''
     },
@@ -2758,13 +2803,13 @@ function _takeProjectSnapshot(projectId) {
 }
 
 // v64: Devuelve true si el form/galería tienen cambios respecto del snapshot.
+// v66: comparaciones robustas (fechas normalizadas, HTML equivalente) y log
+// del primer campo que difiere para debug en consola.
 function _projectHasUnsavedChanges() {
   if (!_projectEditSnapshot) return false;
   const projId = _projectEditSnapshot.projectId;
-  // Si el snapshot es de otro proyecto que el actualmente en nav, ignorar.
   if (nav.view !== 'project' || nav.projectId !== projId) return false;
   const snap = _projectEditSnapshot.campos;
-  // Campos del form
   const getVal = id => { const el = document.getElementById(id); return el ? el.value : null; };
   const descripcion = (getVal('f-desc') || '').trim();
   const urgencia = getVal('f-urg') || '';
@@ -2772,30 +2817,42 @@ function _projectHasUnsavedChanges() {
   const cliente_id_raw = getVal('f-cliente');
   const cliente_id = cliente_id_raw ? parseInt(cliente_id_raw) : null;
   const cliente_final = (getVal('f-clifinal') || '').trim();
-  const fecha_ingreso = getVal('f-fechaing') || '';
-  const fecha_entrega = getVal('f-fechaentrega') || '';
+  const fecha_ingreso = _normDate(getVal('f-fechaing') || '');
+  const fecha_entrega = _normDate(getVal('f-fechaentrega') || '');
   const contactoSel = document.getElementById('f-contacto');
   const contacto_id = contactoSel && contactoSel.value && contactoSel.value !== '__nuevo__'
     ? parseInt(contactoSel.value) : null;
-  // El editor rico no es <input>, usamos readRichEditor si existe
   let obsMail = '';
   try { obsMail = readRichEditor('f-obs-mail') || ''; } catch (e) { obsMail = ''; }
-  if (descripcion !== (snap.descripcion || '')) return true;
-  if (urgencia !== (snap.urgencia || '')) return true;
-  if (pedido_nro !== (snap.pedido_nro || '')) return true;
-  if (cliente_id !== (snap.cliente_id || null)) return true;
-  if (cliente_final !== (snap.cliente_final || '')) return true;
-  if (fecha_ingreso !== (snap.fecha_ingreso || '')) return true;
-  if (fecha_entrega !== (snap.fecha_entrega || '')) return true;
-  if (contacto_id !== (snap.contacto_id || null)) return true;
-  if (obsMail !== (snap.observaciones_mail || '')) return true;
+  // Helper para logear el primer diff
+  const diff = (campo, dom, snapVal) => {
+    console.log('[unsaved] campo "' + campo + '" cambió. DOM:', JSON.stringify(dom), 'snapshot:', JSON.stringify(snapVal));
+    return true;
+  };
+  if (descripcion !== (snap.descripcion || '')) return diff('descripcion', descripcion, snap.descripcion);
+  if (urgencia !== (snap.urgencia || '')) return diff('urgencia', urgencia, snap.urgencia);
+  if (pedido_nro !== (snap.pedido_nro || '')) return diff('pedido_nro', pedido_nro, snap.pedido_nro);
+  if (cliente_id !== (snap.cliente_id || null)) return diff('cliente_id', cliente_id, snap.cliente_id);
+  if (cliente_final !== (snap.cliente_final || '')) return diff('cliente_final', cliente_final, snap.cliente_final);
+  if (fecha_ingreso !== (snap.fecha_ingreso || '')) return diff('fecha_ingreso', fecha_ingreso, snap.fecha_ingreso);
+  if (fecha_entrega !== (snap.fecha_entrega || '')) return diff('fecha_entrega', fecha_entrega, snap.fecha_entrega);
+  if (contacto_id !== (snap.contacto_id || null)) return diff('contacto_id', contacto_id, snap.contacto_id);
+  // observaciones_mail: comparar de forma equivalente para evitar falsos
+  // positivos por la normalización HTML del editor rich text.
+  if (!_htmlEquivalent(obsMail, snap.observaciones_mail || '')) {
+    return diff('observaciones_mail', obsMail, snap.observaciones_mail);
+  }
   // Comparar fotos (ids + orden)
   const actuales = getFotos('proyecto', projId);
-  if (actuales.length !== _projectEditSnapshot.fotosProj.length) return true;
+  if (actuales.length !== _projectEditSnapshot.fotosProj.length) {
+    return diff('fotos.length', actuales.length, _projectEditSnapshot.fotosProj.length);
+  }
   for (let i = 0; i < actuales.length; i++) {
     const a = actuales[i];
     const s = _projectEditSnapshot.fotosProj[i];
-    if (!s || a.id !== s.id || a.orden !== s.orden) return true;
+    if (!s || a.id !== s.id || a.orden !== s.orden) {
+      return diff('fotos[' + i + ']', { id: a.id, orden: a.orden }, s);
+    }
   }
   return false;
 }
