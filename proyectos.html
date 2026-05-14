@@ -2815,7 +2815,12 @@ function _projectHasUnsavedChanges() {
   const urgencia = getVal('f-urg') || '';
   const pedido_nro = (getVal('f-pedido') || '').trim();
   const cliente_id_raw = getVal('f-cliente');
-  const cliente_id = cliente_id_raw ? parseInt(cliente_id_raw) : null;
+  // v66: si el cliente está bloqueado (estados Confirmado/Cerrado/Anulado), el
+  // campo f-cliente no se renderiza. En ese caso, el cliente no puede haber
+  // cambiado, así que usamos el valor del snapshot para no detectar falso cambio.
+  const cliente_id = cliente_id_raw === null
+    ? (snap.cliente_id || null)
+    : (cliente_id_raw ? parseInt(cliente_id_raw) : null);
   const cliente_final = (getVal('f-clifinal') || '').trim();
   const fecha_ingreso = _normDate(getVal('f-fechaing') || '');
   const fecha_entrega = _normDate(getVal('f-fechaentrega') || '');
@@ -10550,6 +10555,8 @@ const DESPACHO_CHECKLIST = [
 
 function renderOT(p, idx, total, item, meta, clienteDisplay) {
   const fmt = d => { if (!d) return ''; const [y, m, da] = d.split('-'); return da + '/' + m + '/' + y; };
+  // v66: resolver el material del item (FK a materiales + fallback a campo legacy)
+  const itemMatLbl = item.material_id ? ((materiales.find(m => m.id === item.material_id) || {}).nombre || '') : (item.material || '');
   const tarea = (p.proceso || p.descripcion || '').toUpperCase();
   // Responsable: ideal + suplentes concatenados con " / "
   const respIds = [];
