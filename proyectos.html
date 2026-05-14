@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v64</title>
+<title>Velasco App 2.0 — Proyectos v65</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -2389,6 +2389,18 @@ async function saveNewProject() {
     }).select().single();
     if (projErr) { toast('Error creando proyecto: ' + projErr.message, true); return; }
 
+    // v65: si vino con foto desde el form, insertarla en la tabla `fotos`
+    // polimórfica. Si no se hace, la galería del proyecto sale vacía cuando
+    // se entra a la vista de detalle (lee de `fotos`, no de `proyectos.foto_url`).
+    if (fotoUrl) {
+      await sb.from('fotos').insert({
+        entidad_tipo: 'proyecto',
+        entidad_id: newProj.id,
+        url: fotoUrl,
+        orden: 0
+      });
+    }
+
     // Setear nav y cache temporal para que _importarProductoCore funcione
     nav = { ...nav, view: 'project', projectId: newProj.id };
     proyectos.push({ ...newProj, items: [] });
@@ -2479,6 +2491,17 @@ async function _crearItemDesdeBuffer(item, proj, projDesc, urgencia, projFoto, f
   }
   const { data: newItem, error: itemErr } = await sb.from('items').insert(itemPayload).select().single();
   if (itemErr) { console.error('Error creando item:', itemErr); return { error: itemErr.message }; }
+
+  // v65: si el item vino con foto, insertarla en la tabla `fotos` polimórfica.
+  // Sin esto, la galería del item sale vacía al entrar a su vista de detalle.
+  if (item.foto_url) {
+    await sb.from('fotos').insert({
+      entidad_tipo: 'item',
+      entidad_id: newItem.id,
+      url: item.foto_url,
+      orden: 0
+    });
+  }
 
   let pmpToActMap = {};
 
@@ -2885,7 +2908,12 @@ async function saveProjectMeta() {
   if (!proj) return;
   const descripcion = document.getElementById('f-desc').value.trim();
   const urgencia = document.getElementById('f-urg').value;
-  const foto = document.getElementById('photo-url-proj').value.trim() || null;
+  // v65: la foto del proyecto ahora vive en la galería múltiple (tabla `fotos`).
+  // La sincronización con `proyectos.foto_url` ya la hace `_sincronizarFotoUrl`
+  // automáticamente al agregar/eliminar/reordenar fotos. Acá solo leemos la foto
+  // principal actual para propagarla al tablero (actividades_tablero.foto_proyecto_url).
+  const fotosProj = getFotos('proyecto', proj.id);
+  const foto = (fotosProj.length > 0 ? fotosProj[0].url : null);
   const fechaIngreso = document.getElementById('f-fechaing').value || null;
   const fechaEntrega = document.getElementById('f-fechaentrega').value || null;
   const clienteFinal = document.getElementById('f-clifinal').value.trim() || null;
