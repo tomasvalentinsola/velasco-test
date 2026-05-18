@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v67</title>
+<title>Velasco App 2.0 — Proyectos v68</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -9392,9 +9392,74 @@ function pmGuardarCompatibilidad() {
   toast('Compatibilidad agregada');
 }
 
+// v68: Crea las relaciones N:M necesarias (conjuntos_equipos, subconjuntos_conjuntos)
+// para las ubicaciones de un producto, si no existen. Idempotente (usa upsert
+// por compatibilidad o detecta duplicado y lo ignora).
+// `ubicaciones` es un array con {cliente_id, sector_id, equipo_id, conjunto_id, subconjunto_id}.
+async function _sincronizarRelacionesNM(ubicaciones) {
+  if (!Array.isArray(ubicaciones) || ubicaciones.length === 0) return;
+  // 1. conjuntos_equipos: para cada (equipo_id, conjunto_id) que aparezca en ubicaciones
+  const pairsCE = new Map();  // key "eq_id:con_id" => {equipo_id, conjunto_id}
+  ubicaciones.forEach(u => {
+    if (u.equipo_id && u.conjunto_id) {
+      const key = u.equipo_id + ':' + u.conjunto_id;
+      pairsCE.set(key, { equipo_id: u.equipo_id, conjunto_id: u.conjunto_id });
+    }
+  });
+  for (const par of pairsCE.values()) {
+    const yaExiste = conjuntosEquipos.find(ce => ce.equipo_id === par.equipo_id && ce.conjunto_id === par.conjunto_id);
+    if (yaExiste) continue;
+    const { error } = await sb.from('conjuntos_equipos').insert(par);
+    if (error && error.code !== '23505') {
+      console.warn('No pude crear conjuntos_equipos:', par, error);
+    }
+  }
+  // 2. subconjuntos_conjuntos: para cada (conjunto_id, subconjunto_id)
+  const pairsSC = new Map();
+  ubicaciones.forEach(u => {
+    if (u.conjunto_id && u.subconjunto_id) {
+      const key = u.conjunto_id + ':' + u.subconjunto_id;
+      pairsSC.set(key, { conjunto_id: u.conjunto_id, subconjunto_id: u.subconjunto_id });
+    }
+  });
+  for (const par of pairsSC.values()) {
+    const yaExiste = subconjuntosConjuntos.find(sc => sc.conjunto_id === par.conjunto_id && sc.subconjunto_id === par.subconjunto_id);
+    if (yaExiste) continue;
+    const { error } = await sb.from('subconjuntos_conjuntos').insert(par);
+    if (error && error.code !== '23505') {
+      console.warn('No pude crear subconjuntos_conjuntos:', par, error);
+    }
+  }
+}
+
 async function saveProductoMatriz(productoId) {
   const descripcion = document.getElementById('pm-desc').value.trim();
   if (!descripcion) { toast('La descripción es obligatoria', true); return; }
+  // v68 Fix A: si el form inline de compatibilidad tiene cliente cargado pero
+  // no se apretó "Agregar", lo agregamos automáticamente para que no se pierda.
+  if (pmCompatState && pmCompatState.clienteId) {
+    await _ensureDefaultsCliente(pmCompatState.clienteId);
+    // Verificar duplicado antes de pushear
+    const dup = pmFormState.ubicacionesPendientes.find(u =>
+      u.cliente_id === pmCompatState.clienteId &&
+      u.sector_id === pmCompatState.sectorId &&
+      u.equipo_id === pmCompatState.equipoId &&
+      u.conjunto_id === pmCompatState.conjuntoId &&
+      u.subconjunto_id === pmCompatState.subconjuntoId
+    );
+    if (!dup) {
+      pmFormState.ubicacionesPendientes.push({
+        cliente_id: pmCompatState.clienteId,
+        sector_id: pmCompatState.sectorId,
+        equipo_id: pmCompatState.equipoId,
+        conjunto_id: pmCompatState.conjuntoId,
+        subconjunto_id: pmCompatState.subconjuntoId,
+        cantidad: 1
+      });
+    }
+    // Limpiar el form inline
+    _pmCompatInlineReset();
+  }
   const codigo_cliente = document.getElementById('pm-cod-cli').value.trim() || null;
   const matVal = document.getElementById('pm-material-value').value;
   const material_id = matVal ? parseInt(matVal) : null;
@@ -9446,6 +9511,9 @@ async function saveProductoMatriz(productoId) {
     }));
     const { error: errU } = await sb.from('productos_matriz_ubicaciones').insert(inserts);
     if (errU) { toast('Producto guardado pero error en ubicaciones: ' + errU.message, true); console.error(errU); }
+    // v68: garantizar las relaciones N:M (conjuntos_equipos, subconjuntos_conjuntos)
+    // que necesita la vista anidada para renderizar las jerarquías.
+    await _sincronizarRelacionesNM(pmFormState.ubicacionesPendientes);
   }
 
   document.getElementById('prod-matriz-modal').remove();
