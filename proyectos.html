@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v66</title>
+<title>Velasco App 2.0 — Proyectos v67</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -7404,8 +7404,8 @@ function _pmcSyncStateAfterLoad(pickerId, newId) {
   else if (pickerId === 'pmc-equipo') pmCompatState.equipoId = newId;
   else if (pickerId === 'pmc-conjunto') pmCompatState.conjuntoId = newId;
   else if (pickerId === 'pmc-subconjunto') pmCompatState.subconjuntoId = newId;
-  // Re-renderizar el modal compat para que se reflejen los cambios en pickers de niveles inferiores
-  if (pickerId && pickerId.startsWith('pmc-')) _pmRenderCompatModal();
+  // v67: refrescar el form inline de compat dentro del modal de producto
+  if (pickerId && pickerId.startsWith('pmc-')) _pmCompatInlineRefresh();
 }
 
 // MATERIALES
@@ -7466,7 +7466,18 @@ async function showCargarSector(initialName, clienteId, callbackPickerId) {
     const dup = sectores.find(x => x.cliente_id === clienteId && (x.nombre || '').toLowerCase() === nombre.toLowerCase());
     if (dup) { toast('Ya existe ese sector para este cliente', true); return; }
     const { data, error } = await sb.from('sectores').insert({ nombre, cliente_id: clienteId }).select().single();
-    if (error) { toast('Error: ' + error.message, true); return; }
+    if (error) {
+      // 23505 = unique_violation. Pasa si la app tiene caché vieja y otro
+      // usuario (o el script de migración) ya creó el sector con ese nombre.
+      if (error.code === '23505' || (error.message || '').toLowerCase().includes('duplicate')) {
+        toast('Ya existía ese sector en la DB. Refrescando la página.', true);
+        await loadAll();
+        document.getElementById('mini-modal').remove();
+        return;
+      }
+      toast('Error: ' + error.message, true);
+      return;
+    }
     document.getElementById('mini-modal').remove();
     await loadAll();
     toast('Sector cargado');
@@ -8862,6 +8873,8 @@ function showProductoMatrizForm(productoId) {
     ubicacionesPendientes: ubicaciones
   };
 
+  // v67: resetear el state del form inline de compatibilidad al abrir
+  _pmCompatInlineReset();
   _renderPmModal(prod);
 }
 
@@ -8896,15 +8909,14 @@ function _renderPmModal(prod) {
   };
 
   // ----- 1ro: EQUIPOS COMPATIBLES (UBICACIONES) -----
-  // El usuario carga primero la jerarquia para que despues los datos del
-  // producto queden ya "ubicados".
+  // v67: el form de "asignar compatibilidad" está inline acá adentro, sin modal aparte.
   h += '<div style="margin-bottom:14px">';
-  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
-  h += '<div style="font-size:12px;font-weight:600;color:#5F5E5A">Equipos compatibles</div>';
-  h += '<button class="b b-p" onclick="pmAsignarCompatibilidad()" style="padding:4px 10px;font-size:11px">+ Asignar compatibilidad</button>';
-  h += '</div>';
+  h += '<div style="font-size:12px;font-weight:600;color:#5F5E5A;margin-bottom:8px">Equipos compatibles</div>';
+  h += '<div class="ef-help" style="margin-bottom:8px">Definí en qué cliente/sector/equipo/conjunto/subconjunto se usa este producto. Si se usa en varios equipos, asigná cada ruta. Sin ninguna, queda como producto genérico (sin ubicación específica).</div>';
+  // Form inline (cliente obligatorio, resto opcional). Se agrega como chip al apretar "Agregar".
+  h += '<div id="pm-compat-inline" style="background:#F5F3EC;border:1px solid #C8C6BE;border-radius:6px;padding:10px;margin-bottom:10px">' + _pmCompatInlineFormHtml() + '</div>';
+  // Lista de chips ya cargados
   h += '<div id="pm-ubicaciones-list">' + _pmUbicacionesListHtml() + '</div>';
-  h += '<div class="ef-help" style="margin-top:6px">Definí en qué cliente/sector/equipo/conjunto/subconjunto se usa este producto. Si se usa en varios equipos, asigná cada ruta. Sin ninguna, queda como producto genérico (sin ubicación específica).</div>';
   h += '</div>';
 
   // ----- 2do: DATOS DEL PRODUCTO -----
@@ -9151,25 +9163,29 @@ function pmCargarMaterial(initialName) {
 
 let pmCompatState = null;  // {clienteId, sectorId, equipoId, conjuntoId, subconjuntoId}
 
-function pmAsignarCompatibilidad() {
+// v67: el form de asignar compatibilidad es ahora INLINE dentro del modal de
+// producto matriz, no un modal aparte. La función pmAsignarCompatibilidad
+// quedó como helper interno que solo resetea el state. _pmRenderCompatModal
+// (modal viejo) se reemplaza por _pmCompatInlineFormHtml (genera el HTML
+// del form inline) y _pmCompatInlineRefresh (re-renderiza el form dentro
+// del modal del producto cuando cambian los pickers).
+
+// Resetea el state del form inline. Lo llamamos al abrir el modal de
+// producto matriz para arrancar limpio, o tras agregar un chip.
+function _pmCompatInlineReset() {
   pmCompatState = { clienteId: null, sectorId: null, equipoId: null, conjuntoId: null, subconjuntoId: null };
-  _pmRenderCompatModal();
 }
 
-function _pmRenderCompatModal() {
-  // Si ya hay, lo borramos
-  const existing = document.getElementById('pm-compat-modal');
-  if (existing) existing.remove();
-  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'pm-compat-modal';
-  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '520px';
-  m.style.zIndex = '1100';  // por encima del modal del producto
-  let h = '<div class="md-t">Asignar compatibilidad</div>';
-  h += '<div style="font-size:11px;color:#5F5E5A;margin-bottom:10px">Definí la ruta donde el producto se utiliza. Podés dejar niveles en blanco si no aplican.</div>';
-
-  // Cliente picker
+// Genera el HTML del form inline de compatibilidad. Se llama al renderizar
+// el modal de producto matriz y cada vez que cambian los pickers (cascada).
+function _pmCompatInlineFormHtml() {
+  if (!pmCompatState) _pmCompatInlineReset();
+  let h = '';
+  // Cliente (obligatorio)
   const cliV = pmCompatState.clienteId;
   const cliLbl = cliV ? clN(cliV) : '';
-  h += '<div class="ef"><div class="ef-l">Cliente <span style="color:#A32D2D">*</span></div>';
+  h += '<div class="row" style="margin-bottom:6px">';
+  h += '<div class="ef" style="flex:1;margin-bottom:0"><div class="ef-l">Cliente <span style="color:#A32D2D">*</span></div>';
   h += renderPicker({
     id: 'pmc-cliente',
     value: cliV || '',
@@ -9179,11 +9195,10 @@ function _pmRenderCompatModal() {
     onSelectFnName: 'pmcOnCliente'
   });
   h += '</div>';
-
-  // Sector picker (habilitado si hay cliente)
+  // Sector
   const secV = pmCompatState.sectorId;
   const secLbl = secV ? (sectores.find(x => x.id === secV) || {}).nombre || '' : '';
-  h += '<div class="ef"><div class="ef-l">Sector</div>';
+  h += '<div class="ef" style="flex:1;margin-bottom:0"><div class="ef-l">Sector</div>';
   h += renderPicker({
     id: 'pmc-sector',
     value: secV || '',
@@ -9196,11 +9211,12 @@ function _pmRenderCompatModal() {
     onCreateFnName: 'pmcCargarSector'
   });
   h += '</div>';
-
-  // Equipo picker
+  h += '</div>';
+  // Equipo + Conjunto en una fila
   const eqV = pmCompatState.equipoId;
   const eqLbl = eqV ? (equipos.find(x => x.id === eqV) || {}).nombre || '' : '';
-  h += '<div class="ef"><div class="ef-l">Equipo</div>';
+  h += '<div class="row" style="margin-bottom:6px">';
+  h += '<div class="ef" style="flex:1;margin-bottom:0"><div class="ef-l">Equipo</div>';
   h += renderPicker({
     id: 'pmc-equipo',
     value: eqV || '',
@@ -9213,31 +9229,28 @@ function _pmRenderCompatModal() {
     onCreateFnName: 'pmcCargarEquipo'
   });
   h += '</div>';
-
-  // Conjunto picker (cliente_id para conjunto, no equipo_id - los conjuntos son N:M con equipo)
+  // Conjunto
   const conV = pmCompatState.conjuntoId;
   const conLbl = conV ? (conjuntos.find(x => x.id === conV) || {}).nombre || '' : '';
-  h += '<div class="ef"><div class="ef-l">Conjunto</div>';
+  h += '<div class="ef" style="flex:1;margin-bottom:0"><div class="ef-l">Conjunto</div>';
   h += renderPicker({
     id: 'pmc-conjunto',
     value: conV || '',
     valueLabel: conLbl,
     placeholder: eqV ? 'Buscar conjunto o cargar nuevo...' : 'Primero elegí equipo',
     disabled: !eqV,
-    // Mostrar conjuntos del cliente que ya estan ligados al equipo (via conjuntos_equipos),
-    // o todos los del cliente si no estan ligados aun. En B1.6.a no manejamos ligadura,
-    // mostramos todos los del cliente.
     options: eqV && cliV ? conjuntosParaCliente(cliV).map(c => ({ id: c.id, label: c.nombre })) : [],
     onSelectFnName: 'pmcOnConjunto',
     onCreateLabel: eqV ? '+ Cargar nuevo conjunto' : null,
     onCreateFnName: 'pmcCargarConjunto'
   });
   h += '</div>';
-
-  // Subconjunto picker - solo habilitado si conjunto esta seleccionado (regla del usuario)
+  h += '</div>';
+  // Subconjunto + botón Agregar en una fila
   const subV = pmCompatState.subconjuntoId;
   const subLbl = subV ? (subconjuntos.find(x => x.id === subV) || {}).nombre || '' : '';
-  h += '<div class="ef"><div class="ef-l">Subconjunto</div>';
+  h += '<div class="row" style="margin-bottom:0;align-items:flex-end">';
+  h += '<div class="ef" style="flex:1;margin-bottom:0"><div class="ef-l">Subconjunto</div>';
   h += renderPicker({
     id: 'pmc-subconjunto',
     value: subV || '',
@@ -9250,45 +9263,72 @@ function _pmRenderCompatModal() {
     onCreateFnName: 'pmcCargarSubconjunto'
   });
   h += '</div>';
-
-  h += '<div class="actions">';
-  h += '<button class="b" onclick="document.getElementById(\'pm-compat-modal\').remove()">Cancelar</button>';
-  h += '<button class="b b-p" onclick="pmGuardarCompatibilidad()">Guardar compatibilidad</button>';
+  h += '<div style="flex:0 0 auto;margin-left:8px">';
+  h += '<button class="b b-p" onclick="pmCompatInlineAgregar()" ' + (cliV ? '' : 'disabled') + ' style="padding:6px 14px">Agregar</button>';
   h += '</div>';
-  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
+  h += '</div>';
+  return h;
 }
 
-// Handlers de pickers en cascada
+// Re-renderiza el form inline manteniendo el resto del modal.
+function _pmCompatInlineRefresh() {
+  const cont = document.getElementById('pm-compat-inline');
+  if (cont) cont.innerHTML = _pmCompatInlineFormHtml();
+}
+
+// Agrega la ubicación actual al buffer (pmFormState.ubicacionesPendientes).
+// Igual que la antigua "Guardar compatibilidad" del modal aparte, pero
+// ahora simplemente recompone la lista de chips abajo.
+function pmCompatInlineAgregar() {
+  if (!pmCompatState || !pmCompatState.clienteId) {
+    toast('Cliente es obligatorio', true);
+    return;
+  }
+  // Asegurar defaults "General" y "Sin equipo específico" para este cliente
+  // (idempotente). Si no estaban, los crea.
+  _ensureDefaultsCliente(pmCompatState.clienteId).then(() => {
+    // Llamar a la lógica que ya existe para agregar al buffer
+    pmGuardarCompatibilidad();
+  });
+}
+
+// pmAsignarCompatibilidad y _pmRenderCompatModal quedan deprecados; se mantienen
+// como no-op para evitar errores si quedó alguna referencia.
+function pmAsignarCompatibilidad() { _pmCompatInlineReset(); _pmCompatInlineRefresh(); }
+function _pmRenderCompatModal() { /* deprecated en v67 */ }
+
+// Handlers de pickers en cascada (v67: refrescan el form inline, no el modal)
 function pmcOnCliente(opt) {
   pmCompatState.clienteId = opt.id;
-  // Reset niveles inferiores
   pmCompatState.sectorId = null;
   pmCompatState.equipoId = null;
   pmCompatState.conjuntoId = null;
   pmCompatState.subconjuntoId = null;
-  _pmRenderCompatModal();
+  // v67: al seleccionar cliente, asegurar que tenga sus defaults "General"
+  // y "Sin equipo específico" (idempotente). Después refrescar.
+  _ensureDefaultsCliente(opt.id).then(() => _pmCompatInlineRefresh());
 }
 function pmcOnSector(opt) {
   pmCompatState.sectorId = opt.id;
   pmCompatState.equipoId = null;
   pmCompatState.conjuntoId = null;
   pmCompatState.subconjuntoId = null;
-  _pmRenderCompatModal();
+  _pmCompatInlineRefresh();
 }
 function pmcOnEquipo(opt) {
   pmCompatState.equipoId = opt.id;
   pmCompatState.conjuntoId = null;
   pmCompatState.subconjuntoId = null;
-  _pmRenderCompatModal();
+  _pmCompatInlineRefresh();
 }
 function pmcOnConjunto(opt) {
   pmCompatState.conjuntoId = opt.id;
   pmCompatState.subconjuntoId = null;
-  _pmRenderCompatModal();
+  _pmCompatInlineRefresh();
 }
 function pmcOnSubconjunto(opt) {
   pmCompatState.subconjuntoId = opt.id;
-  _pmRenderCompatModal();
+  _pmCompatInlineRefresh();
 }
 
 // "+ Cargar" handlers en este modal
@@ -9319,12 +9359,12 @@ function pmcCargarSubconjunto(initial) { showCargarSubconjunto(initial, pmCompat
 // Refactorizo showCargar* para que devuelva la entrada nueva.
 
 function pmGuardarCompatibilidad() {
-  if (!pmCompatState.clienteId) {
+  if (!pmCompatState || !pmCompatState.clienteId) {
     toast('Cliente es obligatorio', true);
     return;
   }
   if (!pmFormState) return;
-  // Verificar que no este duplicada
+  // Verificar que no esté duplicada
   const dup = pmFormState.ubicacionesPendientes.find(u =>
     u.cliente_id === pmCompatState.clienteId &&
     u.sector_id === pmCompatState.sectorId &&
@@ -9344,11 +9384,12 @@ function pmGuardarCompatibilidad() {
     subconjunto_id: pmCompatState.subconjuntoId,
     cantidad: 1
   });
-  document.getElementById('pm-compat-modal').remove();
-  // Re-renderizar la lista de ubicaciones del modal padre
+  // v67: re-renderizar la lista de ubicaciones (chips) y resetear el form inline
   const list = document.getElementById('pm-ubicaciones-list');
   if (list) list.innerHTML = _pmUbicacionesListHtml();
-  toast('Compatibilidad asignada');
+  _pmCompatInlineReset();
+  _pmCompatInlineRefresh();
+  toast('Compatibilidad agregada');
 }
 
 async function saveProductoMatriz(productoId) {
@@ -9784,6 +9825,40 @@ function _refrescarComboContactoSiVisible(clienteId) {
   _llenarComboContactoProj(clienteId, combo.value);
 }
 
+// v67: Asegura que el cliente tenga creado "General" como sector y
+// "Sin equipo específico" como equipo dentro de ese sector. Idempotente:
+// si ya existen no los duplica. Se llama al crear cliente y al abrir el
+// form de compatibilidad por si faltan.
+async function _ensureDefaultsCliente(clienteId) {
+  if (!clienteId) return;
+  let sectorGeneral = sectores.find(s => s.cliente_id === clienteId && (s.nombre || '').toLowerCase() === 'general');
+  if (!sectorGeneral) {
+    const { data, error } = await sb.from('sectores').insert({ cliente_id: clienteId, nombre: 'General' }).select().single();
+    if (error) {
+      if (error.code === '23505') {
+        await loadAll();
+        sectorGeneral = sectores.find(s => s.cliente_id === clienteId && (s.nombre || '').toLowerCase() === 'general');
+      } else {
+        console.warn('No pude crear sector General:', error);
+        return;
+      }
+    } else {
+      sectorGeneral = data;
+      sectores.push(data);
+    }
+  }
+  if (!sectorGeneral) return;
+  const eqExiste = equipos.find(e => e.sector_id === sectorGeneral.id && (e.nombre || '').toLowerCase() === 'sin equipo específico');
+  if (!eqExiste) {
+    const { data, error } = await sb.from('equipos').insert({ sector_id: sectorGeneral.id, nombre: 'Sin equipo específico' }).select().single();
+    if (error && error.code !== '23505') {
+      console.warn('No pude crear equipo Sin equipo específico:', error);
+    } else if (data) {
+      equipos.push(data);
+    }
+  }
+}
+
 async function saveCliente(clienteId) {
   const nombre = document.getElementById('c-nombre').value.trim();
   const cuit = document.getElementById('c-cuit').value.trim();
@@ -9832,6 +9907,9 @@ async function saveCliente(clienteId) {
     const { data, error } = await sb.from('clientes').insert(payload).select().single();
     if (error) { toast('Error: ' + error.message, true); return; }
     savedId = data.id;
+    // v67: auto-crear "General" + "Sin equipo específico" para el cliente
+    // recién creado. Idempotente: si ya existen no los duplica.
+    await _ensureDefaultsCliente(savedId);
     toast('Cliente creado');
   }
   await loadAll();
