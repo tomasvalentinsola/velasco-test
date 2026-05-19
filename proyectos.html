@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v68</title>
+<title>Velasco App 2.0 — Proyectos v69</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -154,6 +154,26 @@ let clienteContactos = [];  // v62: contactos de cliente
 // v62: toggles "mostrar inactivos" por módulo (solo dentro del módulo Recursos).
 // Cada uno es una llave booleana que se setea desde la UI.
 let mostrarInactivos = { clientes: false, materiales: false, operarios: false, maquinas: false };
+
+// v69: Nombres "default" que el sistema crea automáticamente para mantener la
+// jerarquía completa. En la vista anidada de la matriz los nodos con estos
+// nombres se OMITEN visualmente (sus hijos suben al nivel del padre). En los
+// combos siguen apareciendo normalmente para que se puedan elegir al cargar.
+const DEFAULT_NAMES_OMITIBLES = {
+  equipo: 'sin equipo específico',
+  conjunto: 'sin conjunto específico',
+  subconjunto: 'sin subconjunto específico'
+  // Nota: 'Sector General' NO se omite (Tomi quiere agrupar por sector general).
+};
+function _esEquipoDefault(eq) {
+  return eq && (eq.nombre || '').toLowerCase().trim() === DEFAULT_NAMES_OMITIBLES.equipo;
+}
+function _esConjuntoDefault(con) {
+  return con && (con.nombre || '').toLowerCase().trim() === DEFAULT_NAMES_OMITIBLES.conjunto;
+}
+function _esSubconjuntoDefault(sub) {
+  return sub && (sub.nombre || '').toLowerCase().trim() === DEFAULT_NAMES_OMITIBLES.subconjunto;
+}
 let itemsUbicaciones = [];   // Entrega A: ubicaciones de items en proyectos
 let nav = { view: 'projects' };
 // Default filter for projects list: all states except closed/anulado/perdido
@@ -5483,17 +5503,24 @@ async function removeCorrelatividad(corrId) {
 }
 
 let predSearchTargetId = null;
+// v69: Set de ids seleccionados con checkbox para selección múltiple.
+let _predMultiSelected = new Set();
+
 function showAddPredecesorModal(sucesorId) {
   predSearchTargetId = sucesorId;
+  _predMultiSelected = new Set();
   const sucesor = actividades.find(a => a.id === sucesorId);
   if (!sucesor) return;
   const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'pred-modal';
   const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '600px';
   let h = '<div class="md-t">Agregar predecesor</div>';
-  h += '<div style="font-size:12px;color:#5F5E5A;margin-bottom:10px">Buscar el proceso predecesor por descripcion del item, proyecto, o tipo de proceso.</div>';
+  h += '<div style="font-size:12px;color:#5F5E5A;margin-bottom:10px">Buscá por descripción del item, proyecto, o tipo de proceso. Podés elegir uno solo (haciendo click en la fila) o varios usando los checkboxes.</div>';
   h += '<input type="text" class="ef-i" id="pred-search" placeholder="Buscar..." autocomplete="off" oninput="renderPredecesorList()" style="margin-bottom:10px">';
   h += '<div id="pred-list" style="max-height:380px;overflow-y:auto;border:1px solid #C8C6BE;border-radius:5px"></div>';
-  h += '<div class="actions"><button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button></div>';
+  h += '<div class="actions">';
+  h += '<button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button>';
+  h += '<button class="b b-p" id="pred-multi-btn" onclick="addPredecesoresSeleccionados()" disabled style="opacity:0.5">Elegir seleccionados (0)</button>';
+  h += '</div>';
   m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
   renderPredecesorList();
 }
@@ -5504,7 +5531,6 @@ function renderPredecesorList() {
   if (!sucesor) return;
   const search = document.getElementById('pred-search').value.trim().toLowerCase();
   const existingPredIds = new Set(correlatividades.filter(c => c.sucesor_id === sucesorId).map(c => c.predecesor_id));
-  // List of all activities except: itself, already-linked predecessors, and any that would create cycles (will check at insert)
   const candidates = actividades
     .filter(a => a.id !== sucesorId && !existingPredIds.has(a.id))
     .map(a => {
@@ -5526,12 +5552,72 @@ function renderPredecesorList() {
   }
   let h = '';
   candidates.slice(0, 60).forEach(x => {
-    h += '<div onclick="addPredecesor(' + x.a.id + ')" style="padding:8px 10px;border-bottom:1px solid #F5F3EC;cursor:pointer;font-size:12px" onmouseenter="this.style.background=\'#E6F1FB\'" onmouseleave="this.style.background=\'\'">';
+    const checked = _predMultiSelected.has(x.a.id);
+    // v69: el checkbox NO dispara la elección directa, solo marca/desmarca.
+    // Click en el resto de la fila = elegir uno solo (comportamiento original).
+    h += '<div style="display:flex;align-items:center;padding:8px 10px;border-bottom:1px solid #F5F3EC;font-size:12px">';
+    h += '<input type="checkbox" id="predcb-' + x.a.id + '"' + (checked ? ' checked' : '') + ' onclick="event.stopPropagation();togglePredMulti(' + x.a.id + ')" style="margin-right:8px;cursor:pointer">';
+    h += '<div onclick="addPredecesor(' + x.a.id + ')" style="flex:1;cursor:pointer" onmouseenter="this.style.background=\'#E6F1FB\'" onmouseleave="this.style.background=\'\'">';
     h += '<b>' + escapeHtml(x.procLabel) + '</b> — ' + escapeHtml(x.itLabel);
     h += '<div style="font-size:10px;color:#5F5E5A">Proyecto: ' + escapeHtml(x.projLabel) + ' · Pedido: ' + escapeHtml(x.pedLabel) + '</div>';
     h += '</div>';
+    h += '</div>';
   });
   list.innerHTML = h;
+}
+
+function togglePredMulti(id) {
+  if (_predMultiSelected.has(id)) _predMultiSelected.delete(id);
+  else _predMultiSelected.add(id);
+  // Actualizar contador del botón sin re-renderizar toda la lista
+  const btn = document.getElementById('pred-multi-btn');
+  if (btn) {
+    btn.textContent = 'Elegir seleccionados (' + _predMultiSelected.size + ')';
+    btn.disabled = _predMultiSelected.size === 0;
+    btn.style.opacity = _predMultiSelected.size === 0 ? '0.5' : '1';
+  }
+}
+
+// v69: agrega TODOS los predecesores seleccionados en una sola tanda.
+// Reporta cuántos se agregaron y cuántos fallaron (ej. por ciclo).
+async function addPredecesoresSeleccionados() {
+  const sucesorId = predSearchTargetId;
+  if (!sucesorId) return;
+  if (_predMultiSelected.size === 0) { toast('No hay nada seleccionado', true); return; }
+  const ids = Array.from(_predMultiSelected);
+  let agregados = 0;
+  const fallidos = [];
+  for (const predId of ids) {
+    // Chequeo de ciclo individualmente (porque cada inserción puede afectar al siguiente)
+    const ancestors = new Set();
+    function gatherAncestors(id) {
+      const direct = correlatividades.filter(c => c.sucesor_id === id).map(c => c.predecesor_id);
+      direct.forEach(p => { if (!ancestors.has(p)) { ancestors.add(p); gatherAncestors(p); } });
+    }
+    gatherAncestors(predId);
+    if (ancestors.has(sucesorId)) {
+      const a = actividades.find(x => x.id === predId);
+      fallidos.push((a && a.proceso) || ('id ' + predId));
+      continue;
+    }
+    const { error } = await sb.from('correlatividades').insert({ predecesor_id: predId, sucesor_id: sucesorId });
+    if (error) {
+      const a = actividades.find(x => x.id === predId);
+      fallidos.push((a && a.proceso) || ('id ' + predId));
+      continue;
+    }
+    // Reflejar en cache local para que el chequeo de ciclos siguiente lo vea
+    correlatividades.push({ predecesor_id: predId, sucesor_id: sucesorId });
+    agregados++;
+  }
+  await loadAll();
+  const predModal = document.getElementById('pred-modal');
+  if (predModal) predModal.remove();
+  let msg = agregados + ' predecesor(es) agregado(s)';
+  if (fallidos.length) msg += '. No pudieron agregarse ' + fallidos.length + ' (ciclo o error): ' + fallidos.join(', ');
+  toast(msg, fallidos.length > 0);
+  refreshPredsInModal();
+  render();
 }
 
 async function addPredecesor(predId) {
@@ -6036,6 +6122,8 @@ function onProcesoChange() {
   }
   // Repoblar chips de maquinas suplentes con la lista filtrada (sin nada seleccionado)
   buildChips('chips-maq', filtradas, [], 'maq');
+  // v69: aplicar auto-completar de operarios según el proceso seleccionado.
+  aplicarAutocompletarPorProceso(procNombre);
 }
 // Alias retrocompatible
 function toggleProcCustom() { onProcesoChange(); }
@@ -6045,6 +6133,75 @@ function toggleMaqOtra() {
   if (!input) return;
   if (sel.value === 'OTRA') { input.style.display = 'block'; input.focus(); }
   else { input.style.display = 'none'; input.value = ''; }
+  // v69: aplicar auto-completar por máquina seleccionada.
+  aplicarAutocompletarPorMaquina(sel.value);
+}
+
+// v69: Reglas de auto-completar operarios. Hardcoded por ahora.
+// Tomi pidió: "prefiero que lo pise y, en todo caso, yo tener que volver a
+// poner lo que quiero". Así que SIEMPRE sobrescribe cuando aplica una regla.
+// Si el operario buscado no existe en la DB, simplemente no se completa esa
+// parte (no rompe).
+function _opIdPorNombre(busqueda) {
+  if (!busqueda) return null;
+  const q = busqueda.toLowerCase();
+  // Soporta búsqueda por nombre completo o por iniciales/parcial
+  const found = operarios.find(o => (o.nombre || '').toLowerCase().includes(q));
+  return found ? found.id : null;
+}
+
+function aplicarAutocompletarPorProceso(procNombre) {
+  if (!procNombre) return;
+  const p = procNombre.toLowerCase().trim();
+  let opIdeal = null;
+  let suplente = null;
+  if (p === 'control') {
+    opIdeal = _opIdPorNombre('leonardo');
+    suplente = _opIdPorNombre('tomas c');
+  } else if (p === 'cierre/despacho' || p === 'cierre' || p === 'despacho') {
+    opIdeal = _opIdPorNombre('tomás s') || _opIdPorNombre('tomas s');
+    suplente = _opIdPorNombre('daniel');  // Daniel Blanco — si no existe, queda null
+  } else {
+    return;  // ninguna regla aplica
+  }
+  _setOperarioIdeal(opIdeal);
+  _setSuplenteUnico(suplente);
+}
+
+function aplicarAutocompletarPorMaquina(maqIdRaw) {
+  if (!maqIdRaw || maqIdRaw === 'OTRA' || maqIdRaw === 'NINGUNA') return;
+  const maqId = parseInt(maqIdRaw);
+  const maq = maquinas.find(m => m.id === maqId);
+  if (!maq) return;
+  const nombre = (maq.nombre || '').toLowerCase().trim();
+  let opIdeal = null;
+  if (nombre === 'st-30') {
+    opIdeal = _opIdPorNombre('roman');
+  } else if (nombre === 'tc alfredo' || nombre === 'tc-alfredo' || nombre.startsWith('tc alfredo') || nombre.startsWith('tc-alfredo')) {
+    opIdeal = _opIdPorNombre('alfredo');
+  } else {
+    return;
+  }
+  _setOperarioIdeal(opIdeal);
+}
+
+function _setOperarioIdeal(operarioId) {
+  const sel = document.getElementById('p-op-ideal');
+  if (!sel) return;
+  if (operarioId) {
+    sel.value = operarioId;
+  } else {
+    sel.value = '';
+  }
+}
+
+// Pone UN único suplente como chip seleccionado (descarta los anteriores).
+function _setSuplenteUnico(operarioId) {
+  if (operarioId) {
+    buildChips('chips-op', operarios, [operarioId], 'op');
+  } else {
+    buildChips('chips-op', operarios, [], 'op');
+  }
 }
 
 // Chip multi-select state for machines/operators "suplentes"
@@ -8521,7 +8678,7 @@ function _matrizCountProdsDelSubconjunto(subId) {
 //   color: color del titulo (HEX)
 //   indent: paddingLeft del bloque expandido (px)
 //   childrenHtml: callback que devuelve el HTML interior cuando esta expandido
-function _matrizRenderNode(key, icon, title, meta, color, indent, childrenHtml, iconSize) {
+function _matrizRenderNode(key, icon, title, meta, color, indent, childrenHtml, iconSize, addBtnFn) {
   const expanded = matrizExpanded.has(key);
   let h = '<div style="background:#fff;border:1px solid #C8C6BE;border-radius:6px;margin-bottom:6px;overflow:hidden">';
   h += '<div style="display:flex;align-items:center;padding:8px 12px;gap:8px;cursor:pointer" onclick="matrizToggleExpand(\'' + key + '\')">';
@@ -8532,6 +8689,11 @@ function _matrizRenderNode(key, icon, title, meta, color, indent, childrenHtml, 
   h += '<div style="font-weight:600;color:' + color + ';font-size:13px">' + title + '</div>';
   if (meta) h += '<div style="font-size:11px;color:#888;margin-top:1px">' + meta + '</div>';
   h += '</div>';
+  // v69: botón "+" para cargar producto pre-rellenado con la ubicación de este nodo.
+  // El addBtnFn es un string que ejecuta el handler (con event.stopPropagation).
+  if (addBtnFn) {
+    h += '<button class="b b-icon" title="Nuevo producto en esta ubicación" onclick="event.stopPropagation();' + addBtnFn + '" style="flex:0 0 auto;font-size:14px;font-weight:600;padding:2px 8px;color:#0C447C">+</button>';
+  }
   h += '</div>';
   if (expanded) {
     h += '<div style="border-top:1px solid #E8E6DF;background:#FAF9F5;padding:8px 8px 8px ' + indent + 'px">';
@@ -8544,39 +8706,45 @@ function _matrizRenderNode(key, icon, title, meta, color, indent, childrenHtml, 
 
 // Card de un producto (forma reducida, para anidar en jerarquia)
 // Cuando se expande, muestra los procesos.
-function _matrizRenderProductoCardNested(p) {
+// v69: Acepta opcionalmente `contextoUbic` con {conjuntoId, subconjuntoId, equipoId}
+// para mostrar el chip con la cantidad del producto en ese contenedor. Si no se
+// pasa contexto, no muestra chip.
+function _matrizRenderProductoCardNested(p, contextoUbic) {
   const procs = productosMatrizProcesos.filter(pr => pr.producto_id === p.id)
     .sort((a, b) => (a.orden || 999999) - (b.orden || 999999));
   const expanded = matrizExpanded.has('prod:' + p.id);
-  // Toda la card es clickeable (abre la vista del producto), igual a la
-  // logica de cards de proyectos/items. La flecha tiene su propio handler
-  // con stopPropagation para no disparar la navegacion.
-  // En Entrega A "abrir la vista del producto" = mostrar el form actual de
-  // edicion del producto matriz. En Entrega B se reemplaza por una vista
-  // completa estilo item.
+  // v69: calcular cantidad en este contenedor (si aplica). El chip aparece solo
+  // si hay contenedor Y cantidad > 0. Si es producto suelto del cliente o
+  // directo del sector, NO mostramos chip.
+  let cantidadChip = '';
+  if (contextoUbic) {
+    const ubic = productosMatrizUbicaciones.find(u =>
+      u.producto_id === p.id &&
+      (contextoUbic.subconjuntoId ? u.subconjunto_id === contextoUbic.subconjuntoId : true) &&
+      (contextoUbic.conjuntoId && !contextoUbic.subconjuntoId ? u.conjunto_id === contextoUbic.conjuntoId && !u.subconjunto_id : true) &&
+      (contextoUbic.equipoId && !contextoUbic.conjuntoId && !contextoUbic.subconjuntoId ? u.equipo_id === contextoUbic.equipoId && !u.conjunto_id : true)
+    );
+    if (ubic && ubic.cantidad && ubic.cantidad > 0) {
+      cantidadChip = ' <span style="display:inline-block;background:#0C447C;color:#fff;font-size:9px;font-weight:600;padding:1px 6px;border-radius:8px;margin-left:4px;vertical-align:middle">×' + ubic.cantidad + '</span>';
+    }
+  }
   let h = '<div style="background:#fff;border:1px solid #C8C6BE;border-radius:5px;margin-bottom:5px;overflow:hidden">';
   h += '<div style="display:flex;align-items:center;padding:6px 10px;gap:8px;cursor:pointer" onclick="navigate({view:\'productoMatriz\',productoId:' + p.id + '})">';
-  // Flecha (a la izquierda) con stopPropagation para no abrir la vista
   h += '<button class="b" onclick="event.stopPropagation();matrizToggleExpand(\'prod:' + p.id + '\')" style="background:transparent;border:none;padding:2px;font-size:13px;color:#5F5E5A;cursor:pointer;flex:0 0 auto">' + (expanded ? '▼' : '▶') + '</button>';
-  // Foto del producto (si tiene); si no, ícono 🔧
   if (p.foto_url) {
     h += '<img src="' + escapeHtml(p.foto_url) + '" style="width:32px;height:32px;object-fit:cover;border-radius:3px;flex:0 0 auto">';
   } else {
     h += '<div style="width:32px;height:32px;background:#E8E6DF;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:14px;flex:0 0 auto">🔧</div>';
   }
-  // Body
   h += '<div style="flex:1;min-width:0">';
   const validacion = validarProductoMatriz(p.id);
   const warnIcon = validacion.ok ? '' : _warningIconHtml('Producto incompleto o desactualizado:\n' + validacion.problemas.join('\n'));
-  h += '<div style="font-weight:600;font-size:12px">' + escapeHtml(p.descripcion || '(sin descripción)') + warnIcon + '</div>';
+  h += '<div style="font-weight:600;font-size:12px">' + escapeHtml(p.descripcion || '(sin descripción)') + cantidadChip + warnIcon + '</div>';
   const matLbl = p.material_id ? ((materiales.find(m => m.id === p.material_id) || {}).nombre || '') : '';
   const meta = [p.codigo_cliente, matLbl, procs.length + ' proceso(s)'].filter(Boolean).join(' · ');
   if (meta) h += '<div style="color:#888;font-size:10px;margin-top:1px">' + escapeHtml(meta) + '</div>';
   h += '</div>';
   h += '</div>';
-  // Procesos cuando expandido. Solo informativo: sin "+ Agregar", sin
-  // "Eliminar". El boton "Editar" del proceso lleva a la vista del producto
-  // y abre el modal del proceso encima (hace ambas cosas).
   if (expanded) {
     h += '<div style="border-top:1px solid #E8E6DF;background:#FAF9F5;padding:8px 12px">';
     h += '<div style="font-size:10px;font-weight:600;color:#5F5E5A;margin-bottom:4px">PROCESOS</div>';
@@ -8592,8 +8760,6 @@ function _matrizRenderProductoCardNested(p) {
         const op = pr.operario_ideal_id ? opN(pr.operario_ideal_id) : '';
         const procMeta = [dur, mq, op].filter(Boolean).join(' · ');
         if (procMeta) h += '<span style="color:#888;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escapeHtml(procMeta) + '</span>';
-        // "Editar" lleva a la vista del producto Y abre el modal del proceso
-        // encima. matrizEditarProcesoDesdeAnidado se encarga de ambas cosas.
         h += '<button class="b b-icon" onclick="event.stopPropagation();matrizEditarProcesoDesdeAnidado(' + p.id + ',' + pr.id + ')" style="font-size:10px">Editar</button>';
         h += '</div>';
       });
@@ -8670,16 +8836,13 @@ function _matrizRenderClienteNode(cli) {
     '#0C447C',
     20,
     () => {
-      // Hijos del cliente: sectores + productos directos del cliente (sin sector)
       let inner = '';
       const secs = _matrizSectoresDelCliente(cli.id);
-      // Sectores
       secs.forEach(sec => {
         const cnt2 = _matrizCountProdsDelSector(sec.id);
-        if (cnt2 === 0) return;  // skip sector sin productos que pasen filtros
+        if (cnt2 === 0) return;
         inner += _matrizRenderSectorNode(sec, cli.id);
       });
-      // Productos directos del cliente (ubicacion termina en cliente)
       const directos = _matrizProductosEnNivel({
         clienteId: cli.id, sectorId: null, equipoId: null, conjuntoId: null, subconjuntoId: null
       });
@@ -8688,7 +8851,9 @@ function _matrizRenderClienteNode(cli) {
       });
       if (!inner) inner = '<div style="font-size:11px;color:#888;font-style:italic;padding:4px 0">Sin sectores ni productos directos.</div>';
       return inner;
-    }
+    },
+    null,
+    'pmNuevoConUbicacion({clienteId:' + cli.id + '})'
   );
 }
 
@@ -8708,9 +8873,15 @@ function _matrizRenderSectorNode(sec, cliId) {
       eqs.forEach(eq => {
         const cnt2 = _matrizCountProdsDelEquipo(eq.id);
         if (cnt2 === 0) return;
-        inner += _matrizRenderEquipoNode(eq, cliId);
+        // v69: si el equipo es el "Sin equipo específico" default, promovemos sus
+        // hijos directamente al sector (no renderizamos el nodo del equipo).
+        if (_esEquipoDefault(eq)) {
+          inner += _matrizRenderInnerEquipo(eq, cliId);
+        } else {
+          inner += _matrizRenderEquipoNode(eq, cliId);
+        }
       });
-      // Productos directos del sector (ubicacion termina en sector, sin equipo)
+      // Productos directos del sector (ubicación termina en sector, sin equipo)
       const directos = _matrizProductosEnNivel({
         clienteId: cliId, sectorId: sec.id, equipoId: null, conjuntoId: null, subconjuntoId: null
       });
@@ -8719,8 +8890,35 @@ function _matrizRenderSectorNode(sec, cliId) {
       });
       if (!inner) inner = '<div style="font-size:11px;color:#888;font-style:italic;padding:4px 0">Sin equipos ni productos directos.</div>';
       return inner;
-    }
+    },
+    null,
+    'pmNuevoConUbicacion({clienteId:' + cliId + ',sectorId:' + sec.id + '})'
   );
+}
+
+// v69: extraído. Renderiza el CONTENIDO de un equipo (conjuntos + productos
+// directos). Se reutiliza desde el render normal del equipo y desde la
+// promoción de hijos cuando el equipo es default.
+function _matrizRenderInnerEquipo(eq, cliId) {
+  let inner = '';
+  const cons = _matrizConjuntosDelEquipo(eq.id, cliId);
+  cons.forEach(con => {
+    const cnt2 = _matrizCountProdsDelConjunto(con.id);
+    if (cnt2 === 0) return;
+    // v69: si el conjunto es default, promover sus hijos al nivel del equipo.
+    if (_esConjuntoDefault(con)) {
+      inner += _matrizRenderInnerConjunto(con, cliId);
+    } else {
+      inner += _matrizRenderConjuntoNode(con, cliId);
+    }
+  });
+  const directos = _matrizProductosEnNivel({
+    clienteId: cliId, sectorId: eq.sector_id, equipoId: eq.id, conjuntoId: null, subconjuntoId: null
+  });
+  directos.forEach(p => {
+    inner += _matrizRenderProductoCardNested(p, { equipoId: eq.id });
+  });
+  return inner;
 }
 
 function _matrizRenderEquipoNode(eq, cliId) {
@@ -8737,30 +8935,46 @@ function _matrizRenderEquipoNode(eq, cliId) {
     '#5F5E5A',
     24,
     () => {
-      let inner = '';
-      // Conjuntos del equipo (orden 1)
-      const cons = _matrizConjuntosDelEquipo(eq.id, cliId);
-      cons.forEach(con => {
-        const cnt2 = _matrizCountProdsDelConjunto(con.id);
-        if (cnt2 === 0) return;
-        inner += _matrizRenderConjuntoNode(con, cliId);
-      });
-      // Productos directos del equipo (ubicacion termina en equipo, sin conjunto)
-      const directos = _matrizProductosEnNivel({
-        clienteId: cliId, sectorId: eq.sector_id, equipoId: eq.id, conjuntoId: null, subconjuntoId: null
-      });
-      directos.forEach(p => {
-        inner += _matrizRenderProductoCardNested(p);
-      });
+      let inner = _matrizRenderInnerEquipo(eq, cliId);
       if (!inner) inner = '<div style="font-size:11px;color:#888;font-style:italic;padding:4px 0">Sin conjuntos ni productos directos.</div>';
       return inner;
-    }
+    },
+    null,
+    'pmNuevoConUbicacion({clienteId:' + cliId + ',sectorId:' + eq.sector_id + ',equipoId:' + eq.id + '})'
   );
+}
+
+// v69: extraído. Renderiza el CONTENIDO de un conjunto (subconjuntos + productos
+// directos), para promoción.
+function _matrizRenderInnerConjunto(con, cliId) {
+  let inner = '';
+  const subs = _matrizSubconjuntosDelConjunto(con.id, cliId);
+  subs.forEach(sub => {
+    const cnt2 = _matrizCountProdsDelSubconjunto(sub.id);
+    if (cnt2 === 0) return;
+    if (_esSubconjuntoDefault(sub)) {
+      inner += _matrizRenderInnerSubconjunto(sub, cliId);
+    } else {
+      inner += _matrizRenderSubconjuntoNode(sub, cliId);
+    }
+  });
+  const directos = _matrizProductosEnNivel({
+    conjuntoId: con.id, subconjuntoId: null
+  });
+  directos.forEach(p => {
+    inner += _matrizRenderProductoCardNested(p, { conjuntoId: con.id });
+  });
+  return inner;
 }
 
 function _matrizRenderConjuntoNode(con, cliId) {
   const cnt = _matrizCountProdsDelConjunto(con.id);
   const warn = _matrizNivelTieneProblemas({ conjuntoId: con.id }) ? _warningIconHtml('Algún producto debajo requiere atención') : '';
+  // v69: prefill del botón "+". Tomo una ubicación existente del conjunto para
+  // pre-rellenar sector y equipo. Si no hay, quedan vacíos y el usuario los elige.
+  const ubicEjemplo = productosMatrizUbicaciones.find(u => u.conjunto_id === con.id && u.cliente_id === cliId);
+  const sectorIdPrefill = ubicEjemplo && ubicEjemplo.sector_id ? ubicEjemplo.sector_id : 'null';
+  const equipoIdPrefill = ubicEjemplo && ubicEjemplo.equipo_id ? ubicEjemplo.equipo_id : 'null';
   return _matrizRenderNode(
     'con:' + con.id,
     '📦',
@@ -8769,30 +8983,33 @@ function _matrizRenderConjuntoNode(con, cliId) {
     '#5F5E5A',
     24,
     () => {
-      let inner = '';
-      // Subconjuntos del conjunto (orden 1)
-      const subs = _matrizSubconjuntosDelConjunto(con.id, cliId);
-      subs.forEach(sub => {
-        const cnt2 = _matrizCountProdsDelSubconjunto(sub.id);
-        if (cnt2 === 0) return;
-        inner += _matrizRenderSubconjuntoNode(sub, cliId);
-      });
-      const directos = _matrizProductosEnNivel({
-        conjuntoId: con.id, subconjuntoId: null
-      });
-      directos.forEach(p => {
-        inner += _matrizRenderProductoCardNested(p);
-      });
+      let inner = _matrizRenderInnerConjunto(con, cliId);
       if (!inner) inner = '<div style="font-size:11px;color:#888;font-style:italic;padding:4px 0">Sin subconjuntos ni productos.</div>';
       return inner;
     },
-    22  // iconSize: Conjunto más grande
+    22,
+    'pmNuevoConUbicacion({clienteId:' + cliId + ',sectorId:' + sectorIdPrefill + ',equipoId:' + equipoIdPrefill + ',conjuntoId:' + con.id + '})'
   );
+}
+
+function _matrizRenderInnerSubconjunto(sub, cliId) {
+  let inner = '';
+  const directos = _matrizProductosEnNivel({ subconjuntoId: sub.id });
+  directos.forEach(p => {
+    inner += _matrizRenderProductoCardNested(p, { subconjuntoId: sub.id });
+  });
+  return inner;
 }
 
 function _matrizRenderSubconjuntoNode(sub, cliId) {
   const cnt = _matrizCountProdsDelSubconjunto(sub.id);
   const warn = _matrizNivelTieneProblemas({ subconjuntoId: sub.id }) ? _warningIconHtml('Algún producto debajo requiere atención') : '';
+  // v69: prefill del botón "+". Igual al conjunto, busco una ubicación
+  // existente del subconjunto para tomar sector/equipo/conjunto.
+  const ubicEjemplo = productosMatrizUbicaciones.find(u => u.subconjunto_id === sub.id && u.cliente_id === cliId);
+  const sectorIdPrefill = ubicEjemplo && ubicEjemplo.sector_id ? ubicEjemplo.sector_id : 'null';
+  const equipoIdPrefill = ubicEjemplo && ubicEjemplo.equipo_id ? ubicEjemplo.equipo_id : 'null';
+  const conjuntoIdPrefill = ubicEjemplo && ubicEjemplo.conjunto_id ? ubicEjemplo.conjunto_id : 'null';
   return _matrizRenderNode(
     'sub:' + sub.id,
     '📦',
@@ -8801,15 +9018,12 @@ function _matrizRenderSubconjuntoNode(sub, cliId) {
     '#5F5E5A',
     24,
     () => {
-      let inner = '';
-      const directos = _matrizProductosEnNivel({ subconjuntoId: sub.id });
-      directos.forEach(p => {
-        inner += _matrizRenderProductoCardNested(p);
-      });
+      let inner = _matrizRenderInnerSubconjunto(sub, cliId);
       if (!inner) inner = '<div style="font-size:11px;color:#888;font-style:italic;padding:4px 0">Sin productos.</div>';
       return inner;
     },
-    14  // iconSize: Subconjunto más chico
+    14,
+    'pmNuevoConUbicacion({clienteId:' + cliId + ',sectorId:' + sectorIdPrefill + ',equipoId:' + equipoIdPrefill + ',conjuntoId:' + conjuntoIdPrefill + ',subconjuntoId:' + sub.id + '})'
   );
 }
 
@@ -8849,7 +9063,7 @@ function _matrizRenderGenericosNode() {
 // }
 let pmFormState = null;
 
-function showProductoMatrizForm(productoId) {
+function showProductoMatrizForm(productoId, prefillUbicacion) {
   const isNew = !productoId;
   const prod = isNew ? null : productosMatriz.find(p => p.id === productoId);
   if (!isNew && !prod) return;
@@ -8875,7 +9089,23 @@ function showProductoMatrizForm(productoId) {
 
   // v67: resetear el state del form inline de compatibilidad al abrir
   _pmCompatInlineReset();
+  // v69: si vino precarga (desde botón "+" de una tarjeta de cliente/sector/etc.),
+  // cargamos esos valores en el form inline para que el usuario solo tenga que
+  // apretar "Agregar" (o directamente "Guardar" y el Fix A los agrega solos).
+  if (prefillUbicacion && pmCompatState) {
+    pmCompatState.clienteId = prefillUbicacion.clienteId || null;
+    pmCompatState.sectorId = prefillUbicacion.sectorId || null;
+    pmCompatState.equipoId = prefillUbicacion.equipoId || null;
+    pmCompatState.conjuntoId = prefillUbicacion.conjuntoId || null;
+    pmCompatState.subconjuntoId = prefillUbicacion.subconjuntoId || null;
+  }
   _renderPmModal(prod);
+}
+
+// v69: Wrapper para abrir el form de Nuevo Producto pre-rellenando la ubicación
+// según el nodo de la matriz desde donde se llamó (botón "+" en cada tarjeta).
+function pmNuevoConUbicacion(opts) {
+  showProductoMatrizForm(null, opts || {});
 }
 
 // Render principal del modal del producto. Lo separamos para poder
