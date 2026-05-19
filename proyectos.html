@@ -8775,7 +8775,7 @@ function _matrizCountProdsDelSubconjunto(subId) {
 //   color: color del titulo (HEX)
 //   indent: paddingLeft del bloque expandido (px)
 //   childrenHtml: callback que devuelve el HTML interior cuando esta expandido
-function _matrizRenderNode(key, icon, title, meta, color, indent, childrenHtml, iconSize, addBtnFn) {
+function _matrizRenderNode(key, icon, title, meta, color, indent, childrenHtml, iconSize, addBtnFn, editBtnFn) {
   const expanded = matrizExpanded.has(key);
   let h = '<div style="background:#fff;border:1px solid #C8C6BE;border-radius:6px;margin-bottom:6px;overflow:hidden">';
   h += '<div style="display:flex;align-items:center;padding:8px 12px;gap:8px;cursor:pointer" onclick="matrizToggleExpand(\'' + key + '\')">';
@@ -8786,8 +8786,11 @@ function _matrizRenderNode(key, icon, title, meta, color, indent, childrenHtml, 
   h += '<div style="font-weight:600;color:' + color + ';font-size:13px">' + title + '</div>';
   if (meta) h += '<div style="font-size:11px;color:#888;margin-top:1px">' + meta + '</div>';
   h += '</div>';
+  // v70: botón "Editar" para abrir el modal de composición del contenedor.
+  if (editBtnFn) {
+    h += '<button class="b b-icon" title="Editar contenedor" onclick="event.stopPropagation();' + editBtnFn + '" style="flex:0 0 auto;font-size:12px;padding:2px 8px;color:#5F5E5A">✎</button>';
+  }
   // v69: botón "+" para cargar producto pre-rellenado con la ubicación de este nodo.
-  // El addBtnFn es un string que ejecuta el handler (con event.stopPropagation).
   if (addBtnFn) {
     h += '<button class="b b-icon" title="Nuevo producto en esta ubicación" onclick="event.stopPropagation();' + addBtnFn + '" style="flex:0 0 auto;font-size:14px;font-weight:600;padding:2px 8px;color:#0C447C">+</button>';
   }
@@ -9038,7 +9041,8 @@ function _matrizRenderEquipoNode(eq, cliId) {
       return inner;
     },
     null,
-    'pmNuevoConUbicacion({clienteId:' + cliId + ',sectorId:' + eq.sector_id + ',equipoId:' + eq.id + '})'
+    'pmNuevoConUbicacion({clienteId:' + cliId + ',sectorId:' + eq.sector_id + ',equipoId:' + eq.id + '})',
+    'showEditarEquipoModal(' + eq.id + ')'
   );
 }
 
@@ -9086,7 +9090,8 @@ function _matrizRenderConjuntoNode(con, cliId) {
       return inner;
     },
     22,
-    'pmNuevoConUbicacion({clienteId:' + cliId + ',sectorId:' + sectorIdPrefill + ',equipoId:' + equipoIdPrefill + ',conjuntoId:' + con.id + '})'
+    'pmNuevoConUbicacion({clienteId:' + cliId + ',sectorId:' + sectorIdPrefill + ',equipoId:' + equipoIdPrefill + ',conjuntoId:' + con.id + '})',
+    'showEditarConjuntoModal(' + con.id + ')'
   );
 }
 
@@ -9121,7 +9126,8 @@ function _matrizRenderSubconjuntoNode(sub, cliId) {
       return inner;
     },
     14,
-    'pmNuevoConUbicacion({clienteId:' + cliId + ',sectorId:' + sectorIdPrefill + ',equipoId:' + equipoIdPrefill + ',conjuntoId:' + conjuntoIdPrefill + ',subconjuntoId:' + sub.id + '})'
+    'pmNuevoConUbicacion({clienteId:' + cliId + ',sectorId:' + sectorIdPrefill + ',equipoId:' + equipoIdPrefill + ',conjuntoId:' + conjuntoIdPrefill + ',subconjuntoId:' + sub.id + '})',
+    'showEditarSubconjuntoModal(' + sub.id + ')'
   );
 }
 
@@ -9204,6 +9210,288 @@ function showProductoMatrizForm(productoId, prefillUbicacion) {
 // según el nodo de la matriz desde donde se llamó (botón "+" en cada tarjeta).
 function pmNuevoConUbicacion(opts) {
   showProductoMatrizForm(null, opts || {});
+}
+
+// =============================================================================
+// v70 Fase 3: MODALES DE EDICIÓN DE CONTENEDORES
+// =============================================================================
+// Tres modales (Equipo, Conjunto, Subconjunto) para administrar la composición
+// sin pasar por el modal del producto. Cada uno permite:
+//   - Renombrar el contenedor.
+//   - Ver/editar los items que lo componen (subconjuntos/conjuntos/productos).
+//   - Cambiar cantidades.
+//   - Agregar items existentes o crear nuevos.
+//   - Quitar items (desvinculación, no borra el item en sí).
+
+// Estado en memoria mientras el modal está abierto. Lo usamos para acumular
+// cambios y mostrarlos en pantalla sin tocar la DB hasta que el usuario "Guarde".
+// Estructura:
+//   { tipo: 'equipo'|'conjunto'|'subconjunto', id, nombre, items: [...] }
+//   donde items es un array de filas con {tipo, id, nombre, cantidad, _new}.
+let editContenedorState = null;
+
+function showEditarEquipoModal(equipoId) {
+  const eq = equipos.find(e => e.id === equipoId);
+  if (!eq) return;
+  const items = [];
+  // Conjuntos vinculados al equipo
+  equipoConjuntos.filter(ec => ec.equipo_id === equipoId).forEach(ec => {
+    const c = conjuntos.find(x => x.id === ec.conjunto_id);
+    if (c) items.push({ tipo: 'conjunto', id: c.id, nombre: c.nombre, cantidad: ec.cantidad || 1 });
+  });
+  // Productos directos
+  equipoProductos.filter(ep => ep.equipo_id === equipoId).forEach(ep => {
+    const p = productosMatriz.find(x => x.id === ep.producto_id);
+    if (p) items.push({ tipo: 'producto', id: p.id, nombre: p.descripcion, cantidad: ep.cantidad || 1 });
+  });
+  editContenedorState = { tipo: 'equipo', id: equipoId, nombre: eq.nombre, items };
+  _renderEditarContenedorModal();
+}
+
+function showEditarConjuntoModal(conjuntoId) {
+  const con = conjuntos.find(c => c.id === conjuntoId);
+  if (!con) return;
+  const items = [];
+  // Subconjuntos vinculados al conjunto
+  conjuntoSubconjuntos.filter(cs => cs.conjunto_id === conjuntoId).forEach(cs => {
+    const s = subconjuntos.find(x => x.id === cs.subconjunto_id);
+    if (s) items.push({ tipo: 'subconjunto', id: s.id, nombre: s.nombre, cantidad: cs.cantidad || 1 });
+  });
+  // Productos directos
+  conjuntoProductos.filter(cp => cp.conjunto_id === conjuntoId).forEach(cp => {
+    const p = productosMatriz.find(x => x.id === cp.producto_id);
+    if (p) items.push({ tipo: 'producto', id: p.id, nombre: p.descripcion, cantidad: cp.cantidad || 1 });
+  });
+  editContenedorState = { tipo: 'conjunto', id: conjuntoId, nombre: con.nombre, items, clienteId: con.cliente_id };
+  _renderEditarContenedorModal();
+}
+
+function showEditarSubconjuntoModal(subconjuntoId) {
+  const sub = subconjuntos.find(s => s.id === subconjuntoId);
+  if (!sub) return;
+  const items = [];
+  // Productos del subconjunto
+  subconjuntoProductos.filter(sp => sp.subconjunto_id === subconjuntoId).forEach(sp => {
+    const p = productosMatriz.find(x => x.id === sp.producto_id);
+    if (p) items.push({ tipo: 'producto', id: p.id, nombre: p.descripcion, cantidad: sp.cantidad || 1 });
+  });
+  editContenedorState = { tipo: 'subconjunto', id: subconjuntoId, nombre: sub.nombre, items, clienteId: sub.cliente_id };
+  _renderEditarContenedorModal();
+}
+
+function _renderEditarContenedorModal() {
+  const existing = document.getElementById('edit-cont-modal');
+  if (existing) existing.remove();
+  if (!editContenedorState) return;
+  const st = editContenedorState;
+  const tipoLabel = { equipo: 'Equipo', conjunto: 'Conjunto', subconjunto: 'Subconjunto' }[st.tipo];
+
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'edit-cont-modal';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '640px';
+  let h = '<div class="md-t">Editar ' + tipoLabel + '</div>';
+
+  // Nombre editable
+  h += '<div class="ef"><div class="ef-l">Nombre</div>';
+  h += '<input type="text" class="ef-i" id="ec-nombre" value="' + escapeHtml(st.nombre) + '">';
+  h += '</div>';
+
+  // Items
+  h += '<div style="font-size:12px;font-weight:600;color:#5F5E5A;margin:14px 0 6px">Composición</div>';
+  h += '<div id="ec-items-list" style="border:1px solid #C8C6BE;border-radius:5px;max-height:300px;overflow-y:auto">';
+  h += _ecRenderItemsListHtml();
+  h += '</div>';
+
+  // Botón agregar item
+  h += '<div style="margin-top:10px">';
+  h += '<button class="b b-p" onclick="_ecAgregarItem()" style="padding:6px 12px">+ Agregar ' + (st.tipo === 'subconjunto' ? 'producto' : 'componente') + '</button>';
+  h += '</div>';
+
+  // Footer
+  h += '<div class="actions">';
+  h += '<button class="b" onclick="document.getElementById(\'edit-cont-modal\').remove();editContenedorState=null">Cancelar</button>';
+  h += '<button class="b b-p" onclick="_ecGuardar()">Guardar</button>';
+  h += '</div>';
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
+}
+
+function _ecRenderItemsListHtml() {
+  const st = editContenedorState;
+  if (!st || st.items.length === 0) {
+    return '<div style="padding:14px;text-align:center;color:#888;font-size:11px;font-style:italic">Sin componentes. Apretá "+ Agregar" para sumar.</div>';
+  }
+  let h = '';
+  st.items.forEach((it, idx) => {
+    const tipoIcon = { conjunto: '📦', subconjunto: '📦', producto: '🔧' }[it.tipo];
+    h += '<div style="display:flex;align-items:center;padding:6px 10px;border-bottom:1px solid #F5F3EC;font-size:12px;gap:8px">';
+    h += '<span style="flex:0 0 auto">' + tipoIcon + '</span>';
+    h += '<div style="flex:1;min-width:0">';
+    h += '<div style="font-weight:600">' + escapeHtml(it.nombre) + '</div>';
+    h += '<div style="font-size:10px;color:#888">' + it.tipo + '</div>';
+    h += '</div>';
+    // Input de cantidad
+    h += '<input type="number" min="1" value="' + it.cantidad + '" onchange="_ecActualizarCantidad(' + idx + ', this.value)" style="width:60px;padding:3px 6px;border:1px solid #C8C6BE;border-radius:3px;font-size:11px;text-align:center">';
+    // Botón quitar
+    h += '<button class="b b-icon" onclick="_ecQuitarItem(' + idx + ')" title="Quitar" style="flex:0 0 auto;color:#A32D2D;font-weight:600">×</button>';
+    h += '</div>';
+  });
+  return h;
+}
+
+function _ecRefreshItems() {
+  const list = document.getElementById('ec-items-list');
+  if (list) list.innerHTML = _ecRenderItemsListHtml();
+}
+
+function _ecActualizarCantidad(idx, valor) {
+  const n = parseInt(valor) || 1;
+  if (editContenedorState && editContenedorState.items[idx]) {
+    editContenedorState.items[idx].cantidad = Math.max(1, n);
+  }
+}
+
+function _ecQuitarItem(idx) {
+  if (!editContenedorState) return;
+  editContenedorState.items.splice(idx, 1);
+  _ecRefreshItems();
+}
+
+// Modal para agregar un item al contenedor que estamos editando.
+function _ecAgregarItem() {
+  if (!editContenedorState) return;
+  const st = editContenedorState;
+  const existing = document.getElementById('ec-agregar-modal');
+  if (existing) existing.remove();
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'ec-agregar-modal';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '560px'; m.style.zIndex = '1100';
+
+  // Qué tipos de items puede contener según el contenedor
+  let tipos;
+  if (st.tipo === 'equipo') tipos = ['conjunto', 'producto'];
+  else if (st.tipo === 'conjunto') tipos = ['subconjunto', 'producto'];
+  else tipos = ['producto'];  // subconjunto solo contiene productos
+
+  let h = '<div class="md-t">Agregar al ' + st.tipo + '</div>';
+  h += '<div style="font-size:11px;color:#5F5E5A;margin-bottom:10px">Buscá y elegí qué agregar. Si no existe, después podés crearlo desde la matriz.</div>';
+  // Filtro por tipo (si hay más de uno)
+  if (tipos.length > 1) {
+    h += '<div style="margin-bottom:10px">';
+    h += '<label style="font-size:11px;margin-right:10px"><input type="radio" name="ec-add-tipo" value="' + tipos[0] + '" checked onclick="_ecAddTipoChange()"> ' + tipos[0] + 's</label>';
+    h += '<label style="font-size:11px"><input type="radio" name="ec-add-tipo" value="' + tipos[1] + '" onclick="_ecAddTipoChange()"> ' + tipos[1] + 's</label>';
+    h += '</div>';
+  }
+  h += '<input type="text" class="ef-i" id="ec-add-search" placeholder="Buscar..." oninput="_ecAddRenderLista()" style="margin-bottom:10px">';
+  h += '<div id="ec-add-list" style="max-height:360px;overflow-y:auto;border:1px solid #C8C6BE;border-radius:5px"></div>';
+  h += '<div class="actions"><button class="b" onclick="document.getElementById(\'ec-agregar-modal\').remove()">Cancelar</button></div>';
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
+  _ecAddRenderLista();
+}
+
+function _ecAddTipoChange() {
+  _ecAddRenderLista();
+}
+
+function _ecAddGetTipo() {
+  const st = editContenedorState;
+  if (!st) return 'producto';
+  if (st.tipo === 'subconjunto') return 'producto';
+  const radio = document.querySelector('input[name="ec-add-tipo"]:checked');
+  return radio ? radio.value : (st.tipo === 'equipo' ? 'conjunto' : 'subconjunto');
+}
+
+function _ecAddRenderLista() {
+  const st = editContenedorState;
+  if (!st) return;
+  const tipo = _ecAddGetTipo();
+  const searchEl = document.getElementById('ec-add-search');
+  const search = searchEl ? searchEl.value.trim().toLowerCase() : '';
+  // Ya agregados (para excluir)
+  const yaIds = new Set(st.items.filter(it => it.tipo === tipo).map(it => it.id));
+  // Obtener candidatos según el tipo
+  let candidatos;
+  if (tipo === 'producto') {
+    candidatos = productosMatriz.filter(p => !yaIds.has(p.id));
+    // Filtrar por cliente del contenedor si aplica
+    if (st.clienteId) {
+      candidatos = candidatos.filter(p => p.cliente_id === st.clienteId || !p.cliente_id);
+    }
+    candidatos = candidatos.map(p => ({ id: p.id, nombre: p.descripcion || '?' }));
+  } else if (tipo === 'conjunto') {
+    // Conjuntos del mismo cliente del contenedor padre (equipo → sector → cliente)
+    const eq = equipos.find(e => e.id === st.id);
+    const cliId = eq ? (sectores.find(s => s.id === eq.sector_id) || {}).cliente_id : null;
+    candidatos = conjuntos.filter(c => !yaIds.has(c.id) && (!cliId || c.cliente_id === cliId));
+    candidatos = candidatos.map(c => ({ id: c.id, nombre: c.nombre || '?' }));
+  } else if (tipo === 'subconjunto') {
+    candidatos = subconjuntos.filter(s => !yaIds.has(s.id) && (!st.clienteId || s.cliente_id === st.clienteId));
+    candidatos = candidatos.map(s => ({ id: s.id, nombre: s.nombre || '?' }));
+  } else {
+    candidatos = [];
+  }
+  if (search) candidatos = candidatos.filter(c => c.nombre.toLowerCase().includes(search));
+  candidatos.sort((a, b) => a.nombre.localeCompare(b.nombre));
+
+  const list = document.getElementById('ec-add-list');
+  if (!list) return;
+  if (candidatos.length === 0) {
+    list.innerHTML = '<div style="padding:14px;text-align:center;color:#888;font-size:11px;font-style:italic">Sin opciones.</div>';
+    return;
+  }
+  let h = '';
+  candidatos.slice(0, 100).forEach(c => {
+    h += '<div onclick="_ecAddElegir(\'' + tipo + '\',' + c.id + ',\'' + escapeHtml(c.nombre).replace(/'/g, "\\'") + '\')" style="padding:7px 10px;border-bottom:1px solid #F5F3EC;cursor:pointer;font-size:12px" onmouseenter="this.style.background=\'#E6F1FB\'" onmouseleave="this.style.background=\'\'">';
+    h += escapeHtml(c.nombre);
+    h += '</div>';
+  });
+  list.innerHTML = h;
+}
+
+function _ecAddElegir(tipo, id, nombre) {
+  if (!editContenedorState) return;
+  editContenedorState.items.push({ tipo, id, nombre, cantidad: 1 });
+  const modal = document.getElementById('ec-agregar-modal');
+  if (modal) modal.remove();
+  _ecRefreshItems();
+}
+
+// Guardar todos los cambios en la DB.
+async function _ecGuardar() {
+  if (!editContenedorState) return;
+  const st = editContenedorState;
+  // 1. Actualizar nombre si cambió
+  const nuevoNombre = document.getElementById('ec-nombre').value.trim();
+  if (!nuevoNombre) { toast('El nombre no puede estar vacío', true); return; }
+  if (nuevoNombre !== st.nombre) {
+    const tabla = st.tipo === 'equipo' ? 'equipos' : (st.tipo === 'conjunto' ? 'conjuntos' : 'subconjuntos');
+    const { error } = await sb.from(tabla).update({ nombre: nuevoNombre }).eq('id', st.id);
+    if (error) { toast('Error al renombrar: ' + error.message, true); return; }
+  }
+  // 2. Sincronizar items: borrar lo que había antes, insertar lo que está ahora.
+  // Para cada tipo de tabla afectada según contenedor.
+  if (st.tipo === 'equipo') {
+    await sb.from('equipo_conjuntos').delete().eq('equipo_id', st.id);
+    await sb.from('equipo_productos').delete().eq('equipo_id', st.id);
+    const ecRows = st.items.filter(it => it.tipo === 'conjunto').map(it => ({ equipo_id: st.id, conjunto_id: it.id, cantidad: it.cantidad }));
+    const epRows = st.items.filter(it => it.tipo === 'producto').map(it => ({ equipo_id: st.id, producto_id: it.id, cantidad: it.cantidad }));
+    if (ecRows.length) await sb.from('equipo_conjuntos').insert(ecRows);
+    if (epRows.length) await sb.from('equipo_productos').insert(epRows);
+  } else if (st.tipo === 'conjunto') {
+    await sb.from('conjunto_subconjuntos').delete().eq('conjunto_id', st.id);
+    await sb.from('conjunto_productos').delete().eq('conjunto_id', st.id);
+    const csRows = st.items.filter(it => it.tipo === 'subconjunto').map(it => ({ conjunto_id: st.id, subconjunto_id: it.id, cantidad: it.cantidad }));
+    const cpRows = st.items.filter(it => it.tipo === 'producto').map(it => ({ conjunto_id: st.id, producto_id: it.id, cantidad: it.cantidad }));
+    if (csRows.length) await sb.from('conjunto_subconjuntos').insert(csRows);
+    if (cpRows.length) await sb.from('conjunto_productos').insert(cpRows);
+  } else if (st.tipo === 'subconjunto') {
+    await sb.from('subconjunto_productos').delete().eq('subconjunto_id', st.id);
+    const spRows = st.items.filter(it => it.tipo === 'producto').map(it => ({ subconjunto_id: st.id, producto_id: it.id, cantidad: it.cantidad }));
+    if (spRows.length) await sb.from('subconjunto_productos').insert(spRows);
+  }
+  // 3. Cerrar y refrescar
+  document.getElementById('edit-cont-modal').remove();
+  editContenedorState = null;
+  await loadAll();
+  toast('Composición actualizada');
+  render();
 }
 
 // Render principal del modal del producto. Lo separamos para poder
