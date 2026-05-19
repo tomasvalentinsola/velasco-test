@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<title>Velasco App 2.0 — Proyectos v69</title>
+<title>Velasco App 2.0 — Proyectos v70</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
@@ -145,12 +145,27 @@ let sectores = [];
 let equipos = [];
 let conjuntos = [];
 let subconjuntos = [];
-let conjuntosEquipos = [];        // pivot N:M
-let subconjuntosConjuntos = [];   // pivot N:M
-let productosMatrizUbicaciones = [];
+let conjuntosEquipos = [];        // pivot N:M (DEPRECADO en v70, se mantiene para compat)
+let subconjuntosConjuntos = [];   // pivot N:M (DEPRECADO en v70, se mantiene para compat)
+let productosMatrizUbicaciones = [];  // DEPRECADO en v70, se mantiene para compat
 let productosMatrizCorrelatividades = [];  // D2.5
 let fotos = [];  // v60: tabla polimórfica de fotos {entidad_tipo, entidad_id, url, orden, descripcion}
 let clienteContactos = [];  // v62: contactos de cliente
+
+// v70: Nuevas tablas de composición. El modelo nuevo: el producto NO tiene
+// cantidad propia. La cantidad vive en la relación contenedor↔contenido.
+// - equipoConjuntos: {equipo_id, conjunto_id, cantidad} — composición del equipo.
+// - conjuntoSubconjuntos: {conjunto_id, subconjunto_id, cantidad} — composición del conjunto.
+// - equipoProductos: {equipo_id, producto_id, cantidad} — productos directos del equipo.
+// - conjuntoProductos: {conjunto_id, producto_id, cantidad} — productos directos del conjunto.
+// - subconjuntoProductos: {subconjunto_id, producto_id, cantidad} — productos del subconjunto.
+// - productosGemelos: {producto_a_id, producto_b_id} — productos funcionalmente equivalentes.
+let equipoConjuntos = [];
+let conjuntoSubconjuntos = [];
+let equipoProductos = [];
+let conjuntoProductos = [];
+let subconjuntoProductos = [];
+let productosGemelos = [];
 // v62: toggles "mostrar inactivos" por módulo (solo dentro del módulo Recursos).
 // Cada uno es una llave booleana que se setea desde la UI.
 let mostrarInactivos = { clientes: false, materiales: false, operarios: false, maquinas: false };
@@ -900,7 +915,8 @@ async function loadAll() {
   // rompe la app y queda como arrays vacios. Cuando se aplique el SQL, ya
   // funciona sin tocar nada).
   try {
-    const [pm, pmp, mat, sec, eq, con, sub, ce, sc, pmu, iu, pmc, ph, cc] = await Promise.all([
+    const [pm, pmp, mat, sec, eq, con, sub, ce, sc, pmu, iu, pmc, ph, cc,
+           ec, cs, ep, cp, sp, pg] = await Promise.all([
       sb.from('productos_matriz').select('*').order('descripcion'),
       sb.from('productos_matriz_procesos').select('*').order('orden', { ascending: true, nullsFirst: false }),
       sb.from('materiales').select('*').order('nombre'),
@@ -914,7 +930,14 @@ async function loadAll() {
       sb.from('items_ubicaciones').select('*'),
       sb.from('productos_matriz_correlatividades').select('*'),
       sb.from('fotos').select('*').order('entidad_tipo').order('entidad_id').order('orden'),
-      sb.from('cliente_contactos').select('*').order('apellido').order('nombre')
+      sb.from('cliente_contactos').select('*').order('apellido').order('nombre'),
+      // v70: tablas nuevas de composición
+      sb.from('equipo_conjuntos').select('*'),
+      sb.from('conjunto_subconjuntos').select('*'),
+      sb.from('equipo_productos').select('*'),
+      sb.from('conjunto_productos').select('*'),
+      sb.from('subconjunto_productos').select('*'),
+      sb.from('productos_gemelos').select('*')
     ]);
     productosMatriz = pm.data || [];
     productosMatrizProcesos = pmp.data || [];
@@ -930,6 +953,13 @@ async function loadAll() {
     productosMatrizCorrelatividades = pmc.data || [];
     fotos = ph.data || [];
     clienteContactos = cc.data || [];
+    // v70: tablas nuevas de composición
+    equipoConjuntos = ec.data || [];
+    conjuntoSubconjuntos = cs.data || [];
+    equipoProductos = ep.data || [];
+    conjuntoProductos = cp.data || [];
+    subconjuntoProductos = sp.data || [];
+    productosGemelos = pg.data || [];
   } catch(e) {
     console.warn('[loadAll] Tablas matriz/jerarquia no disponibles aun:', e);
     productosMatriz = [];
@@ -946,6 +976,13 @@ async function loadAll() {
     productosMatrizCorrelatividades = [];
     fotos = [];
     clienteContactos = [];
+    // v70: nuevas tablas
+    equipoConjuntos = [];
+    conjuntoSubconjuntos = [];
+    equipoProductos = [];
+    conjuntoProductos = [];
+    subconjuntoProductos = [];
+    productosGemelos = [];
   }
 }
 
@@ -6183,6 +6220,10 @@ function aplicarAutocompletarPorMaquina(maqIdRaw) {
     return;
   }
   _setOperarioIdeal(opIdeal);
+  // v69: las reglas por máquina no especifican suplente, así que limpiamos el
+  // suplente que pudiera estar seteado de antes (de una regla por proceso o
+  // de carga manual).
+  _setSuplenteUnico(null);
 }
 
 function _setOperarioIdeal(operarioId) {
@@ -8473,43 +8514,75 @@ function _matrizEquiposDelSector(secId) {
 }
 function _matrizConjuntosDelEquipo(eqId, cliId) {
   const conIds = (matrizFilters.conjuntoIds || []).map(x => parseInt(x));
-  // Conjuntos vinculados al equipo via conjuntos_equipos
-  const linkedConIds = new Set(conjuntosEquipos.filter(ce => ce.equipo_id === eqId).map(ce => ce.conjunto_id));
+  // v70: usar equipo_conjuntos (nueva tabla) en vez de conjuntos_equipos (vieja).
+  const linkedConIds = new Set(equipoConjuntos.filter(ec => ec.equipo_id === eqId).map(ec => ec.conjunto_id));
   let cons = conjuntos.filter(c => linkedConIds.has(c.id));
-  // Tambien verificamos cliente (defensivo, deberia coincidir)
   cons = cons.filter(c => c.cliente_id === cliId);
   if (conIds.length > 0) cons = cons.filter(c => conIds.includes(c.id));
   return cons.sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
 }
 function _matrizSubconjuntosDelConjunto(conId, cliId) {
   const subIds = (matrizFilters.subconjuntoIds || []).map(x => parseInt(x));
-  const linkedSubIds = new Set(subconjuntosConjuntos.filter(sc => sc.conjunto_id === conId).map(sc => sc.subconjunto_id));
+  // v70: usar conjunto_subconjuntos (nueva) en vez de subconjuntos_conjuntos (vieja).
+  const linkedSubIds = new Set(conjuntoSubconjuntos.filter(cs => cs.conjunto_id === conId).map(cs => cs.subconjunto_id));
   let subs = subconjuntos.filter(s => linkedSubIds.has(s.id));
   subs = subs.filter(s => s.cliente_id === cliId);
   if (subIds.length > 0) subs = subs.filter(s => subIds.includes(s.id));
   return subs.sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
 }
-// Productos cuya UBICACION termina exactamente en el nivel dado (no productos
-// que viven mas abajo). Aplica filtros ya activos sobre el producto.
-function _matrizProductosEnNivel(opts) {
-  // opts: {clienteId, sectorId, equipoId, conjuntoId, subconjuntoId} - los que estan
-  // en null indican "vacio en ese nivel" (ej. producto del sector sin equipo).
+
+// v70: NUEVA función. Reemplaza _matrizProductosEnNivel.
+// Lee productos directamente de la tabla de composición del contenedor.
+// `tipo` = 'equipo' | 'conjunto' | 'subconjunto'. `contenedorId` es el id.
+function _matrizProductosDelContenedor(tipo, contenedorId) {
+  let rows;
+  if (tipo === 'subconjunto') {
+    rows = subconjuntoProductos.filter(sp => sp.subconjunto_id === contenedorId);
+  } else if (tipo === 'conjunto') {
+    rows = conjuntoProductos.filter(cp => cp.conjunto_id === contenedorId);
+  } else if (tipo === 'equipo') {
+    rows = equipoProductos.filter(ep => ep.equipo_id === contenedorId);
+  } else {
+    return [];
+  }
+  // Mapear a productos completos y aplicar filtros activos
+  const productosIds = new Set(rows.map(r => r.producto_id));
   const filteredProds = applyMatrizFilters(productosMatriz);
-  return filteredProds.filter(p => {
-    const ubics = productosMatrizUbicaciones.filter(u => u.producto_id === p.id);
-    if (ubics.length === 0) {
-      // Producto sin ubicacion: solo aparece en el nodo "Genericos sin cliente"
-      return opts.clienteId === undefined && opts.sectorId === undefined;
-    }
-    // Match exacto en al menos una ubicacion
-    return ubics.some(u =>
-      (opts.clienteId === undefined || u.cliente_id === opts.clienteId) &&
-      (opts.sectorId === undefined || u.sector_id === opts.sectorId) &&
-      (opts.equipoId === undefined || u.equipo_id === opts.equipoId) &&
-      (opts.conjuntoId === undefined || u.conjunto_id === opts.conjuntoId) &&
-      (opts.subconjuntoId === undefined || u.subconjunto_id === opts.subconjuntoId)
-    );
-  });
+  return filteredProds.filter(p => productosIds.has(p.id));
+}
+
+// v70: Función de compat para el código que todavía llama con opts antiguos.
+// Decide qué tabla leer según los campos de opts.
+function _matrizProductosEnNivel(opts) {
+  // Si tiene subconjuntoId definido (no null), va a subconjunto_productos
+  if (opts.subconjuntoId !== null && opts.subconjuntoId !== undefined) {
+    return _matrizProductosDelContenedor('subconjunto', opts.subconjuntoId);
+  }
+  // Si tiene conjuntoId definido (no null), va a conjunto_productos
+  if (opts.conjuntoId !== null && opts.conjuntoId !== undefined) {
+    return _matrizProductosDelContenedor('conjunto', opts.conjuntoId);
+  }
+  // Si tiene equipoId definido (no null), va a equipo_productos
+  if (opts.equipoId !== null && opts.equipoId !== undefined) {
+    return _matrizProductosDelContenedor('equipo', opts.equipoId);
+  }
+  // Niveles superiores (cliente o sector sin equipo): en v70 ya no hay productos
+  // sueltos en esos niveles (todo va al menos al "Sin equipo específico").
+  return [];
+}
+
+// v70: Devuelve la cantidad del producto en un contenedor específico.
+// `tipo` = 'equipo' | 'conjunto' | 'subconjunto'. Devuelve 0 si no está.
+function _matrizCantidadProductoEn(tipo, contenedorId, productoId) {
+  let row;
+  if (tipo === 'subconjunto') {
+    row = subconjuntoProductos.find(sp => sp.subconjunto_id === contenedorId && sp.producto_id === productoId);
+  } else if (tipo === 'conjunto') {
+    row = conjuntoProductos.find(cp => cp.conjunto_id === contenedorId && cp.producto_id === productoId);
+  } else if (tipo === 'equipo') {
+    row = equipoProductos.find(ep => ep.equipo_id === contenedorId && ep.producto_id === productoId);
+  }
+  return row ? (row.cantidad || 1) : 0;
 }
 
 // =============================================================================
@@ -8594,30 +8667,29 @@ function _matrizProductoTieneProblemas(productoId) {
   return !validarProductoMatriz(productoId).ok;
 }
 
-// Devuelve true si en este nodo (sector/equipo/conjunto/subconjunto/cliente)
-// hay al menos un producto con problemas. La idea es propagar el ⚠ hacia arriba.
+// v70: Devuelve true si en este nodo hay al menos un producto con problemas.
+// Lee de las tablas de composición nuevas.
 function _matrizNivelTieneProblemas(opts) {
   // opts: {clienteId, sectorId, equipoId, conjuntoId, subconjuntoId}
-  // Cualquiera no especificado es "cualquier valor en ese campo".
-  // Buscamos productos que tengan ALGUNA ubicacion matcheando.
-  const prodsConProblemas = productosMatriz.filter(p => _matrizProductoTieneProblemas(p.id));
-  if (prodsConProblemas.length === 0) return false;
-  // Para cada producto con problemas, ver si alguna ubicacion matchea
-  return prodsConProblemas.some(p => {
-    const ubics = productosMatrizUbicaciones.filter(u => u.producto_id === p.id);
-    if (ubics.length === 0) {
-      // Producto sin ubicaciones: solo cuenta para "Productos Genéricos"
-      return opts.clienteId === undefined && !p.cliente_id;
-    }
-    return ubics.some(u => {
-      if (opts.clienteId !== undefined && u.cliente_id !== opts.clienteId) return false;
-      if (opts.sectorId !== undefined && u.sector_id !== opts.sectorId) return false;
-      if (opts.equipoId !== undefined && u.equipo_id !== opts.equipoId) return false;
-      if (opts.conjuntoId !== undefined && u.conjunto_id !== opts.conjuntoId) return false;
-      if (opts.subconjuntoId !== undefined && u.subconjunto_id !== opts.subconjuntoId) return false;
-      return true;
-    });
-  });
+  // Solo UNO suele venir definido (el más específico). Recorremos la jerarquía.
+  let prodIds;
+  if (opts.subconjuntoId !== undefined && opts.subconjuntoId !== null) {
+    prodIds = _matrizProdIdsSubconjunto(opts.subconjuntoId);
+  } else if (opts.conjuntoId !== undefined && opts.conjuntoId !== null) {
+    prodIds = _matrizProdIdsConjunto(opts.conjuntoId);
+  } else if (opts.equipoId !== undefined && opts.equipoId !== null) {
+    prodIds = _matrizProdIdsEquipo(opts.equipoId);
+  } else if (opts.sectorId !== undefined && opts.sectorId !== null) {
+    prodIds = _matrizProdIdsSector(opts.sectorId);
+  } else if (opts.clienteId !== undefined && opts.clienteId !== null) {
+    prodIds = _matrizProdIdsCliente(opts.clienteId);
+  } else {
+    return false;
+  }
+  for (const id of prodIds) {
+    if (_matrizProductoTieneProblemas(id)) return true;
+  }
+  return false;
 }
 
 // Icono ⚠ con tooltip. Usar como sufijo en titulos.
@@ -8626,45 +8698,70 @@ function _warningIconHtml(tooltip) {
   return ' <span style="font-size:13px"' + tt + '>⚠️</span>';
 }
 
-// Cuenta total de productos (que pasen filtros) bajo un cliente, contando
-// producto distintos (no por ubicacion). Para mostrar en el resumen.
+// v70: Counters usando las tablas de composición nuevas.
+// Lógica: bajamos por la jerarquía y juntamos ids de productos únicos.
+
+// Helper: ids de productos en un subconjunto
+function _matrizProdIdsSubconjunto(subId) {
+  return new Set(subconjuntoProductos.filter(sp => sp.subconjunto_id === subId).map(sp => sp.producto_id));
+}
+// Helper: ids de productos en un conjunto (directos + via subconjuntos del conjunto)
+function _matrizProdIdsConjunto(conId) {
+  const ids = new Set(conjuntoProductos.filter(cp => cp.conjunto_id === conId).map(cp => cp.producto_id));
+  conjuntoSubconjuntos.filter(cs => cs.conjunto_id === conId).forEach(cs => {
+    _matrizProdIdsSubconjunto(cs.subconjunto_id).forEach(id => ids.add(id));
+  });
+  return ids;
+}
+// Helper: ids de productos en un equipo (directos + via conjuntos del equipo)
+function _matrizProdIdsEquipo(eqId) {
+  const ids = new Set(equipoProductos.filter(ep => ep.equipo_id === eqId).map(ep => ep.producto_id));
+  equipoConjuntos.filter(ec => ec.equipo_id === eqId).forEach(ec => {
+    _matrizProdIdsConjunto(ec.conjunto_id).forEach(id => ids.add(id));
+  });
+  return ids;
+}
+// Helper: ids de productos en un sector (suma de equipos del sector)
+function _matrizProdIdsSector(secId) {
+  const ids = new Set();
+  equipos.filter(e => e.sector_id === secId).forEach(e => {
+    _matrizProdIdsEquipo(e.id).forEach(id => ids.add(id));
+  });
+  return ids;
+}
+// Helper: ids de productos en un cliente (suma de sectores del cliente)
+function _matrizProdIdsCliente(cliId) {
+  const ids = new Set();
+  sectores.filter(s => s.cliente_id === cliId).forEach(s => {
+    _matrizProdIdsSector(s.id).forEach(id => ids.add(id));
+  });
+  return ids;
+}
+
 function _matrizCountProdsDelCliente(cliId) {
+  const ids = _matrizProdIdsCliente(cliId);
   const filtered = applyMatrizFilters(productosMatriz);
-  return filtered.filter(p => {
-    const ubics = productosMatrizUbicaciones.filter(u => u.producto_id === p.id);
-    if (ubics.length === 0) return p.cliente_id === cliId;  // raro, defensivo
-    return ubics.some(u => u.cliente_id === cliId);
-  }).length;
+  return filtered.filter(p => ids.has(p.id)).length;
 }
 function _matrizCountProdsDelSector(secId) {
-  const sec = sectores.find(s => s.id === secId);
-  if (!sec) return 0;
+  const ids = _matrizProdIdsSector(secId);
   const filtered = applyMatrizFilters(productosMatriz);
-  return filtered.filter(p => {
-    const ubics = productosMatrizUbicaciones.filter(u => u.producto_id === p.id);
-    return ubics.some(u => u.sector_id === secId);
-  }).length;
+  return filtered.filter(p => ids.has(p.id)).length;
 }
 function _matrizCountProdsDelEquipo(eqId) {
+  const ids = _matrizProdIdsEquipo(eqId);
   const filtered = applyMatrizFilters(productosMatriz);
-  return filtered.filter(p => {
-    const ubics = productosMatrizUbicaciones.filter(u => u.producto_id === p.id);
-    return ubics.some(u => u.equipo_id === eqId);
-  }).length;
+  return filtered.filter(p => ids.has(p.id)).length;
 }
 function _matrizCountProdsDelConjunto(conId) {
+  const ids = _matrizProdIdsConjunto(conId);
   const filtered = applyMatrizFilters(productosMatriz);
-  return filtered.filter(p => {
-    const ubics = productosMatrizUbicaciones.filter(u => u.producto_id === p.id);
-    return ubics.some(u => u.conjunto_id === conId);
-  }).length;
+  return filtered.filter(p => ids.has(p.id)).length;
 }
 function _matrizCountProdsDelSubconjunto(subId) {
+  const ids = _matrizProdIdsSubconjunto(subId);
   const filtered = applyMatrizFilters(productosMatriz);
-  return filtered.filter(p => {
-    const ubics = productosMatrizUbicaciones.filter(u => u.producto_id === p.id);
-    return ubics.some(u => u.subconjunto_id === subId);
-  }).length;
+  return filtered.filter(p => ids.has(p.id)).length;
 }
 
 // ---- Render de cada nivel ----
@@ -8713,19 +8810,20 @@ function _matrizRenderProductoCardNested(p, contextoUbic) {
   const procs = productosMatrizProcesos.filter(pr => pr.producto_id === p.id)
     .sort((a, b) => (a.orden || 999999) - (b.orden || 999999));
   const expanded = matrizExpanded.has('prod:' + p.id);
-  // v69: calcular cantidad en este contenedor (si aplica). El chip aparece solo
-  // si hay contenedor Y cantidad > 0. Si es producto suelto del cliente o
-  // directo del sector, NO mostramos chip.
+  // v69/v70: calcular cantidad en este contenedor (si aplica). El chip aparece
+  // solo si hay contenedor Y cantidad > 0. En v70 lee de las tablas nuevas.
   let cantidadChip = '';
   if (contextoUbic) {
-    const ubic = productosMatrizUbicaciones.find(u =>
-      u.producto_id === p.id &&
-      (contextoUbic.subconjuntoId ? u.subconjunto_id === contextoUbic.subconjuntoId : true) &&
-      (contextoUbic.conjuntoId && !contextoUbic.subconjuntoId ? u.conjunto_id === contextoUbic.conjuntoId && !u.subconjunto_id : true) &&
-      (contextoUbic.equipoId && !contextoUbic.conjuntoId && !contextoUbic.subconjuntoId ? u.equipo_id === contextoUbic.equipoId && !u.conjunto_id : true)
-    );
-    if (ubic && ubic.cantidad && ubic.cantidad > 0) {
-      cantidadChip = ' <span style="display:inline-block;background:#0C447C;color:#fff;font-size:9px;font-weight:600;padding:1px 6px;border-radius:8px;margin-left:4px;vertical-align:middle">×' + ubic.cantidad + '</span>';
+    let cant = 0;
+    if (contextoUbic.subconjuntoId) {
+      cant = _matrizCantidadProductoEn('subconjunto', contextoUbic.subconjuntoId, p.id);
+    } else if (contextoUbic.conjuntoId) {
+      cant = _matrizCantidadProductoEn('conjunto', contextoUbic.conjuntoId, p.id);
+    } else if (contextoUbic.equipoId) {
+      cant = _matrizCantidadProductoEn('equipo', contextoUbic.equipoId, p.id);
+    }
+    if (cant > 0) {
+      cantidadChip = ' <span style="display:inline-block;background:#0C447C;color:#fff;font-size:9px;font-weight:600;padding:1px 6px;border-radius:8px;margin-left:4px;vertical-align:middle">×' + cant + '</span>';
     }
   }
   let h = '<div style="background:#fff;border:1px solid #C8C6BE;border-radius:5px;margin-bottom:5px;overflow:hidden">';
@@ -9662,6 +9760,85 @@ async function _sincronizarRelacionesNM(ubicaciones) {
   }
 }
 
+// v70: Sincroniza las tablas de composición nuevas con las ubicaciones que se
+// están guardando. Para el producto `savedProductoId`, recorre las ubicaciones
+// pendientes y crea/actualiza las filas correspondientes en:
+//   - subconjunto_productos (si la ubicación tiene subconjunto_id)
+//   - conjunto_productos (si tiene conjunto_id pero NO subconjunto_id)
+//   - equipo_productos (si tiene equipo_id pero NO conjunto_id)
+// Antes de insertar borra todas las filas previas del producto en esas tablas,
+// para que el estado final sea exactamente lo que tiene el form.
+// También asegura las relaciones de composición entre contenedores
+// (equipo_conjuntos, conjunto_subconjuntos) si no existen.
+async function _sincronizarComposicionV70(savedProductoId, ubicaciones) {
+  if (!savedProductoId) return;
+  // 1. Borrar todas las filas previas del producto en las 3 tablas
+  await sb.from('subconjunto_productos').delete().eq('producto_id', savedProductoId);
+  await sb.from('conjunto_productos').delete().eq('producto_id', savedProductoId);
+  await sb.from('equipo_productos').delete().eq('producto_id', savedProductoId);
+
+  // 2. Preparar inserts agrupados por nivel. Si el mismo producto aparece varias
+  // veces en el mismo contenedor, se suman las cantidades.
+  const subProds = new Map();
+  const conProds = new Map();
+  const eqProds = new Map();
+  ubicaciones.forEach(u => {
+    const cant = u.cantidad || 1;
+    if (u.subconjunto_id) {
+      const k = u.subconjunto_id + ':' + savedProductoId;
+      const prev = subProds.get(k);
+      subProds.set(k, { subconjunto_id: u.subconjunto_id, producto_id: savedProductoId, cantidad: (prev ? prev.cantidad : 0) + cant });
+    } else if (u.conjunto_id) {
+      const k = u.conjunto_id + ':' + savedProductoId;
+      const prev = conProds.get(k);
+      conProds.set(k, { conjunto_id: u.conjunto_id, producto_id: savedProductoId, cantidad: (prev ? prev.cantidad : 0) + cant });
+    } else if (u.equipo_id) {
+      const k = u.equipo_id + ':' + savedProductoId;
+      const prev = eqProds.get(k);
+      eqProds.set(k, { equipo_id: u.equipo_id, producto_id: savedProductoId, cantidad: (prev ? prev.cantidad : 0) + cant });
+    }
+  });
+
+  if (subProds.size > 0) {
+    const { error } = await sb.from('subconjunto_productos').insert([...subProds.values()]);
+    if (error) console.warn('Error subconjunto_productos:', error);
+  }
+  if (conProds.size > 0) {
+    const { error } = await sb.from('conjunto_productos').insert([...conProds.values()]);
+    if (error) console.warn('Error conjunto_productos:', error);
+  }
+  if (eqProds.size > 0) {
+    const { error } = await sb.from('equipo_productos').insert([...eqProds.values()]);
+    if (error) console.warn('Error equipo_productos:', error);
+  }
+
+  // 3. Asegurar relaciones de composición entre contenedores
+  const ecPairs = new Map();
+  const csPairs = new Map();
+  ubicaciones.forEach(u => {
+    if (u.equipo_id && u.conjunto_id) {
+      ecPairs.set(u.equipo_id + ':' + u.conjunto_id, { equipo_id: u.equipo_id, conjunto_id: u.conjunto_id, cantidad: 1 });
+    }
+    if (u.conjunto_id && u.subconjunto_id) {
+      csPairs.set(u.conjunto_id + ':' + u.subconjunto_id, { conjunto_id: u.conjunto_id, subconjunto_id: u.subconjunto_id, cantidad: 1 });
+    }
+  });
+  for (const par of ecPairs.values()) {
+    const ya = equipoConjuntos.find(ec => ec.equipo_id === par.equipo_id && ec.conjunto_id === par.conjunto_id);
+    if (!ya) {
+      const { error } = await sb.from('equipo_conjuntos').insert(par);
+      if (error && error.code !== '23505') console.warn('Error equipo_conjuntos:', error);
+    }
+  }
+  for (const par of csPairs.values()) {
+    const ya = conjuntoSubconjuntos.find(cs => cs.conjunto_id === par.conjunto_id && cs.subconjunto_id === par.subconjunto_id);
+    if (!ya) {
+      const { error } = await sb.from('conjunto_subconjuntos').insert(par);
+      if (error && error.code !== '23505') console.warn('Error conjunto_subconjuntos:', error);
+    }
+  }
+}
+
 async function saveProductoMatriz(productoId) {
   const descripcion = document.getElementById('pm-desc').value.trim();
   if (!descripcion) { toast('La descripción es obligatoria', true); return; }
@@ -9741,9 +9918,17 @@ async function saveProductoMatriz(productoId) {
     }));
     const { error: errU } = await sb.from('productos_matriz_ubicaciones').insert(inserts);
     if (errU) { toast('Producto guardado pero error en ubicaciones: ' + errU.message, true); console.error(errU); }
-    // v68: garantizar las relaciones N:M (conjuntos_equipos, subconjuntos_conjuntos)
-    // que necesita la vista anidada para renderizar las jerarquías.
+    // v68: garantizar las relaciones N:M viejas (compat con código legacy).
     await _sincronizarRelacionesNM(pmFormState.ubicacionesPendientes);
+    // v70: sincronizar TAMBIÉN en las tablas nuevas de composición.
+    // Cada ubicación nueva se mapea al nivel más específico que tenga.
+    await _sincronizarComposicionV70(savedProductoId, pmFormState.ubicacionesPendientes);
+  } else {
+    // Sin ubicaciones: también borramos de las tablas nuevas todas las
+    // referencias al producto, así no queda en lugares "fantasma".
+    await sb.from('subconjunto_productos').delete().eq('producto_id', savedProductoId);
+    await sb.from('conjunto_productos').delete().eq('producto_id', savedProductoId);
+    await sb.from('equipo_productos').delete().eq('producto_id', savedProductoId);
   }
 
   document.getElementById('prod-matriz-modal').remove();
@@ -9819,11 +10004,16 @@ async function removePmCorrelatividad(predId, sucId) {
   });
 }
 
+// v69: Set de IDs seleccionados para selección múltiple en el picker de
+// predecesores de producto matriz.
+let _pmPredMultiSelected = new Set();
+
 // Modal para elegir un predecesor entre los procesos disponibles.
 // Candidatos: todos los procesos del mismo cliente (intra-producto + inter-producto),
 // EXCEPTO el proceso mismo. Se filtran los que ya son predecesores y los que
 // crearian ciclo (sucesor de este).
 function showPmPredecesorPicker(procesoId) {
+  _pmPredMultiSelected = new Set();
   const proceso = productosMatrizProcesos.find(p => p.id === procesoId);
   if (!proceso) return;
   const prod = productosMatriz.find(p => p.id === proceso.producto_id);
@@ -9843,7 +10033,6 @@ function showPmPredecesorPicker(procesoId) {
   candidatos = candidatos.filter(p => !yaPreds.has(p.id));
   // Evitar ciclos directos: si el candidato tiene a este proceso como predecesor
   // (transitivo), no lo permitimos. Por simplicidad solo verificamos el 1er nivel.
-  // (Un ciclo profundo va a fallar mas adelante en la planificacion.)
   const sucesoresDeEste = new Set(productosMatrizCorrelatividades
     .filter(c => c.predecesor_id === procesoId).map(c => c.sucesor_id));
   candidatos = candidatos.filter(p => !sucesoresDeEste.has(p.id));
@@ -9863,13 +10052,12 @@ function showPmPredecesorPicker(procesoId) {
   h += '<div style="font-size:11px;color:#5F5E5A;margin-bottom:8px">';
   h += 'Producto actual: <b>' + escapeHtml(prod.descripcion) + '</b>. ';
   h += 'Cliente: <b>' + escapeHtml(cliId ? ((clientes.find(c => c.id === cliId) || {}).nombre || '?') : 'Genérico') + '</b>. ';
-  h += 'Mostrando procesos del mismo cliente.';
+  h += 'Mostrando procesos del mismo cliente. Podés elegir uno (click en la fila o botón Elegir) o varios con los checkboxes.';
   h += '</div>';
   if (grupos.size === 0) {
     h += '<div style="padding:20px;text-align:center;color:#888;font-size:12px;font-style:italic">No hay procesos candidatos disponibles.</div>';
   } else {
     h += '<div style="max-height:400px;overflow-y:auto;border:1px solid #E8E6DF;border-radius:5px">';
-    // Ordenar grupos: el mismo producto primero, despues alfabetico
     const sortedGrupos = [...grupos.entries()].sort((a, b) => {
       if (a[0] === proceso.producto_id) return -1;
       if (b[0] === proceso.producto_id) return 1;
@@ -9886,16 +10074,60 @@ function showPmPredecesorPicker(procesoId) {
       h += '</div>';
       procs.sort((a, b) => (a.orden || 999999) - (b.orden || 999999));
       procs.forEach(pp => {
-        h += '<div style="padding:6px 14px;border-bottom:1px solid #E8E6DF;font-size:12px;cursor:pointer;display:flex;justify-content:space-between;align-items:center" onclick="addPmPredecesor(' + pp.id + ',' + procesoId + ')">';
+        // v69: checkbox para selección múltiple + el click en la fila sigue
+        // siendo "elegir uno solo" (comportamiento original).
+        h += '<div style="display:flex;align-items:center;padding:6px 14px;border-bottom:1px solid #E8E6DF;font-size:12px;gap:8px">';
+        h += '<input type="checkbox" id="pmpredcb-' + pp.id + '" onclick="event.stopPropagation();togglePmPredMulti(' + pp.id + ')" style="cursor:pointer;flex:0 0 auto">';
+        h += '<div style="flex:1;display:flex;justify-content:space-between;align-items:center;cursor:pointer" onclick="addPmPredecesor(' + pp.id + ',' + procesoId + ')">';
         h += '<span><span style="color:#888;margin-right:6px">#' + (pp.orden || '?') + '</span>' + escapeHtml(pp.proceso || '?') + '</span>';
         h += '<button class="b b-p" style="padding:2px 8px;font-size:10px">Elegir</button>';
+        h += '</div>';
         h += '</div>';
       });
     });
     h += '</div>';
   }
-  h += '<div class="actions"><button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button></div>';
+  h += '<div class="actions">';
+  h += '<button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button>';
+  h += '<button class="b b-p" id="pm-pred-multi-btn" onclick="addPmPredecesoresSeleccionados(' + procesoId + ')" disabled style="opacity:0.5">Elegir seleccionados (0)</button>';
+  h += '</div>';
   m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
+}
+
+function togglePmPredMulti(id) {
+  if (_pmPredMultiSelected.has(id)) _pmPredMultiSelected.delete(id);
+  else _pmPredMultiSelected.add(id);
+  const btn = document.getElementById('pm-pred-multi-btn');
+  if (btn) {
+    btn.textContent = 'Elegir seleccionados (' + _pmPredMultiSelected.size + ')';
+    btn.disabled = _pmPredMultiSelected.size === 0;
+    btn.style.opacity = _pmPredMultiSelected.size === 0 ? '0.5' : '1';
+  }
+}
+
+async function addPmPredecesoresSeleccionados(sucId) {
+  if (_pmPredMultiSelected.size === 0) { toast('No hay nada seleccionado', true); return; }
+  const ids = Array.from(_pmPredMultiSelected);
+  let ok = 0;
+  const fallidos = [];
+  for (const predId of ids) {
+    const { error } = await sb.from('productos_matriz_correlatividades').insert({
+      predecesor_id: predId, sucesor_id: sucId
+    });
+    if (error) {
+      const p = productosMatrizProcesos.find(x => x.id === predId);
+      fallidos.push((p && p.proceso) || ('id ' + predId));
+      continue;
+    }
+    ok++;
+  }
+  await loadAll();
+  const modal = document.getElementById('pm-pred-modal');
+  if (modal) modal.remove();
+  let msg = ok + ' predecesor(es) agregado(s)';
+  if (fallidos.length) msg += '. Fallaron ' + fallidos.length + ': ' + fallidos.join(', ');
+  toast(msg, fallidos.length > 0);
+  render();
 }
 
 async function addPmPredecesor(predId, sucId) {
