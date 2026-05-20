@@ -3949,8 +3949,13 @@ function _afmListaHtml() {
   }
   let h = '<div style="padding:8px">';
 
-  // Conjuntos anidados
+  // Conjuntos anidados (v70: omitir el conjunto default "Sin conjunto
+  // específico" si está vacío, igual que en la vista anidada de la matriz)
   conjuntosFiltrados.forEach(c => {
+    if (_esConjuntoDefault(c)) {
+      const exp = _expandirConjunto(c.id, 1);
+      if (exp.productos.length === 0) return;  // default vacío: no mostrar
+    }
     h += _afmRenderConjuntoNode(c);
   });
 
@@ -4095,25 +4100,16 @@ function _afmRenderProductoLeaf(p, cantOpt) {
 function _expandirConjunto(conjuntoId, multiplicador) {
   const productosMap = new Map();  // prodId -> cantidad total
   const problemas = new Set();
-  // 1. Productos cuya ubicacion termina en este conjunto (sin subconjunto)
-  const ubicsDirect = productosMatrizUbicaciones.filter(u =>
-    u.conjunto_id === conjuntoId && !u.subconjunto_id);
-  // Como un producto puede tener varias ubicaciones distintas a este conjunto
-  // (por diferentes equipos), usamos un Set de productos ya contados para no
-  // duplicar. La cantidad por producto se toma de la primera ubicacion que matchee.
-  const productosYaContados = new Set();
-  ubicsDirect.forEach(u => {
-    if (productosYaContados.has(u.producto_id)) return;
-    productosYaContados.add(u.producto_id);
-    const cant = (u.cantidad || 1) * multiplicador;
-    productosMap.set(u.producto_id, (productosMap.get(u.producto_id) || 0) + cant);
-    if (_matrizProductoTieneProblemas(u.producto_id)) problemas.add(u.producto_id);
+  // v70: Productos directos del conjunto (de conjunto_productos)
+  conjuntoProductos.filter(cp => cp.conjunto_id === conjuntoId).forEach(cp => {
+    const cant = (cp.cantidad || 1) * multiplicador;
+    productosMap.set(cp.producto_id, (productosMap.get(cp.producto_id) || 0) + cant);
+    if (_matrizProductoTieneProblemas(cp.producto_id)) problemas.add(cp.producto_id);
   });
-  // 2. Subconjuntos asociados al conjunto via subconjuntos_conjuntos
-  const subRels = subconjuntosConjuntos.filter(sc => sc.conjunto_id === conjuntoId);
-  subRels.forEach(sc => {
-    const subMult = (sc.cantidad || 1) * multiplicador;
-    const subExp = _expandirSubconjunto(sc.subconjunto_id, subMult);
+  // v70: Subconjuntos asociados al conjunto (de conjunto_subconjuntos)
+  conjuntoSubconjuntos.filter(cs => cs.conjunto_id === conjuntoId).forEach(cs => {
+    const subMult = (cs.cantidad || 1) * multiplicador;
+    const subExp = _expandirSubconjunto(cs.subconjunto_id, subMult);
     subExp.productos.forEach(({ prodId, cant }) => {
       productosMap.set(prodId, (productosMap.get(prodId) || 0) + cant);
     });
@@ -4128,15 +4124,11 @@ function _expandirConjunto(conjuntoId, multiplicador) {
 function _expandirSubconjunto(subconjuntoId, multiplicador) {
   const productosMap = new Map();
   const problemas = new Set();
-  // Productos cuya ubicacion termina en este subconjunto
-  const ubics = productosMatrizUbicaciones.filter(u => u.subconjunto_id === subconjuntoId);
-  const productosYaContados = new Set();
-  ubics.forEach(u => {
-    if (productosYaContados.has(u.producto_id)) return;
-    productosYaContados.add(u.producto_id);
-    const cant = (u.cantidad || 1) * multiplicador;
-    productosMap.set(u.producto_id, (productosMap.get(u.producto_id) || 0) + cant);
-    if (_matrizProductoTieneProblemas(u.producto_id)) problemas.add(u.producto_id);
+  // v70: Productos del subconjunto (de subconjunto_productos)
+  subconjuntoProductos.filter(sp => sp.subconjunto_id === subconjuntoId).forEach(sp => {
+    const cant = (sp.cantidad || 1) * multiplicador;
+    productosMap.set(sp.producto_id, (productosMap.get(sp.producto_id) || 0) + cant);
+    if (_matrizProductoTieneProblemas(sp.producto_id)) problemas.add(sp.producto_id);
   });
   return {
     productos: [...productosMap.entries()].map(([prodId, cant]) => ({ prodId, cant })),
@@ -4160,26 +4152,20 @@ function _expandirSubconjunto(subconjuntoId, multiplicador) {
 // (multiplicador del conjunto × cantidad del subconjunto en el conjunto).
 function _expandirConjuntoJerarquico(conjuntoId, multiplicador) {
   const problemas = new Set();
-  // 1. Productos directos del conjunto (sin subconjunto)
+  // v70: Productos directos del conjunto (de conjunto_productos)
   const productosDirectos = [];
-  const ubicsDirect = productosMatrizUbicaciones.filter(u =>
-    u.conjunto_id === conjuntoId && !u.subconjunto_id);
-  const productosYaContados = new Set();
-  ubicsDirect.forEach(u => {
-    if (productosYaContados.has(u.producto_id)) return;
-    productosYaContados.add(u.producto_id);
-    const cant = (u.cantidad || 1) * multiplicador;
-    productosDirectos.push({ prodId: u.producto_id, cant: cant });
-    if (_matrizProductoTieneProblemas(u.producto_id)) problemas.add(u.producto_id);
+  conjuntoProductos.filter(cp => cp.conjunto_id === conjuntoId).forEach(cp => {
+    const cant = (cp.cantidad || 1) * multiplicador;
+    productosDirectos.push({ prodId: cp.producto_id, cant: cant });
+    if (_matrizProductoTieneProblemas(cp.producto_id)) problemas.add(cp.producto_id);
   });
-  // 2. Subconjuntos del conjunto
+  // v70: Subconjuntos del conjunto (de conjunto_subconjuntos)
   const subconjuntosArr = [];
-  const subRels = subconjuntosConjuntos.filter(sc => sc.conjunto_id === conjuntoId);
-  subRels.forEach(sc => {
-    const sub = subconjuntos.find(s => s.id === sc.subconjunto_id);
+  conjuntoSubconjuntos.filter(cs => cs.conjunto_id === conjuntoId).forEach(cs => {
+    const sub = subconjuntos.find(s => s.id === cs.subconjunto_id);
     if (!sub) return;
-    const cantSub = (sc.cantidad || 1) * multiplicador;
-    const subExp = _expandirSubconjunto(sc.subconjunto_id, cantSub);
+    const cantSub = (cs.cantidad || 1) * multiplicador;
+    const subExp = _expandirSubconjunto(cs.subconjunto_id, cantSub);
     subconjuntosArr.push({
       subId: sub.id,
       subNombre: sub.nombre,
@@ -4238,21 +4224,36 @@ function afmGetFilteredProductos() {
       return numericIds.has(p.cliente_id);
     });
   }
-  // 3. Jerarquia
+  // 3. Jerarquia — v70: usa tablas de composición nuevas
   const sectIds = new Set((f.sectorIds || []).map(x => parseInt(x)));
   const eqIds = new Set((f.equipoIds || []).map(x => parseInt(x)));
   const conIds = new Set((f.conjuntoIds || []).map(x => parseInt(x)));
   const subIds = new Set((f.subconjuntoIds || []).map(x => parseInt(x)));
   if (sectIds.size > 0 || eqIds.size > 0 || conIds.size > 0 || subIds.size > 0) {
     out = out.filter(p => {
-      const ubics = productosMatrizUbicaciones.filter(u => u.producto_id === p.id);
-      return ubics.some(u => {
-        if (sectIds.size > 0 && !sectIds.has(u.sector_id)) return false;
-        if (eqIds.size > 0 && !eqIds.has(u.equipo_id)) return false;
-        if (conIds.size > 0 && !conIds.has(u.conjunto_id)) return false;
-        if (subIds.size > 0 && !subIds.has(u.subconjunto_id)) return false;
-        return true;
-      });
+      // El producto matchea si aparece en algún contenedor que cumpla los filtros.
+      // Subconjuntos:
+      if (subIds.size > 0) {
+        const ok = subconjuntoProductos.some(sp => sp.producto_id === p.id && subIds.has(sp.subconjunto_id));
+        if (ok) return true;
+      }
+      // Conjuntos (directos):
+      if (conIds.size > 0) {
+        const ok = conjuntoProductos.some(cp => cp.producto_id === p.id && conIds.has(cp.conjunto_id));
+        if (ok) return true;
+      }
+      // Equipos (directos):
+      if (eqIds.size > 0) {
+        const ok = equipoProductos.some(ep => ep.producto_id === p.id && eqIds.has(ep.equipo_id));
+        if (ok) return true;
+      }
+      // Sectores: el producto está en algún equipo del sector
+      if (sectIds.size > 0) {
+        for (const sid of sectIds) {
+          if (_matrizProdIdsSector(sid).has(p.id)) return true;
+        }
+      }
+      return false;
     });
   }
   // 4. Codigos transversal
@@ -4263,17 +4264,6 @@ function afmGetFilteredProductos() {
       if (cli && cli.codigo && cli.codigo.toLowerCase().includes(q)) return true;
       if (p.codigo_cliente && p.codigo_cliente.toLowerCase().includes(q)) return true;
       if (String(p.id).includes(q)) return true;
-      const ubics = productosMatrizUbicaciones.filter(u => u.producto_id === p.id);
-      for (const u of ubics) {
-        if (u.equipo_id) {
-          const eq = equipos.find(e => e.id === u.equipo_id);
-          if (eq && eq.codigo_cliente && eq.codigo_cliente.toLowerCase().includes(q)) return true;
-        }
-        if (u.cliente_id) {
-          const cu = clientes.find(c => c.id === u.cliente_id);
-          if (cu && cu.codigo && cu.codigo.toLowerCase().includes(q)) return true;
-        }
-      }
       return false;
     });
   }
