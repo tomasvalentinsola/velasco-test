@@ -9660,7 +9660,7 @@ function _ecAgregarItem() {
   else tipos = ['producto'];  // subconjunto solo contiene productos
 
   let h = '<div class="md-t">Agregar al ' + st.tipo + '</div>';
-  h += '<div style="font-size:11px;color:#5F5E5A;margin-bottom:10px">Buscá y elegí qué agregar. Si no existe, después podés crearlo desde la matriz.</div>';
+  h += '<div style="font-size:11px;color:#5F5E5A;margin-bottom:10px">Buscá y elegí qué agregar. Si no existe, usá "+ Crear nuevo".</div>';
   // Filtro por tipo (si hay más de uno)
   if (tipos.length > 1) {
     h += '<div style="margin-bottom:10px">';
@@ -9668,11 +9668,61 @@ function _ecAgregarItem() {
     h += '<label style="font-size:11px"><input type="radio" name="ec-add-tipo" value="' + tipos[1] + '" onclick="_ecAddTipoChange()"> ' + tipos[1] + 's</label>';
     h += '</div>';
   }
-  h += '<input type="text" class="ef-i" id="ec-add-search" placeholder="Buscar..." oninput="_ecAddRenderLista()" style="margin-bottom:10px">';
+  h += '<div style="display:flex;gap:8px;margin-bottom:10px">';
+  h += '<input type="text" class="ef-i" id="ec-add-search" placeholder="Buscar..." oninput="_ecAddRenderLista()" style="flex:1;margin:0">';
+  h += '<button class="b b-p" onclick="_ecCrearNuevo()" style="flex:0 0 auto;white-space:nowrap">+ Crear nuevo</button>';
+  h += '</div>';
   h += '<div id="ec-add-list" style="max-height:360px;overflow-y:auto;border:1px solid #C8C6BE;border-radius:5px"></div>';
   h += '<div class="actions"><button class="b" onclick="document.getElementById(\'ec-agregar-modal\').remove()">Cancelar</button></div>';
   m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
   _ecAddRenderLista();
+}
+
+// v70 Fase 5: crear un conjunto/subconjunto/producto nuevo desde el modal de
+// agregar componente. El tipo se toma del radio activo. El item nuevo se crea
+// en la DB, se agrega a la lista del contenedor en edición, y queda listo.
+async function _ecCrearNuevo() {
+  const st = editContenedorState;
+  if (!st) return;
+  const tipo = _ecAddGetTipo();
+  // Cliente del contenedor que estamos editando
+  let cliId = st.clienteId || null;
+  if (st.tipo === 'equipo') {
+    const eq = equipos.find(e => e.id === st.id);
+    const sec = eq ? sectores.find(s => s.id === eq.sector_id) : null;
+    cliId = sec ? sec.cliente_id : null;
+  }
+  const nombre = prompt('Nombre del ' + tipo + ' nuevo:');
+  if (!nombre || !nombre.trim()) return;
+  showSpinner('Creando ' + tipo + '...');
+  try {
+    let nuevoId = null;
+    if (tipo === 'conjunto') {
+      const { data, error } = await sb.from('conjuntos').insert({ cliente_id: cliId, nombre: nombre.trim() }).select().single();
+      if (error) { toast('Error: ' + error.message, true); return; }
+      nuevoId = data.id;
+    } else if (tipo === 'subconjunto') {
+      const { data, error } = await sb.from('subconjuntos').insert({ cliente_id: cliId, nombre: nombre.trim() }).select().single();
+      if (error) { toast('Error: ' + error.message, true); return; }
+      nuevoId = data.id;
+    } else if (tipo === 'producto') {
+      const { data, error } = await sb.from('productos_matriz').insert({ cliente_id: cliId, descripcion: nombre.trim(), updated_at: new Date().toISOString() }).select().single();
+      if (error) { toast('Error: ' + error.message, true); return; }
+      nuevoId = data.id;
+    }
+    if (nuevoId) {
+      // Recargar datos para que el item nuevo esté en las listas globales
+      await loadAll();
+      // Agregar el item nuevo a la composición en edición
+      editContenedorState.items.push({ tipo, id: nuevoId, nombre: nombre.trim(), cantidad: 1 });
+      const modal = document.getElementById('ec-agregar-modal');
+      if (modal) modal.remove();
+      _ecRefreshItems();
+      toast(tipo.charAt(0).toUpperCase() + tipo.slice(1) + ' creado y agregado');
+    }
+  } finally {
+    hideSpinner();
+  }
 }
 
 function _ecAddTipoChange() {
@@ -9861,12 +9911,27 @@ async function _ejecutarEliminarSubconjunto(subconjuntoId, modo) {
   const dm = document.getElementById('del-cont-modal'); if (dm) dm.remove();
   showSpinner('Eliminando subconjunto...');
   try {
-    const prodIds = subconjuntoProductos.filter(sp => sp.subconjunto_id === subconjuntoId).map(sp => sp.producto_id);
+    const spList = subconjuntoProductos.filter(sp => sp.subconjunto_id === subconjuntoId);
+    const prodIds = spList.map(sp => sp.producto_id);
     if (modo === 'borrar') {
       // Borrar los productos que no se usan en otro lado
       for (const pid of prodIds) {
         if (!_productoUsadoEnOtroLado(pid, 'subconjunto', subconjuntoId)) {
           await sb.from('productos_matriz').delete().eq('id', pid);
+        }
+      }
+    } else {
+      // modo 'desvincular': los productos del subconjunto pasan al/los
+      // conjunto(s) que contienen este subconjunto. Si no, quedarían huérfanos
+      // porque el cascade borra subconjunto_productos al borrar el subconjunto.
+      const conIds = conjuntoSubconjuntos.filter(cs => cs.subconjunto_id === subconjuntoId).map(cs => cs.conjunto_id);
+      const conDestino = conIds[0] || null;
+      if (conDestino) {
+        for (const sp of spList) {
+          const ya = conjuntoProductos.find(cp => cp.conjunto_id === conDestino && cp.producto_id === sp.producto_id);
+          if (!ya) {
+            await sb.from('conjunto_productos').insert({ conjunto_id: conDestino, producto_id: sp.producto_id, cantidad: sp.cantidad || 1 });
+          }
         }
       }
     }
