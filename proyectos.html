@@ -611,12 +611,17 @@ function updateSpinnerMsg(msg) {
   if (m) m.textContent = msg || '';
 }
 
+let _toastTimer = null;
 function toast(msg, isErr) {
   const t = document.getElementById('to');
   t.textContent = msg;
   t.classList.toggle('err', !!isErr);
   t.classList.add('sh');
-  setTimeout(() => t.classList.remove('sh'), 3500);
+  // v70: los toast de error duran más (7.5s) para dar tiempo a leerlos;
+  // los de éxito/info, 3.5s.
+  if (_toastTimer) clearTimeout(_toastTimer);
+  const duracion = isErr ? 7500 : 3500;
+  _toastTimer = setTimeout(() => t.classList.remove('sh'), duracion);
 }
 function clN(id){const c=clientes.find(x=>x.id===id);return c?c.nombre:'?'}
 function mN(id){const m=maquinas.find(x=>x.id===id);return m?m.nombre:'?'}
