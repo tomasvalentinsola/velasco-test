@@ -6566,6 +6566,7 @@ function buildPhotoGalleryHtml(entidadTipo, entidadId, kind) {
 function abrirSlotPendiente(entidadTipo, entidadId, kind) {
   _galPendingSlot = { entidadTipo, entidadId, kind };
   render();
+  _refrescarModalContenedorSiAbierto();
   // Activar el slot recién renderizado para que paste funcione
   setTimeout(() => {
     const slotKind = 'gal:' + entidadTipo + ':' + entidadId;
@@ -6576,6 +6577,7 @@ function abrirSlotPendiente(entidadTipo, entidadId, kind) {
 function cancelarSlotPendiente() {
   _galPendingSlot = null;
   render();
+  _refrescarModalContenedorSiAbierto();
 }
 
 // DEPRECATED v61: agregarFotoUI ahora abre el slot pendiente en lugar de file picker directo.
@@ -8889,21 +8891,21 @@ function _matrizCountProdsDelSubconjunto(subId) {
 //   color: color del titulo (HEX)
 //   indent: paddingLeft del bloque expandido (px)
 //   childrenHtml: callback que devuelve el HTML interior cuando esta expandido
-function _matrizRenderNode(key, icon, title, meta, color, indent, childrenHtml, iconSize, addBtnFn, editBtnFn) {
+//   fotoUrl: (opcional) URL de imagen a mostrar AL LADO del emoji
+function _matrizRenderNode(key, icon, title, meta, color, indent, childrenHtml, iconSize, addBtnFn, editBtnFn, fotoUrl) {
   const expanded = matrizExpanded.has(key);
   let h = '<div style="background:#fff;border:1px solid #C8C6BE;border-radius:6px;margin-bottom:6px;overflow:hidden">';
   h += '<div style="display:flex;align-items:center;padding:8px 12px;gap:8px;cursor:pointer" onclick="matrizToggleExpand(\'' + key + '\')">';
   h += '<span style="font-size:13px;color:#5F5E5A;flex:0 0 auto;width:14px">' + (expanded ? '▼' : '▶') + '</span>';
   const size = iconSize || 14;
+  // El emoji/ícono siempre se muestra (es la pista visual del tipo de nodo).
   if (icon) {
-    // v70 Fase 4.5: si el icono es una URL (http...), lo renderizamos como
-    // imagen en miniatura. Si es un emoji/carácter, como antes.
-    if (typeof icon === 'string' && icon.indexOf('http') === 0) {
-      const imgSize = Math.max(size + 8, 22);
-      h += '<img src="' + escapeHtml(icon) + '" style="width:' + imgSize + 'px;height:' + imgSize + 'px;border-radius:4px;object-fit:cover;flex:0 0 auto" onerror="this.style.display=\'none\'">';
-    } else {
-      h += '<span style="font-size:' + size + 'px;flex:0 0 auto;line-height:1">' + icon + '</span>';
-    }
+    h += '<span style="font-size:' + size + 'px;flex:0 0 auto;line-height:1">' + icon + '</span>';
+  }
+  // v70 Fase 4.5: si hay foto, se muestra como miniatura AL LADO del ícono.
+  if (fotoUrl) {
+    const imgSize = Math.max(size + 8, 24);
+    h += '<img src="' + escapeHtml(fotoUrl) + '" style="width:' + imgSize + 'px;height:' + imgSize + 'px;border-radius:4px;object-fit:cover;flex:0 0 auto;border:1px solid #C8C6BE" onerror="this.style.display=\'none\'">';
   }
   h += '<div style="flex:1;min-width:0">';
   h += '<div style="font-weight:600;color:' + color + ';font-size:13px">' + title + '</div>';
@@ -9052,11 +9054,9 @@ function _matrizRenderClienteNode(cli) {
     ? ' <span style="display:inline-block;padding:1px 5px;border-radius:3px;font-size:9px;background:#0C447C;color:#fff;font-weight:500;margin-left:4px;letter-spacing:0.3px">' + escapeHtml(cli.codigo) + '</span>'
     : '';
   const warn = _matrizNivelTieneProblemas({ clienteId: cli.id }) ? _warningIconHtml('Algún producto debajo requiere atención') : '';
-  // v70 Fase 4.5: si el cliente tiene logo, lo usamos como icono.
-  const iconoCli = cli.foto_url || '🏢';
   return _matrizRenderNode(
     'cli:' + cli.id,
-    iconoCli,
+    '🏢',
     escapeHtml(cli.nombre) + codigoChip + warn,
     cnt + ' producto(s)',
     '#0C447C',
@@ -9079,7 +9079,9 @@ function _matrizRenderClienteNode(cli) {
       return inner;
     },
     null,
-    'pmNuevoConUbicacion({clienteId:' + cli.id + '})'
+    'pmNuevoConUbicacion({clienteId:' + cli.id + '})',
+    null,
+    cli.foto_url || null
   );
 }
 
@@ -9204,7 +9206,7 @@ function _matrizRenderConjuntoNode(con, cliId) {
   const equipoIdPrefill = ubicEjemplo && ubicEjemplo.equipo_id ? ubicEjemplo.equipo_id : 'null';
   return _matrizRenderNode(
     'con:' + con.id,
-    con.foto_url || '📦',
+    '📦',
     escapeHtml(con.nombre) + warn,
     cnt + ' producto(s)',
     '#5F5E5A',
@@ -9216,7 +9218,8 @@ function _matrizRenderConjuntoNode(con, cliId) {
     },
     22,
     'pmNuevoConUbicacion({clienteId:' + cliId + ',sectorId:' + sectorIdPrefill + ',equipoId:' + equipoIdPrefill + ',conjuntoId:' + con.id + '})',
-    'showEditarConjuntoModal(' + con.id + ')'
+    'showEditarConjuntoModal(' + con.id + ')',
+    con.foto_url || null
   );
 }
 
