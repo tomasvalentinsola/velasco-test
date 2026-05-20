@@ -2751,7 +2751,10 @@ function renderProjectDetail() {
   if (proj.items.length === 0) {
     h += '<div class="list-empty" style="padding:20px">Aun no hay items cargados.</div>';
   } else {
-    proj.items.forEach((it, idx) => {
+    // v70: agrupación visual. Los items con grupo_uid se muestran bajo un
+    // encabezado desplegable del conjunto. Los items sin grupo van sueltos.
+    // Helper para renderizar una card de item individual.
+    const renderItemCard = (it, numero) => {
       const procCount = actividades.filter(a => a.item_id === it.id && !a.proceso_eliminado).length;
       const itColors = itemStateColor(it.estado);
       const itBadge = '<span style="display:inline-block;padding:1px 7px;border-radius:3px;font-size:10px;font-weight:700;background:' + itColors.bg + ';color:' + itColors.fg + ';margin-left:6px">' + (it.estado || 'Espera MP') + '</span>';
@@ -2760,23 +2763,78 @@ function renderProjectDetail() {
       const img = it.foto_url
         ? '<img src="' + escapeHtml(it.foto_url) + '" style="width:42px;height:42px;border-radius:5px;object-fit:cover;flex-shrink:0">'
         : '<div style="width:42px;height:42px;border-radius:5px;background:#E8E6DF;display:flex;align-items:center;justify-content:center;color:#888780;font-size:8px;flex-shrink:0">sin foto</div>';
-      h += '<div class="card-item card-clickable" style="background:' + cardBg + '" onclick="navigate({view:\'item\',projectId:' + nav.projectId + ',itemId:' + it.id + '})">';
-      // Nº column
-      h += '<div style="width:32px;text-align:center;color:#2C2C2A;font-size:14px">' + (idx + 1) + '</div>';
-      // Cantidad column (bold number)
-      h += '<div style="width:48px;text-align:center;font-size:16px;font-weight:700;color:#2C2C2A">' + it.cantidad + '</div>';
-      h += img;
-      // Body: descripcion + estado + procesos
+      let c = '<div class="card-item card-clickable" style="background:' + cardBg + '" onclick="navigate({view:\'item\',projectId:' + nav.projectId + ',itemId:' + it.id + '})">';
+      c += '<div style="width:32px;text-align:center;color:#2C2C2A;font-size:14px">' + numero + '</div>';
+      c += '<div style="width:48px;text-align:center;font-size:16px;font-weight:700;color:#2C2C2A">' + it.cantidad + '</div>';
+      c += img;
+      c += '<div style="flex:1;min-width:0">';
+      c += '<div style="font-size:13px;font-weight:600">' + escapeHtml(it.descripcion) + itBadge + '</div>';
+      c += '<div style="font-size:11px;color:#5F5E5A">' + procCount + ' proceso(s)</div>';
+      c += '</div>';
+      c += '<div style="display:flex;gap:4px;flex-shrink:0">';
+      c += '<button class="b b-icon" onclick="event.stopPropagation();showItemForm(' + it.id + ')" title="Editar">Editar</button>';
+      c += '<button class="b b-icon" onclick="event.stopPropagation();duplicarItem(' + it.id + ')" title="Duplicar item con sus procesos">📑</button>';
+      c += '<button class="b b-icon b-d" onclick="event.stopPropagation();confirmDeleteItemFromList(' + it.id + ')" title="Eliminar">🗑</button>';
+      c += '</div></div>';
+      return c;
+    };
+
+    // Separar items en grupos y sueltos, conservando el orden original.
+    const gruposVistos = [];  // [{uid, etiqueta, cantidad, notas, conjuntoId, items:[]}]
+    const gruposPorUid = {};
+    const sueltos = [];
+    proj.items.forEach(it => {
+      if (it.grupo_uid) {
+        if (!gruposPorUid[it.grupo_uid]) {
+          gruposPorUid[it.grupo_uid] = {
+            uid: it.grupo_uid,
+            etiqueta: it.grupo_etiqueta || 'Conjunto',
+            cantidad: it.grupo_cantidad || 1,
+            notas: it.grupo_notas || '',
+            conjuntoId: it.grupo_matriz_conjunto_id || null,
+            items: []
+          };
+          gruposVistos.push(gruposPorUid[it.grupo_uid]);
+        }
+        gruposPorUid[it.grupo_uid].items.push(it);
+        // tomar las notas de cualquier item del grupo (todas iguales)
+        if (it.grupo_notas) gruposPorUid[it.grupo_uid].notas = it.grupo_notas;
+      } else {
+        sueltos.push(it);
+      }
+    });
+
+    let numero = 0;
+    // Render de grupos
+    gruposVistos.forEach(g => {
+      numero++;
+      const key = 'projgrp:' + g.uid;
+      const expanded = matrizExpanded.has(key);
+      const procTotal = g.items.reduce((acc, it) => acc + actividades.filter(a => a.item_id === it.id && !a.proceso_eliminado).length, 0);
+      h += '<div style="background:#EEF4FB;border:1px solid #A8C8E8;border-radius:6px;margin-bottom:6px;overflow:hidden">';
+      h += '<div style="display:flex;align-items:center;padding:8px 12px;gap:8px;cursor:pointer" onclick="matrizToggleExpand(\'' + key + '\')">';
+      h += '<span style="font-size:13px;color:#5F5E5A;flex:0 0 auto;width:14px">' + (expanded ? '▼' : '▶') + '</span>';
+      h += '<div style="width:32px;text-align:center;color:#2C2C2A;font-size:14px">' + numero + '</div>';
+      h += '<span style="font-size:18px;flex:0 0 auto">📦</span>';
       h += '<div style="flex:1;min-width:0">';
-      h += '<div style="font-size:13px;font-weight:600">' + escapeHtml(it.descripcion) + itBadge + '</div>';
-      h += '<div style="font-size:11px;color:#5F5E5A">' + procCount + ' proceso(s)</div>';
+      h += '<div style="font-size:13px;font-weight:700;color:#0C447C">' + escapeHtml(g.etiqueta) + ' <span style="font-size:11px;color:#5F5E5A;font-weight:400">×' + g.cantidad + '</span></div>';
+      h += '<div style="font-size:11px;color:#5F5E5A">' + g.items.length + ' producto(s) · ' + procTotal + ' proceso(s)' + (g.notas ? ' · 📝 con notas' : '') + '</div>';
       h += '</div>';
-      // Actions
-      h += '<div style="display:flex;gap:4px;flex-shrink:0">';
-      h += '<button class="b b-icon" onclick="event.stopPropagation();showItemForm(' + it.id + ')" title="Editar">Editar</button>';
-      h += '<button class="b b-icon" onclick="event.stopPropagation();duplicarItem(' + it.id + ')" title="Duplicar item con sus procesos">📑</button>';
-      h += '<button class="b b-icon b-d" onclick="event.stopPropagation();confirmDeleteItemFromList(' + it.id + ')" title="Eliminar">🗑</button>';
-      h += '</div></div>';
+      h += '<button class="b b-icon" onclick="event.stopPropagation();showEditarGrupoModal(\'' + g.uid + '\')" title="Editar conjunto (cantidad y notas)" style="flex:0 0 auto">✎</button>';
+      h += '</div>';
+      if (expanded) {
+        h += '<div style="border-top:1px solid #C8DBF0;background:#FAFCFE;padding:6px 6px 6px 28px">';
+        g.items.forEach(it => {
+          h += renderItemCard(it, '·');
+        });
+        h += '</div>';
+      }
+      h += '</div>';
+    });
+    // Render de sueltos
+    sueltos.forEach(it => {
+      numero++;
+      h += renderItemCard(it, numero);
     });
   }
   h += '</div>';
@@ -3056,6 +3114,8 @@ async function saveProjectMeta() {
     const dup = proyectos.find(p => p.pedido_nro === pedidoNro && p.id !== proj.id);
     if (dup) { toast('Ya existe un proyecto con el pedido ' + pedidoNro, true); return; }
   }
+  showSpinner('Guardando proyecto...');
+  try {
   await sb.from('proyectos').update({
     cliente_id: nuevoClienteId,
     descripcion, urgencia, foto_url: foto, fecha_ingreso: fechaIngreso,
@@ -3064,10 +3124,7 @@ async function saveProjectMeta() {
     observaciones_mail: obsMail,
     contacto_id
   }).eq('id', proj.id);
-  // Propagate cliente_id to items y activities tambien (item.cliente_id se usa
-  // en la portada y en el tablero)
   await sb.from('items').update({ cliente_id: nuevoClienteId, pedido_nro: pedidoNro }).eq('proyecto_id', proj.id);
-  // Propagate to activities of all items
   for (const it of proj.items) {
     await sb.from('actividades_tablero').update({
       cliente_id: nuevoClienteId,
@@ -3076,10 +3133,17 @@ async function saveProjectMeta() {
     }).eq('item_id', it.id);
   }
   toast('Proyecto actualizado');
-  // v64: tras guardar, limpiar snapshot para que se re-tome con los nuevos valores
-  _projectEditSnapshot = null;
   await loadAll();
+  _projectEditSnapshot = null;
   render();
+  setTimeout(() => {
+    if (nav.view === 'project' && nav.projectId === proj.id) {
+      _takeProjectSnapshot(proj.id);
+    }
+  }, 50);
+  } finally {
+    hideSpinner();
+  }
 }
 
 async function confirmDeleteProject() {
@@ -3091,14 +3155,19 @@ async function confirmDeleteProject() {
     mensaje: 'Eliminar el proyecto "' + (proj.descripcion || '(sin descripcion)') + '" con sus ' + proj.items.length + ' item(s) y ' + procCount + ' proceso(s)?',
     textoConfirmar: 'Eliminar',
     onConfirm: async () => {
-      for (const it of proj.items) {
-        await sb.from('actividades_tablero').delete().eq('item_id', it.id);
-        await sb.from('items').delete().eq('id', it.id);
+      showSpinner('Eliminando proyecto...');
+      try {
+        for (const it of proj.items) {
+          await sb.from('actividades_tablero').delete().eq('item_id', it.id);
+          await sb.from('items').delete().eq('id', it.id);
+        }
+        await sb.from('proyectos').delete().eq('id', proj.id);
+        await loadAll();
+        toast('Proyecto eliminado');
+        navigate({ view: 'projects' });
+      } finally {
+        hideSpinner();
       }
-      await sb.from('proyectos').delete().eq('id', proj.id);
-      await loadAll();
-      toast('Proyecto eliminado');
-      navigate({ view: 'projects' });
     }
   });
 }
@@ -3996,22 +4065,27 @@ function _afmRenderConjuntoNode(c) {
   h += '</div>';
   if (expanded) {
     h += '<div style="border-top:1px solid #E8E6DF;background:#FAF9F5;padding:8px 8px 8px 24px">';
-    // Subconjuntos
-    const subRels = subconjuntosConjuntos.filter(sc => sc.conjunto_id === c.id);
-    subRels.forEach(sc => {
-      const sub = subconjuntos.find(s => s.id === sc.subconjunto_id);
-      if (sub) h += _afmRenderSubconjuntoNode(sub);
+    // v70: Subconjuntos del conjunto (de conjunto_subconjuntos)
+    const subRels = conjuntoSubconjuntos.filter(cs => cs.conjunto_id === c.id);
+    let subsRenderizados = 0;
+    subRels.forEach(cs => {
+      const sub = subconjuntos.find(s => s.id === cs.subconjunto_id);
+      if (!sub) return;
+      // Omitir subconjunto default vacío
+      if (_esSubconjuntoDefault(sub)) {
+        const exp = _expandirSubconjunto(sub.id, 1);
+        if (exp.productos.length === 0) return;
+      }
+      h += _afmRenderSubconjuntoNode(sub);
+      subsRenderizados++;
     });
-    // Productos directos del conjunto (sin subconjunto)
-    const ubicsDirect = productosMatrizUbicaciones.filter(u => u.conjunto_id === c.id && !u.subconjunto_id);
-    const productosYaContados = new Set();
-    ubicsDirect.forEach(u => {
-      if (productosYaContados.has(u.producto_id)) return;
-      productosYaContados.add(u.producto_id);
-      const p = productosMatriz.find(x => x.id === u.producto_id);
-      if (p) h += _afmRenderProductoLeaf(p, u.cantidad || 1);
+    // v70: Productos directos del conjunto (de conjunto_productos)
+    const prodsDirectos = conjuntoProductos.filter(cp => cp.conjunto_id === c.id);
+    prodsDirectos.forEach(cp => {
+      const p = productosMatriz.find(x => x.id === cp.producto_id);
+      if (p) h += _afmRenderProductoLeaf(p, cp.cantidad || 1);
     });
-    if (subRels.length === 0 && productosYaContados.size === 0) {
+    if (subsRenderizados === 0 && prodsDirectos.length === 0) {
       h += '<div style="font-size:11px;color:#888;font-style:italic;padding:4px 0">Sin subconjuntos ni productos directos.</div>';
     }
     h += '</div>';
@@ -4043,15 +4117,13 @@ function _afmRenderSubconjuntoNode(sub) {
   h += '</div>';
   if (expanded) {
     h += '<div style="border-top:1px solid #E8E6DF;background:#FAF9F5;padding:8px 8px 8px 24px">';
-    const ubics = productosMatrizUbicaciones.filter(u => u.subconjunto_id === sub.id);
-    const productosYaContados = new Set();
-    ubics.forEach(u => {
-      if (productosYaContados.has(u.producto_id)) return;
-      productosYaContados.add(u.producto_id);
-      const p = productosMatriz.find(x => x.id === u.producto_id);
-      if (p) h += _afmRenderProductoLeaf(p, u.cantidad || 1);
+    // v70: Productos del subconjunto (de subconjunto_productos)
+    const prods = subconjuntoProductos.filter(sp => sp.subconjunto_id === sub.id);
+    prods.forEach(sp => {
+      const p = productosMatriz.find(x => x.id === sp.producto_id);
+      if (p) h += _afmRenderProductoLeaf(p, sp.cantidad || 1);
     });
-    if (productosYaContados.size === 0) {
+    if (prods.length === 0) {
       h += '<div style="font-size:11px;color:#888;font-style:italic;padding:4px 0">Sin productos.</div>';
     }
     h += '</div>';
@@ -4652,24 +4724,31 @@ function _confirmarImportGrupal(mode) {
   // Ejecutar import segun el modo (project / newProject)
   const stateAfm = agregarDesdeMatrizState;
   if (stateAfm && stateAfm.modo === 'newProject') {
-    // Pasamos el multiplicador para que la versión jerárquica lo aplique
     _seleccionarGrupoParaNewProject(Object.assign({}, opts, { multiplicador: cant }), expansion, fechaFin, estado, force);
   } else {
-    _ejecutarImportGrupalProyecto(expansion, fechaFin, estado, force, opts.nombreGrupo);
+    // v70: para conjuntos, pasamos grupoInfo para que los items queden agrupados.
+    // Para subconjuntos sueltos (importados directo) también los agrupamos.
+    const grupoInfo = {
+      conjuntoId: opts.tipo === 'conjunto' ? opts.grupoId : null,
+      etiqueta: opts.nombreGrupo,
+      cantidad: cant
+    };
+    _ejecutarImportGrupalProyecto(expansion, fechaFin, estado, force, opts.nombreGrupo, grupoInfo);
   }
 }
 
-async function _ejecutarImportGrupalProyecto(expansion, fechaFin, estado, ignorarValidaciones, nombreGrupo) {
+async function _ejecutarImportGrupalProyecto(expansion, fechaFin, estado, ignorarValidaciones, nombreGrupo, grupoInfo) {
   const proj = getProject(nav.projectId);
   if (!proj) return;
   const total = expansion.productos.length;
   showSpinner('Importando ' + total + ' producto(s)...');
   let importados = 0;
   let totalUnidades = 0;
-  // Mapeo global pmp_id -> act_id de TODOS los productos importados, para
-  // crear correlatividades inter-producto al final.
   const globalPmpToAct = {};
   const BATCH_SIZE = 5;
+  // v70: uid único para este grupo importado (permite distinguir importaciones
+  // repetidas del mismo conjunto al mismo proyecto).
+  const grupoUid = grupoInfo ? ('grp_' + Date.now() + '_' + Math.floor(Math.random() * 10000)) : null;
   try {
     for (let i = 0; i < expansion.productos.length; i += BATCH_SIZE) {
       const batch = expansion.productos.slice(i, i + BATCH_SIZE);
@@ -4681,11 +4760,19 @@ async function _ejecutarImportGrupalProyecto(expansion, fechaFin, estado, ignora
           estado: estado,
           presentacion_mat_prima: (productosMatriz.find(p => p.id === prodId) || {}).presentacion_mat_prima || null
         };
+        // v70: pasar info de grupo si corresponde
+        if (grupoInfo) {
+          valores.grupo = {
+            conjuntoId: grupoInfo.conjuntoId || null,
+            etiqueta: grupoInfo.etiqueta || nombreGrupo,
+            cantidad: grupoInfo.cantidad || 1,
+            uid: grupoUid
+          };
+        }
         return _importarProductoCore(prodId, valores, ignorarValidaciones).then(res => {
           if (!res.error) {
             importados++;
             totalUnidades += cant;
-            // Acumular mapeo
             if (res.pmpToActMap) {
               Object.assign(globalPmpToAct, res.pmpToActMap);
             }
@@ -4992,6 +5079,14 @@ async function _importarProductoCore(productoId, valores, ignorarValidaciones) {
     estado: valores.estado || 'Espera MP',
     imported_from_matriz_id: prod.id
   };
+  // v70: si el producto se importa como parte de un grupo (conjunto), marcamos
+  // las columnas de agrupación para poder mostrarlo agrupado en el proyecto.
+  if (valores.grupo) {
+    itemPayload.grupo_matriz_conjunto_id = valores.grupo.conjuntoId || null;
+    itemPayload.grupo_etiqueta = valores.grupo.etiqueta || null;
+    itemPayload.grupo_cantidad = valores.grupo.cantidad || 1;
+    itemPayload.grupo_uid = valores.grupo.uid || null;
+  }
   const { data: newItem, error: itErr } = await sb.from('items').insert(itemPayload).select().single();
   if (itErr) { console.error('Error creando item:', itErr); return { error: itErr.message }; }
 
@@ -5243,13 +5338,18 @@ async function confirmDeleteItem(itemId) {
     mensaje: 'Eliminar el item "' + item.descripcion + '" y sus ' + procCount + ' proceso(s)?',
     textoConfirmar: 'Eliminar',
     onConfirm: async () => {
-      await sb.from('actividades_tablero').delete().eq('item_id', itemId);
-      await sb.from('items').delete().eq('id', itemId);
-      await loadAll();
-      const md = document.getElementById('item-modal');
-      if (md) md.remove();
-      toast('Item eliminado');
-      render();
+      showSpinner('Eliminando item...');
+      try {
+        await sb.from('actividades_tablero').delete().eq('item_id', itemId);
+        await sb.from('items').delete().eq('id', itemId);
+        await loadAll();
+        const md = document.getElementById('item-modal');
+        if (md) md.remove();
+        toast('Item eliminado');
+        render();
+      } finally {
+        hideSpinner();
+      }
     }
   });
 }
@@ -9203,6 +9303,94 @@ function pmNuevoConUbicacion(opts) {
 }
 
 // =============================================================================
+// v70: Modal "Editar grupo/conjunto" dentro del proyecto
+// =============================================================================
+// Permite cambiar la cantidad del conjunto (multiplicador) y las anotaciones.
+// Al cambiar la cantidad, recalcula las cantidades de TODOS los items del grupo
+// desde las cantidades base de la matriz.
+
+function showEditarGrupoModal(grupoUid) {
+  const proj = getProject(nav.projectId);
+  if (!proj) return;
+  const itemsDelGrupo = proj.items.filter(it => it.grupo_uid === grupoUid);
+  if (itemsDelGrupo.length === 0) return;
+  const primero = itemsDelGrupo[0];
+  const etiqueta = primero.grupo_etiqueta || 'Conjunto';
+  const cantActual = primero.grupo_cantidad || 1;
+  const notas = primero.grupo_notas || '';
+  const conjuntoId = primero.grupo_matriz_conjunto_id;
+
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'edit-grupo-modal';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '520px';
+  let h = '<div class="md-t">Editar conjunto: ' + escapeHtml(etiqueta) + '</div>';
+
+  h += '<div class="ef"><div class="ef-l">Cantidad de conjuntos</div>';
+  h += '<input type="number" class="ef-i" id="eg-cantidad" value="' + cantActual + '" min="1" step="1">';
+  h += '<div class="ef-help">Al cambiar este número, se recalculan las cantidades de los ' + itemsDelGrupo.length + ' producto(s) del conjunto, usando las cantidades base de la matriz.</div>';
+  h += '</div>';
+
+  h += '<div class="ef"><div class="ef-l">Anotaciones del conjunto</div>';
+  h += '<textarea class="ef-i" id="eg-notas" rows="4" placeholder="Notas sobre este conjunto...">' + escapeHtml(notas) + '</textarea>';
+  h += '</div>';
+
+  // Aviso si no se puede recalcular (conjunto borrado de la matriz)
+  if (!conjuntoId || !conjuntos.find(c => c.id === conjuntoId)) {
+    h += '<div style="background:#FEF5E7;color:#854F0B;padding:8px 12px;border-radius:5px;font-size:11px;margin-bottom:10px">El conjunto original ya no existe en la matriz. Podés cambiar las notas, pero el recálculo de cantidades por multiplicador no estará disponible.</div>';
+  }
+
+  h += '<div class="actions">';
+  h += '<button class="b" onclick="document.getElementById(\'edit-grupo-modal\').remove()">Cancelar</button>';
+  h += '<button class="b b-p" onclick="_egGuardar(\'' + grupoUid + '\')">Guardar</button>';
+  h += '</div>';
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
+}
+
+async function _egGuardar(grupoUid) {
+  const proj = getProject(nav.projectId);
+  if (!proj) return;
+  const itemsDelGrupo = proj.items.filter(it => it.grupo_uid === grupoUid);
+  if (itemsDelGrupo.length === 0) return;
+  const nuevaCantidad = parseInt(document.getElementById('eg-cantidad').value) || 1;
+  const nuevasNotas = document.getElementById('eg-notas').value.trim();
+  const conjuntoId = itemsDelGrupo[0].grupo_matriz_conjunto_id;
+  const cantAnterior = itemsDelGrupo[0].grupo_cantidad || 1;
+
+  showSpinner('Actualizando conjunto...');
+  try {
+    // 1. Actualizar grupo_cantidad y grupo_notas en TODOS los items del grupo
+    for (const it of itemsDelGrupo) {
+      await sb.from('items').update({
+        grupo_cantidad: nuevaCantidad,
+        grupo_notas: nuevasNotas
+      }).eq('id', it.id);
+    }
+    // 2. Si la cantidad cambió y el conjunto existe en la matriz, recalcular
+    // las cantidades de cada item desde las cantidades base.
+    if (nuevaCantidad !== cantAnterior && conjuntoId && conjuntos.find(c => c.id === conjuntoId)) {
+      // Expandir el conjunto con multiplicador = nuevaCantidad para obtener
+      // las cantidades base × nuevaCantidad.
+      const expansion = _expandirConjunto(conjuntoId, nuevaCantidad);
+      // Mapear producto_id -> cantidad esperada
+      const cantPorProducto = {};
+      expansion.productos.forEach(({ prodId, cant }) => { cantPorProducto[prodId] = cant; });
+      // Actualizar cada item del grupo según su producto de origen
+      for (const it of itemsDelGrupo) {
+        const prodId = it.imported_from_matriz_id;
+        if (prodId && cantPorProducto[prodId] !== undefined) {
+          await sb.from('items').update({ cantidad: cantPorProducto[prodId] }).eq('id', it.id);
+        }
+      }
+    }
+    document.getElementById('edit-grupo-modal').remove();
+    await loadAll();
+    toast('Conjunto actualizado');
+    render();
+  } finally {
+    hideSpinner();
+  }
+}
+
+// =============================================================================
 // v70 Fase 3: MODALES DE EDICIÓN DE CONTENEDORES
 // =============================================================================
 // Tres modales (Equipo, Conjunto, Subconjunto) para administrar la composición
@@ -9455,6 +9643,8 @@ async function _ecGuardar() {
     const { error } = await sb.from(tabla).update({ nombre: nuevoNombre }).eq('id', st.id);
     if (error) { toast('Error al renombrar: ' + error.message, true); return; }
   }
+  showSpinner('Guardando composición...');
+  try {
   // 2. Sincronizar items: borrar lo que había antes, insertar lo que está ahora.
   // Para cada tipo de tabla afectada según contenedor.
   if (st.tipo === 'equipo') {
@@ -9482,6 +9672,9 @@ async function _ecGuardar() {
   await loadAll();
   toast('Composición actualizada');
   render();
+  } finally {
+    hideSpinner();
+  }
 }
 
 // Render principal del modal del producto. Lo separamos para poder
@@ -10164,6 +10357,8 @@ async function saveProductoMatriz(productoId) {
   };
 
   let savedProductoId = productoId;
+  showSpinner(productoId ? 'Guardando producto...' : 'Creando producto...');
+  try {
   if (productoId) {
     const { error } = await sb.from('productos_matriz').update(payload).eq('id', productoId);
     if (error) { toast('Error: ' + error.message, true); console.error(error); return; }
@@ -10171,7 +10366,6 @@ async function saveProductoMatriz(productoId) {
     const { data, error } = await sb.from('productos_matriz').insert(payload).select().single();
     if (error) { toast('Error: ' + error.message, true); console.error(error); return; }
     savedProductoId = data.id;
-    // v62: si el usuario cargó foto en el modal, la migramos como primera de la galería
     if (foto_url) {
       await sb.from('fotos').insert({
         entidad_tipo: 'producto_matriz',
@@ -10196,14 +10390,9 @@ async function saveProductoMatriz(productoId) {
     }));
     const { error: errU } = await sb.from('productos_matriz_ubicaciones').insert(inserts);
     if (errU) { toast('Producto guardado pero error en ubicaciones: ' + errU.message, true); console.error(errU); }
-    // v68: garantizar las relaciones N:M viejas (compat con código legacy).
     await _sincronizarRelacionesNM(pmFormState.ubicacionesPendientes);
-    // v70: sincronizar TAMBIÉN en las tablas nuevas de composición.
-    // Cada ubicación nueva se mapea al nivel más específico que tenga.
     await _sincronizarComposicionV70(savedProductoId, pmFormState.ubicacionesPendientes);
   } else {
-    // Sin ubicaciones: también borramos de las tablas nuevas todas las
-    // referencias al producto, así no queda en lugares "fantasma".
     await sb.from('subconjunto_productos').delete().eq('producto_id', savedProductoId);
     await sb.from('conjunto_productos').delete().eq('producto_id', savedProductoId);
     await sb.from('equipo_productos').delete().eq('producto_id', savedProductoId);
@@ -10215,14 +10404,15 @@ async function saveProductoMatriz(productoId) {
   const wasNew = !productoId;
   toast(productoId ? 'Producto actualizado' : 'Producto creado');
   if (wasNew && savedProductoId) {
-    // Navegar a la vista completa del producto recien creado y abrir el modal
-    // de "+ Agregar proceso" para que el usuario arranque a cargar procesos.
     navigate({ view: 'productoMatriz', productoId: savedProductoId });
     setTimeout(() => {
       showProcesoForm(null, { tipo: 'producto', parentId: savedProductoId });
     }, 100);
   } else {
     render();
+  }
+  } finally {
+    hideSpinner();
   }
 }
 
@@ -10431,14 +10621,19 @@ async function confirmDeleteProductoMatriz(productoId) {
     mensaje: msg,
     textoConfirmar: 'Eliminar',
     onConfirm: async () => {
-      const { error } = await sb.from('productos_matriz').delete().eq('id', productoId);
-      if (error) { toast('Error: ' + error.message, true); console.error(error); return; }
-      await loadAll();
-      toast('Producto eliminado');
-      if (nav.view === 'productoMatriz' && nav.productoId === productoId) {
-        navigate({ view: 'recursos', tab: 'matriz' });
-      } else {
-        render();
+      showSpinner('Eliminando producto...');
+      try {
+        const { error } = await sb.from('productos_matriz').delete().eq('id', productoId);
+        if (error) { toast('Error: ' + error.message, true); console.error(error); return; }
+        await loadAll();
+        toast('Producto eliminado');
+        if (nav.view === 'productoMatriz' && nav.productoId === productoId) {
+          navigate({ view: 'recursos', tab: 'matriz' });
+        } else {
+          render();
+        }
+      } finally {
+        hideSpinner();
       }
     }
   });
