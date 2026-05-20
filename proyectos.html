@@ -9767,31 +9767,174 @@ async function _duplicarProductoMatriz(productoIdOrig, overrides) {
   return nuevo.id;
 }
 
-// ---- Duplicar producto suelto (botón en la vista del producto) ----
+// ---- Duplicar producto suelto (modal con destino) ----
+let duplicarProductoState = null;
+
 function duplicarProductoMatriz(productoId) {
   const prod = productosMatriz.find(p => p.id === productoId);
   if (!prod) return;
-  confirmModal({
-    titulo: 'Duplicar producto',
-    mensaje: '¿Crear una copia de "' + (prod.descripcion || '') + '" con todos sus procesos? La copia queda sin asignar a ningún conjunto.',
-    textoConfirmar: 'Duplicar',
-    onConfirm: async () => {
-      showSpinner('Duplicando producto...');
-      try {
-        const nuevoId = await _duplicarProductoMatriz(productoId, {});
-        await loadAll();
-        if (nuevoId) {
-          toast('Producto duplicado');
-          navigate({ view: 'productoMatriz', productoId: nuevoId });
-        } else {
-          toast('Error al duplicar', true);
-          render();
-        }
-      } finally {
-        hideSpinner();
-      }
-    }
+  duplicarProductoState = {
+    productoIdOrig: productoId,
+    nombreOrig: prod.descripcion || '',
+    clienteOrig: prod.cliente_id || null
+  };
+  _renderDuplicarProductoModal();
+}
+
+function _renderDuplicarProductoModal() {
+  const st = duplicarProductoState;
+  if (!st) return;
+  const existing = document.getElementById('dup-prod-modal');
+  if (existing) existing.remove();
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'dup-prod-modal';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '600px'; m.style.maxHeight = '90vh'; m.style.overflowY = 'auto';
+  let h = '<div class="md-t">Duplicar producto: ' + escapeHtml(st.nombreOrig) + '</div>';
+
+  // Nombre nuevo
+  h += '<div class="ef"><div class="ef-l">Nombre del producto nuevo</div>';
+  h += '<input type="text" class="ef-i" id="dupp-nombre" value="' + escapeHtml(st.nombreOrig + ' (copia)') + '"></div>';
+
+  // Cliente destino
+  h += '<div class="ef"><div class="ef-l">Cliente destino</div>';
+  h += '<select class="ef-i" id="dupp-cliente" onchange="_duppClienteChange()">';
+  h += '<option value="">(Genérico / sin cliente)</option>';
+  clientes.slice().sort((a, b) => (a.nombre || '').localeCompare(b.nombre || '')).forEach(c => {
+    h += '<option value="' + c.id + '"' + (c.id === st.clienteOrig ? ' selected' : '') + '>' + escapeHtml(c.nombre) + '</option>';
   });
+  h += '</select></div>';
+
+  // Sector y equipo
+  h += '<div class="row">';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Sector destino</div>';
+  h += '<select class="ef-i" id="dupp-sector" onchange="_duppSectorChange()"></select></div>';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Equipo destino</div>';
+  h += '<select class="ef-i" id="dupp-equipo" onchange="_duppEquipoChange()"></select></div>';
+  h += '</div>';
+
+  // Conjunto y subconjunto (opcionales)
+  h += '<div class="row">';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Conjunto destino (opcional)</div>';
+  h += '<select class="ef-i" id="dupp-conjunto" onchange="_duppConjuntoChange()"></select></div>';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Subconjunto destino (opcional)</div>';
+  h += '<select class="ef-i" id="dupp-subconjunto"></select></div>';
+  h += '</div>';
+  h += '<div class="ef-help" style="margin-bottom:10px">Si dejás conjunto/subconjunto sin elegir, el producto se asigna al nivel más alto que hayas seleccionado. Si el cliente es genérico, queda sin ubicación.</div>';
+
+  h += '<div class="actions">';
+  h += '<button class="b" onclick="document.getElementById(\'dup-prod-modal\').remove();duplicarProductoState=null">Cancelar</button>';
+  h += '<button class="b b-p" onclick="_duppEjecutar()">Duplicar</button>';
+  h += '</div>';
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
+  _duppClienteChange();
+}
+
+function _duppClienteChange() {
+  const cliSel = document.getElementById('dupp-cliente');
+  const secSel = document.getElementById('dupp-sector');
+  if (!cliSel || !secSel) return;
+  const cliId = cliSel.value ? parseInt(cliSel.value) : null;
+  if (!cliId) {
+    secSel.innerHTML = '<option value="">—</option>';
+    secSel.disabled = true;
+  } else {
+    secSel.disabled = false;
+    const secs = sectores.filter(s => s.cliente_id === cliId).sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+    secSel.innerHTML = secs.map(s => '<option value="' + s.id + '"' + (_esSectorGeneral(s) ? ' selected' : '') + '>' + escapeHtml(s.nombre) + '</option>').join('');
+  }
+  _duppSectorChange();
+}
+
+function _duppSectorChange() {
+  const secSel = document.getElementById('dupp-sector');
+  const eqSel = document.getElementById('dupp-equipo');
+  if (!secSel || !eqSel) return;
+  const secId = secSel.value ? parseInt(secSel.value) : null;
+  if (!secId) {
+    eqSel.innerHTML = '<option value="">—</option>';
+    eqSel.disabled = true;
+  } else {
+    eqSel.disabled = false;
+    const eqs = equipos.filter(e => e.sector_id === secId).sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+    eqSel.innerHTML = eqs.map(e => '<option value="' + e.id + '"' + (_esEquipoDefault(e) ? ' selected' : '') + '>' + escapeHtml(e.nombre) + '</option>').join('');
+  }
+  _duppEquipoChange();
+}
+
+function _duppEquipoChange() {
+  const eqSel = document.getElementById('dupp-equipo');
+  const conSel = document.getElementById('dupp-conjunto');
+  if (!eqSel || !conSel) return;
+  const eqId = eqSel.value ? parseInt(eqSel.value) : null;
+  let h = '<option value="">(Ninguno — va directo al equipo)</option>';
+  if (eqId) {
+    // Conjuntos vinculados al equipo
+    const conIds = equipoConjuntos.filter(ec => ec.equipo_id === eqId).map(ec => ec.conjunto_id);
+    const cons = conjuntos.filter(c => conIds.includes(c.id))
+      .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+    cons.forEach(c => {
+      h += '<option value="' + c.id + '">' + escapeHtml(c.nombre) + '</option>';
+    });
+  }
+  conSel.innerHTML = h;
+  _duppConjuntoChange();
+}
+
+function _duppConjuntoChange() {
+  const conSel = document.getElementById('dupp-conjunto');
+  const subSel = document.getElementById('dupp-subconjunto');
+  if (!conSel || !subSel) return;
+  const conId = conSel.value ? parseInt(conSel.value) : null;
+  let h = '<option value="">(Ninguno — va directo al conjunto)</option>';
+  if (conId) {
+    const subIds = conjuntoSubconjuntos.filter(cs => cs.conjunto_id === conId).map(cs => cs.subconjunto_id);
+    const subs = subconjuntos.filter(s => subIds.includes(s.id))
+      .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+    subs.forEach(s => {
+      h += '<option value="' + s.id + '">' + escapeHtml(s.nombre) + '</option>';
+    });
+    subSel.disabled = false;
+  } else {
+    subSel.disabled = true;
+  }
+  subSel.innerHTML = h;
+}
+
+async function _duppEjecutar() {
+  const st = duplicarProductoState;
+  if (!st) return;
+  const nombreNuevo = document.getElementById('dupp-nombre').value.trim();
+  if (!nombreNuevo) { toast('Ingresá el nombre del producto nuevo', true); return; }
+  const cliId = document.getElementById('dupp-cliente').value ? parseInt(document.getElementById('dupp-cliente').value) : null;
+  const eqSel = document.getElementById('dupp-equipo');
+  const conSel = document.getElementById('dupp-conjunto');
+  const subSel = document.getElementById('dupp-subconjunto');
+  const equipoId = eqSel && eqSel.value ? parseInt(eqSel.value) : null;
+  const conjuntoId = conSel && conSel.value ? parseInt(conSel.value) : null;
+  const subconjuntoId = subSel && subSel.value ? parseInt(subSel.value) : null;
+
+  showSpinner('Duplicando producto...');
+  try {
+    const nuevoId = await _duplicarProductoMatriz(st.productoIdOrig, {
+      cliente_id: cliId,
+      descripcion: nombreNuevo
+    });
+    if (!nuevoId) { toast('Error al duplicar', true); return; }
+    // Asignar a la composición según el nivel más específico elegido
+    if (subconjuntoId) {
+      await sb.from('subconjunto_productos').insert({ subconjunto_id: subconjuntoId, producto_id: nuevoId, cantidad: 1 });
+    } else if (conjuntoId) {
+      await sb.from('conjunto_productos').insert({ conjunto_id: conjuntoId, producto_id: nuevoId, cantidad: 1 });
+    } else if (equipoId) {
+      await sb.from('equipo_productos').insert({ equipo_id: equipoId, producto_id: nuevoId, cantidad: 1 });
+    }
+    document.getElementById('dup-prod-modal').remove();
+    duplicarProductoState = null;
+    await loadAll();
+    toast('Producto duplicado');
+    navigate({ view: 'productoMatriz', productoId: nuevoId });
+  } finally {
+    hideSpinner();
+  }
 }
 
 // ---- Duplicar conjunto (modal con checkboxes por producto) ----
