@@ -6942,8 +6942,12 @@ function renderClienteCard(c) {
   ).length;
   const inactivo = c.activo === false;
   let h = '<div class="card" style="padding:6px 10px;align-items:center;' + (inactivo ? 'opacity:0.55' : '') + '">';
-  // Imagen / letra inicial (tamaño actual, no la achicamos)
-  h += '<div class="card-img-empty" style="flex:0 0 auto">' + escapeHtml((c.nombre || '?').charAt(0).toUpperCase()) + '</div>';
+  // v70 Fase 4.5: si el cliente tiene logo, lo mostramos; si no, la inicial.
+  if (c.foto_url) {
+    h += '<img src="' + escapeHtml(c.foto_url) + '" style="width:42px;height:42px;border-radius:5px;object-fit:cover;flex:0 0 auto;border:1px solid #C8C6BE" onerror="this.style.display=\'none\'">';
+  } else {
+    h += '<div class="card-img-empty" style="flex:0 0 auto">' + escapeHtml((c.nombre || '?').charAt(0).toUpperCase()) + '</div>';
+  }
   h += '<div class="card-body" style="padding:0">';
   // Titulo con chip de codigo
   let title = escapeHtml(c.nombre);
@@ -9571,15 +9575,28 @@ function _renderEditarContenedorModal() {
   h += '</div>';
 
   // Footer
-  h += '<div class="actions">';
+  h += '<div class="actions" style="justify-content:space-between">';
+  // v70 Fase 5: botón eliminar a la izquierda (solo si no es contenedor default)
+  let esDefault = false;
+  if (st.tipo === 'equipo') esDefault = _esEquipoDefault(equipos.find(e => e.id === st.id));
+  else if (st.tipo === 'conjunto') esDefault = _esConjuntoDefault(conjuntos.find(c => c.id === st.id));
+  else if (st.tipo === 'subconjunto') esDefault = _esSubconjuntoDefault(subconjuntos.find(s => s.id === st.id));
+  if (!esDefault) {
+    const fnEliminar = st.tipo === 'equipo' ? 'eliminarEquipo' : (st.tipo === 'conjunto' ? 'eliminarConjunto' : 'eliminarSubconjunto');
+    h += '<button class="b" style="color:#A32D2D" onclick="' + fnEliminar + '(' + st.id + ')">Eliminar ' + st.tipo + '</button>';
+  } else {
+    h += '<span></span>';
+  }
+  h += '<div style="display:flex;gap:6px">';
   h += '<button class="b" onclick="document.getElementById(\'edit-cont-modal\').remove();editContenedorState=null">Cancelar</button>';
   // v70 Fase 4: botón duplicar (solo conjunto y subconjunto)
   if (st.tipo === 'conjunto') {
-    h += '<button class="b" onclick="document.getElementById(\'edit-cont-modal\').remove();editContenedorState=null;showDuplicarConjuntoModal(' + st.id + ')">Duplicar conjunto</button>';
+    h += '<button class="b" onclick="document.getElementById(\'edit-cont-modal\').remove();editContenedorState=null;showDuplicarConjuntoModal(' + st.id + ')">Duplicar</button>';
   } else if (st.tipo === 'subconjunto') {
-    h += '<button class="b" onclick="document.getElementById(\'edit-cont-modal\').remove();editContenedorState=null;showDuplicarSubconjuntoModal(' + st.id + ')">Duplicar subconjunto</button>';
+    h += '<button class="b" onclick="document.getElementById(\'edit-cont-modal\').remove();editContenedorState=null;showDuplicarSubconjuntoModal(' + st.id + ')">Duplicar</button>';
   }
   h += '<button class="b b-p" onclick="_ecGuardar()">Guardar</button>';
+  h += '</div>';
   h += '</div>';
   m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
   // v70 Fase 4.5: si el modal tiene galería (conjunto), activar paste de fotos.
@@ -9766,6 +9783,288 @@ async function _ecGuardar() {
   await loadAll();
   toast('Composición actualizada');
   render();
+  } finally {
+    hideSpinner();
+  }
+}
+
+// =============================================================================
+// v70 Fase 5: ELIMINAR contenedores (equipo / conjunto / subconjunto)
+// =============================================================================
+// Cada uno con dos modos:
+//  - "desvincular": borra el contenedor pero los productos/subconjuntos que
+//    contenía siguen existiendo; los productos suben al nivel superior.
+//  - "borrar todo": borra el contenedor + sus subcontenedores + sus productos
+//    (solo los productos que no se usan en otro lado).
+// Los contenedores default no se pueden eliminar.
+
+// Helper: ¿el producto se usa en algún OTRO contenedor además del dado?
+// `excepto` = {tipo, id} del contenedor que estamos por borrar.
+function _productoUsadoEnOtroLado(productoId, exceptoTipo, exceptoId) {
+  let count = 0;
+  subconjuntoProductos.forEach(sp => {
+    if (sp.producto_id === productoId && !(exceptoTipo === 'subconjunto' && sp.subconjunto_id === exceptoId)) count++;
+  });
+  conjuntoProductos.forEach(cp => {
+    if (cp.producto_id === productoId && !(exceptoTipo === 'conjunto' && cp.conjunto_id === exceptoId)) count++;
+  });
+  equipoProductos.forEach(ep => {
+    if (ep.producto_id === productoId && !(exceptoTipo === 'equipo' && ep.equipo_id === exceptoId)) count++;
+  });
+  return count > 0;
+}
+
+// ---- Eliminar SUBCONJUNTO ----
+function eliminarSubconjunto(subconjuntoId) {
+  const sub = subconjuntos.find(s => s.id === subconjuntoId);
+  if (!sub) return;
+  if (_esSubconjuntoDefault(sub)) { toast('No se puede eliminar un subconjunto por defecto', true); return; }
+  const prodIds = subconjuntoProductos.filter(sp => sp.subconjunto_id === subconjuntoId).map(sp => sp.producto_id);
+  // Modal con dos opciones
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'del-cont-modal';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '480px'; m.style.zIndex = '1100';
+  let h = '<div class="md-t">Eliminar subconjunto: ' + escapeHtml(sub.nombre) + '</div>';
+  if (prodIds.length === 0) {
+    h += '<div style="font-size:13px;color:#5F5E5A;line-height:1.5;margin-bottom:14px">El subconjunto no tiene productos. ¿Eliminarlo?</div>';
+    h += '<div class="actions">';
+    h += '<button class="b" onclick="document.getElementById(\'del-cont-modal\').remove()">Cancelar</button>';
+    h += '<button class="b" style="background:#A32D2D;color:#fff;border-color:#A32D2D" onclick="_ejecutarEliminarSubconjunto(' + subconjuntoId + ',\'desvincular\')">Eliminar</button>';
+    h += '</div>';
+  } else {
+    h += '<div style="font-size:13px;color:#5F5E5A;line-height:1.5;margin-bottom:14px">El subconjunto tiene ' + prodIds.length + ' producto(s). ¿Qué hacer con ellos?</div>';
+    h += '<div class="actions" style="flex-direction:column;gap:8px;align-items:stretch">';
+    h += '<button class="b b-p" onclick="_ejecutarEliminarSubconjunto(' + subconjuntoId + ',\'desvincular\')">Solo desvincular — los productos pasan al conjunto</button>';
+    h += '<button class="b" style="background:#A32D2D;color:#fff;border-color:#A32D2D" onclick="_confirmarBorrarTodoSubconjunto(' + subconjuntoId + ')">Borrar también los productos</button>';
+    h += '<button class="b" onclick="document.getElementById(\'del-cont-modal\').remove()">Cancelar</button>';
+    h += '</div>';
+  }
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd);
+}
+
+function _confirmarBorrarTodoSubconjunto(subconjuntoId) {
+  const prodIds = subconjuntoProductos.filter(sp => sp.subconjunto_id === subconjuntoId).map(sp => sp.producto_id);
+  const aBorrar = prodIds.filter(pid => !_productoUsadoEnOtroLado(pid, 'subconjunto', subconjuntoId));
+  const aDesvincular = prodIds.length - aBorrar.length;
+  let msg = 'Se eliminará el subconjunto y se borrarán ' + aBorrar.length + ' producto(s) con sus procesos.';
+  if (aDesvincular > 0) msg += '\n\n' + aDesvincular + ' producto(s) NO se borran porque se usan en otro contenedor (solo se desvinculan).';
+  msg += '\n\nEsta acción no se puede deshacer.';
+  const dm = document.getElementById('del-cont-modal'); if (dm) dm.remove();
+  confirmModal({
+    titulo: 'Borrar subconjunto y productos',
+    mensaje: msg,
+    textoConfirmar: 'Borrar todo',
+    onConfirm: () => _ejecutarEliminarSubconjunto(subconjuntoId, 'borrar')
+  });
+}
+
+async function _ejecutarEliminarSubconjunto(subconjuntoId, modo) {
+  const dm = document.getElementById('del-cont-modal'); if (dm) dm.remove();
+  showSpinner('Eliminando subconjunto...');
+  try {
+    const prodIds = subconjuntoProductos.filter(sp => sp.subconjunto_id === subconjuntoId).map(sp => sp.producto_id);
+    if (modo === 'borrar') {
+      // Borrar los productos que no se usan en otro lado
+      for (const pid of prodIds) {
+        if (!_productoUsadoEnOtroLado(pid, 'subconjunto', subconjuntoId)) {
+          await sb.from('productos_matriz').delete().eq('id', pid);
+        }
+      }
+    }
+    // Borrar el subconjunto (cascade limpia subconjunto_productos y conjunto_subconjuntos)
+    await sb.from('subconjuntos').delete().eq('id', subconjuntoId);
+    // Cerrar modal de edición si estaba abierto
+    const ec = document.getElementById('edit-cont-modal');
+    if (ec) { ec.remove(); editContenedorState = null; }
+    await loadAll();
+    toast('Subconjunto eliminado');
+    render();
+  } finally {
+    hideSpinner();
+  }
+}
+
+// ---- Eliminar CONJUNTO ----
+function eliminarConjunto(conjuntoId) {
+  const con = conjuntos.find(c => c.id === conjuntoId);
+  if (!con) return;
+  if (_esConjuntoDefault(con)) { toast('No se puede eliminar un conjunto por defecto', true); return; }
+  // Contar contenido
+  const prodDirectos = conjuntoProductos.filter(cp => cp.conjunto_id === conjuntoId).length;
+  const subs = conjuntoSubconjuntos.filter(cs => cs.conjunto_id === conjuntoId).length;
+  const totalProds = _matrizProdIdsConjunto(conjuntoId).size;
+
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'del-cont-modal';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '480px'; m.style.zIndex = '1100';
+  let h = '<div class="md-t">Eliminar conjunto: ' + escapeHtml(con.nombre) + '</div>';
+  if (prodDirectos === 0 && subs === 0) {
+    h += '<div style="font-size:13px;color:#5F5E5A;line-height:1.5;margin-bottom:14px">El conjunto está vacío. ¿Eliminarlo?</div>';
+    h += '<div class="actions">';
+    h += '<button class="b" onclick="document.getElementById(\'del-cont-modal\').remove()">Cancelar</button>';
+    h += '<button class="b" style="background:#A32D2D;color:#fff;border-color:#A32D2D" onclick="_ejecutarEliminarConjunto(' + conjuntoId + ',\'desvincular\')">Eliminar</button>';
+    h += '</div>';
+  } else {
+    h += '<div style="font-size:13px;color:#5F5E5A;line-height:1.5;margin-bottom:14px">El conjunto contiene ' + subs + ' subconjunto(s) y ' + totalProds + ' producto(s) en total. ¿Qué hacer?</div>';
+    h += '<div class="actions" style="flex-direction:column;gap:8px;align-items:stretch">';
+    h += '<button class="b b-p" onclick="_ejecutarEliminarConjunto(' + conjuntoId + ',\'desvincular\')">Solo desvincular — productos y subconjuntos pasan al equipo</button>';
+    h += '<button class="b" style="background:#A32D2D;color:#fff;border-color:#A32D2D" onclick="_confirmarBorrarTodoConjunto(' + conjuntoId + ')">Borrar todo (subconjuntos y productos)</button>';
+    h += '<button class="b" onclick="document.getElementById(\'del-cont-modal\').remove()">Cancelar</button>';
+    h += '</div>';
+  }
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd);
+}
+
+function _confirmarBorrarTodoConjunto(conjuntoId) {
+  const prodIds = [..._matrizProdIdsConjunto(conjuntoId)];
+  const aBorrar = prodIds.filter(pid => !_productoUsadoEnOtroLado(pid, 'conjunto', conjuntoId));
+  const aDesvincular = prodIds.length - aBorrar.length;
+  const subs = conjuntoSubconjuntos.filter(cs => cs.conjunto_id === conjuntoId).length;
+  let msg = 'Se eliminará el conjunto, sus ' + subs + ' subconjunto(s), y se borrarán ' + aBorrar.length + ' producto(s) con sus procesos.';
+  if (aDesvincular > 0) msg += '\n\n' + aDesvincular + ' producto(s) NO se borran porque se usan en otro contenedor.';
+  msg += '\n\nEsta acción no se puede deshacer.';
+  const dm = document.getElementById('del-cont-modal'); if (dm) dm.remove();
+  confirmModal({
+    titulo: 'Borrar conjunto completo',
+    mensaje: msg,
+    textoConfirmar: 'Borrar todo',
+    onConfirm: () => _ejecutarEliminarConjunto(conjuntoId, 'borrar')
+  });
+}
+
+async function _ejecutarEliminarConjunto(conjuntoId, modo) {
+  const dm = document.getElementById('del-cont-modal'); if (dm) dm.remove();
+  showSpinner('Eliminando conjunto...');
+  try {
+    // Equipos que contienen este conjunto (para reubicar al desvincular)
+    const equiposDelConjunto = equipoConjuntos.filter(ec => ec.conjunto_id === conjuntoId).map(ec => ec.equipo_id);
+    const subIds = conjuntoSubconjuntos.filter(cs => cs.conjunto_id === conjuntoId).map(cs => cs.subconjunto_id);
+
+    if (modo === 'borrar') {
+      // Borrar productos directos del conjunto + de sus subconjuntos (los que no se usan en otro lado)
+      const prodIds = [..._matrizProdIdsConjunto(conjuntoId)];
+      for (const pid of prodIds) {
+        if (!_productoUsadoEnOtroLado(pid, 'conjunto', conjuntoId)) {
+          await sb.from('productos_matriz').delete().eq('id', pid);
+        }
+      }
+      // Borrar los subconjuntos del conjunto
+      for (const sid of subIds) {
+        await sb.from('subconjuntos').delete().eq('id', sid);
+      }
+    } else {
+      // Desvincular: los productos directos del conjunto pasan al equipo;
+      // los subconjuntos pasan al equipo también (vía equipo... pero equipo no
+      // contiene subconjuntos. Entonces: los productos de los subconjuntos
+      // suben al equipo y los subconjuntos quedan sueltos).
+      const eqDestino = equiposDelConjunto[0] || null;
+      if (eqDestino) {
+        // Productos directos del conjunto -> equipo_productos
+        const directos = conjuntoProductos.filter(cp => cp.conjunto_id === conjuntoId);
+        for (const cp of directos) {
+          const ya = equipoProductos.find(ep => ep.equipo_id === eqDestino && ep.producto_id === cp.producto_id);
+          if (!ya) {
+            await sb.from('equipo_productos').insert({ equipo_id: eqDestino, producto_id: cp.producto_id, cantidad: cp.cantidad || 1 });
+          }
+        }
+        // Productos de los subconjuntos -> también al equipo
+        for (const sid of subIds) {
+          const spList = subconjuntoProductos.filter(sp => sp.subconjunto_id === sid);
+          for (const sp of spList) {
+            const ya = equipoProductos.find(ep => ep.equipo_id === eqDestino && ep.producto_id === sp.producto_id);
+            if (!ya) {
+              await sb.from('equipo_productos').insert({ equipo_id: eqDestino, producto_id: sp.producto_id, cantidad: sp.cantidad || 1 });
+            }
+          }
+        }
+      }
+      // Los subconjuntos quedan sueltos (se desvinculan al borrar el conjunto por cascade).
+    }
+    // Borrar el conjunto (cascade limpia equipo_conjuntos, conjunto_productos, conjunto_subconjuntos)
+    await sb.from('conjuntos').delete().eq('id', conjuntoId);
+    const ec = document.getElementById('edit-cont-modal');
+    if (ec) { ec.remove(); editContenedorState = null; }
+    await loadAll();
+    toast('Conjunto eliminado');
+    render();
+  } finally {
+    hideSpinner();
+  }
+}
+
+// ---- Eliminar EQUIPO ----
+function eliminarEquipo(equipoId) {
+  const eq = equipos.find(e => e.id === equipoId);
+  if (!eq) return;
+  if (_esEquipoDefault(eq)) { toast('No se puede eliminar un equipo por defecto', true); return; }
+  const cons = equipoConjuntos.filter(ec => ec.equipo_id === equipoId).length;
+  const totalProds = _matrizProdIdsEquipo(equipoId).size;
+
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'del-cont-modal';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '480px'; m.style.zIndex = '1100';
+  let h = '<div class="md-t">Eliminar equipo: ' + escapeHtml(eq.nombre) + '</div>';
+  if (cons === 0 && totalProds === 0) {
+    h += '<div style="font-size:13px;color:#5F5E5A;line-height:1.5;margin-bottom:14px">El equipo está vacío. ¿Eliminarlo?</div>';
+    h += '<div class="actions">';
+    h += '<button class="b" onclick="document.getElementById(\'del-cont-modal\').remove()">Cancelar</button>';
+    h += '<button class="b" style="background:#A32D2D;color:#fff;border-color:#A32D2D" onclick="_ejecutarEliminarEquipo(' + equipoId + ',\'desvincular\')">Eliminar</button>';
+    h += '</div>';
+  } else {
+    h += '<div style="font-size:13px;color:#5F5E5A;line-height:1.5;margin-bottom:14px">El equipo contiene ' + cons + ' conjunto(s) y ' + totalProds + ' producto(s) en total. ¿Qué hacer?</div>';
+    h += '<div class="actions" style="flex-direction:column;gap:8px;align-items:stretch">';
+    h += '<button class="b b-p" onclick="_ejecutarEliminarEquipo(' + equipoId + ',\'desvincular\')">Solo desvincular — el contenido queda suelto</button>';
+    h += '<button class="b" style="background:#A32D2D;color:#fff;border-color:#A32D2D" onclick="_confirmarBorrarTodoEquipo(' + equipoId + ')">Borrar todo (conjuntos y productos)</button>';
+    h += '<button class="b" onclick="document.getElementById(\'del-cont-modal\').remove()">Cancelar</button>';
+    h += '</div>';
+  }
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd);
+}
+
+function _confirmarBorrarTodoEquipo(equipoId) {
+  const prodIds = [..._matrizProdIdsEquipo(equipoId)];
+  const aBorrar = prodIds.filter(pid => !_productoUsadoEnOtroLado(pid, 'equipo', equipoId));
+  const aDesvincular = prodIds.length - aBorrar.length;
+  const cons = equipoConjuntos.filter(ec => ec.equipo_id === equipoId).length;
+  let msg = 'Se eliminará el equipo, sus ' + cons + ' conjunto(s) y los subconjuntos, y se borrarán ' + aBorrar.length + ' producto(s) con sus procesos.';
+  if (aDesvincular > 0) msg += '\n\n' + aDesvincular + ' producto(s) NO se borran porque se usan en otro contenedor.';
+  msg += '\n\nEsta acción no se puede deshacer.';
+  const dm = document.getElementById('del-cont-modal'); if (dm) dm.remove();
+  confirmModal({
+    titulo: 'Borrar equipo completo',
+    mensaje: msg,
+    textoConfirmar: 'Borrar todo',
+    onConfirm: () => _ejecutarEliminarEquipo(equipoId, 'borrar')
+  });
+}
+
+async function _ejecutarEliminarEquipo(equipoId, modo) {
+  const dm = document.getElementById('del-cont-modal'); if (dm) dm.remove();
+  showSpinner('Eliminando equipo...');
+  try {
+    if (modo === 'borrar') {
+      const prodIds = [..._matrizProdIdsEquipo(equipoId)];
+      for (const pid of prodIds) {
+        if (!_productoUsadoEnOtroLado(pid, 'equipo', equipoId)) {
+          await sb.from('productos_matriz').delete().eq('id', pid);
+        }
+      }
+      // Borrar conjuntos del equipo + sus subconjuntos
+      const conIds = equipoConjuntos.filter(ec => ec.equipo_id === equipoId).map(ec => ec.conjunto_id);
+      for (const cid of conIds) {
+        const con = conjuntos.find(c => c.id === cid);
+        if (con && _esConjuntoDefault(con)) continue;  // no borrar defaults
+        const subIds = conjuntoSubconjuntos.filter(cs => cs.conjunto_id === cid).map(cs => cs.subconjunto_id);
+        for (const sid of subIds) {
+          await sb.from('subconjuntos').delete().eq('id', sid);
+        }
+        await sb.from('conjuntos').delete().eq('id', cid);
+      }
+    }
+    // Borrar el equipo (cascade limpia equipo_conjuntos, equipo_productos)
+    await sb.from('equipos').delete().eq('id', equipoId);
+    const ec = document.getElementById('edit-cont-modal');
+    if (ec) { ec.remove(); editContenedorState = null; }
+    await loadAll();
+    toast('Equipo eliminado');
+    render();
   } finally {
     hideSpinner();
   }
