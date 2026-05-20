@@ -6482,7 +6482,9 @@ async function _sincronizarFotoUrl(entidadTipo, entidadId, url) {
     'proyecto': 'proyectos',
     'item': 'items',
     'producto_matriz': 'productos_matriz',
-    'actividad': 'actividades_tablero'
+    'actividad': 'actividades_tablero',
+    'conjunto': 'conjuntos',
+    'cliente': 'clientes'
   };
   const tabla = tablaMap[entidadTipo];
   if (!tabla) return;
@@ -6593,9 +6595,26 @@ async function onPhotoFileGallery(event, entidadTipo, entidadId, kind) {
     if (res.error) { toast('Error: ' + res.error, true); return; }
     toast('Foto agregada');
     render();
+    _refrescarModalContenedorSiAbierto();
   } finally {
     hideSpinner();
     event.target.value = '';
+  }
+}
+
+// v70: si el modal Editar Conjunto/Equipo/Subconjunto o el modal de cliente
+// está abierto, lo re-renderiza tras una operación de foto (la galería vive
+// dentro del modal).
+function _refrescarModalContenedorSiAbierto() {
+  if (editContenedorState && document.getElementById('edit-cont-modal')) {
+    _renderEditarContenedorModal();
+  }
+  // Modal de cliente: si está abierto, lo re-abrimos para refrescar la galería.
+  const cliModal = document.getElementById('cli-modal');
+  if (cliModal && cliModal.dataset.clienteId) {
+    const cid = parseInt(cliModal.dataset.clienteId);
+    cliModal.remove();
+    showClienteForm(cid);
   }
 }
 
@@ -6612,6 +6631,7 @@ function confirmEliminarFoto(fotoId) {
         if (res.error) { toast('Error: ' + res.error, true); return; }
         toast('Foto eliminada');
         render();
+        _refrescarModalContenedorSiAbierto();
       } finally {
         hideSpinner();
       }
@@ -6625,6 +6645,7 @@ async function moverFotoUI(fotoId, direction) {
   try {
     await moverFoto(fotoId, direction);
     render();
+    _refrescarModalContenedorSiAbierto();
   } finally {
     hideSpinner();
   }
@@ -6811,6 +6832,7 @@ async function uploadPhotoFile(file, kind) {
       // pueda pegar más sin clickear "+ Agregar". El estado _galPendingSlot
       // se mantiene apuntando a la misma galería.
       render();
+      _refrescarModalContenedorSiAbierto();
       // Re-activar el slot pendiente recién renderizado para que paste siga funcionando
       setTimeout(() => {
         setActiveSlot(kind);
@@ -8873,7 +8895,16 @@ function _matrizRenderNode(key, icon, title, meta, color, indent, childrenHtml, 
   h += '<div style="display:flex;align-items:center;padding:8px 12px;gap:8px;cursor:pointer" onclick="matrizToggleExpand(\'' + key + '\')">';
   h += '<span style="font-size:13px;color:#5F5E5A;flex:0 0 auto;width:14px">' + (expanded ? '▼' : '▶') + '</span>';
   const size = iconSize || 14;
-  if (icon) h += '<span style="font-size:' + size + 'px;flex:0 0 auto;line-height:1">' + icon + '</span>';
+  if (icon) {
+    // v70 Fase 4.5: si el icono es una URL (http...), lo renderizamos como
+    // imagen en miniatura. Si es un emoji/carácter, como antes.
+    if (typeof icon === 'string' && icon.indexOf('http') === 0) {
+      const imgSize = Math.max(size + 8, 22);
+      h += '<img src="' + escapeHtml(icon) + '" style="width:' + imgSize + 'px;height:' + imgSize + 'px;border-radius:4px;object-fit:cover;flex:0 0 auto" onerror="this.style.display=\'none\'">';
+    } else {
+      h += '<span style="font-size:' + size + 'px;flex:0 0 auto;line-height:1">' + icon + '</span>';
+    }
+  }
   h += '<div style="flex:1;min-width:0">';
   h += '<div style="font-weight:600;color:' + color + ';font-size:13px">' + title + '</div>';
   if (meta) h += '<div style="font-size:11px;color:#888;margin-top:1px">' + meta + '</div>';
@@ -9021,9 +9052,11 @@ function _matrizRenderClienteNode(cli) {
     ? ' <span style="display:inline-block;padding:1px 5px;border-radius:3px;font-size:9px;background:#0C447C;color:#fff;font-weight:500;margin-left:4px;letter-spacing:0.3px">' + escapeHtml(cli.codigo) + '</span>'
     : '';
   const warn = _matrizNivelTieneProblemas({ clienteId: cli.id }) ? _warningIconHtml('Algún producto debajo requiere atención') : '';
+  // v70 Fase 4.5: si el cliente tiene logo, lo usamos como icono.
+  const iconoCli = cli.foto_url || '🏢';
   return _matrizRenderNode(
     'cli:' + cli.id,
-    '🏢',
+    iconoCli,
     escapeHtml(cli.nombre) + codigoChip + warn,
     cnt + ' producto(s)',
     '#0C447C',
@@ -9171,7 +9204,7 @@ function _matrizRenderConjuntoNode(con, cliId) {
   const equipoIdPrefill = ubicEjemplo && ubicEjemplo.equipo_id ? ubicEjemplo.equipo_id : 'null';
   return _matrizRenderNode(
     'con:' + con.id,
-    '📦',
+    con.foto_url || '📦',
     escapeHtml(con.nombre) + warn,
     cnt + ' producto(s)',
     '#5F5E5A',
@@ -9510,6 +9543,14 @@ function _renderEditarContenedorModal() {
   h += '<input type="text" class="ef-i" id="ec-nombre" value="' + escapeHtml(st.nombre) + '">';
   h += '</div>';
 
+  // v70 Fase 4.5: galería de fotos (solo para conjuntos). La galería opera
+  // directo sobre la DB (agregar/borrar foto es inmediato), independiente del
+  // botón Guardar del modal que persiste nombre y composición.
+  if (st.tipo === 'conjunto') {
+    h += '<div style="font-size:12px;font-weight:600;color:#5F5E5A;margin:14px 0 6px">Fotos del conjunto</div>';
+    h += buildPhotoGalleryHtml('conjunto', st.id, 'conjunto');
+  }
+
   // Items
   h += '<div style="font-size:12px;font-weight:600;color:#5F5E5A;margin:14px 0 6px">Composición</div>';
   h += '<div id="ec-items-list" style="border:1px solid #C8C6BE;border-radius:5px;max-height:300px;overflow-y:auto">';
@@ -9533,6 +9574,8 @@ function _renderEditarContenedorModal() {
   h += '<button class="b b-p" onclick="_ecGuardar()">Guardar</button>';
   h += '</div>';
   m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
+  // v70 Fase 4.5: si el modal tiene galería (conjunto), activar paste de fotos.
+  if (st.tipo === 'conjunto') setupPhotoPaste();
 }
 
 function _ecRenderItemsListHtml() {
@@ -11213,6 +11256,7 @@ function showClienteForm(clienteId) {
   const isNew = !cliente;
   const tieneCodigo = cliente && cliente.codigo;
   const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'cli-modal';
+  if (cliente) bd.dataset.clienteId = cliente.id;
   const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '560px'; m.style.maxHeight = '90vh'; m.style.overflowY = 'auto';
   let h = '<div class="md-t">' + (isNew ? 'Nuevo cliente' : 'Editar cliente') + '</div>';
   h += '<div class="row">';
@@ -11229,6 +11273,14 @@ function showClienteForm(clienteId) {
   h += '<input type="text" class="ef-i" id="c-cuit" value="' + escapeHtml(cliente && cliente.cuit ? cliente.cuit : '') + '" placeholder="11 digitos sin guiones" maxlength="11">';
   h += '<div class="ef-help">Ej: 30712345678 (11 digitos exactos, sin guiones).</div>';
   h += '<div class="ef-err" id="err-cuit" style="display:none"></div></div>';
+
+  // v70 Fase 4.5: logo del cliente. La galería opera directo sobre la DB.
+  // Solo disponible si el cliente ya existe (al crear, se sube después).
+  if (!isNew) {
+    h += '<div class="ef"><div class="ef-l">Logo del cliente</div>';
+    h += buildPhotoGalleryHtml('cliente', cliente.id, 'cliente');
+    h += '<div class="ef-help" style="font-size:10px">Se usa la primera foto como logo en la matriz.</div></div>';
+  }
 
   // Campos legacy: "contacto" (texto libre) y "telefono" del cliente quedan
   // ocultos en v62 (los reemplazan los contactos múltiples). Conservamos en DB
@@ -11259,6 +11311,8 @@ function showClienteForm(clienteId) {
   h += '<button class="b" onclick="this.closest(\'.mo\').remove()">Cerrar</button>';
   h += '<button class="b b-p" onclick="saveCliente(' + (clienteId || 'null') + ')">' + (isNew ? 'Crear' : 'Guardar') + '</button></div>';
   m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
+  // v70 Fase 4.5: activar paste de fotos si hay galería de logo (cliente existente)
+  if (!isNew) setupPhotoPaste();
 }
 
 // HTML de la lista de contactos para mostrar dentro del modal de cliente.
