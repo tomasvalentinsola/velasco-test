@@ -114,6 +114,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
   <div class="hd">
     <img id="hd-logo" alt="Velasco" style="height:36px;cursor:pointer" onclick="navigate({view:'projects'})">
     <div class="hd-r">
+      <button class="b" onclick="navigate({view:'recursos',tab:'matriz'})">Matriz de productos</button>
       <button class="b" onclick="navigate({view:'projects'})">Proyectos</button>
       <button class="b" onclick="window.open('tablero_operarios.html','_blank')">Tablero</button>
       <button class="b" onclick="navigate({view:'recursos'})">Recursos</button>
@@ -9262,42 +9263,77 @@ function showProductoMatrizForm(productoId, prefillUbicacion) {
   const prod = isNew ? null : productosMatriz.find(p => p.id === productoId);
   if (!isNew && !prod) return;
 
-  // Cargar ubicaciones existentes (si edicion) en estado pendiente.
-  let ubicaciones = [];
-  if (prod) {
-    ubicaciones = productosMatrizUbicaciones.filter(u => u.producto_id === prod.id).map(u => ({
-      id: u.id,
-      cliente_id: u.cliente_id,
-      sector_id: u.sector_id,
-      equipo_id: u.equipo_id,
-      conjunto_id: u.conjunto_id,
-      subconjunto_id: u.subconjunto_id,
-      cantidad: (u.cantidad === undefined || u.cantidad === null) ? 1 : u.cantidad
-    }));
-  }
+  // v70 Camino B: el modal del producto YA NO gestiona la composición.
+  // ubicacionesPendientes queda vacío siempre y saveProductoMatriz no la toca.
+  // La composición se edita desde los modales de contenedor (Editar Conjunto,
+  // etc.). Mantenemos pmFormState con la lista vacía por compatibilidad con
+  // código que la referencia.
+  const ubicaciones = [];
 
   pmFormState = {
     productoId: productoId,
-    ubicacionesPendientes: ubicaciones
+    ubicacionesPendientes: ubicaciones,
+    // v70: si el producto se crea desde el botón "+" de una tarjeta de la
+    // matriz, guardamos la ubicación destino para asociarlo automáticamente
+    // al contenedor correcto después de crearlo.
+    prefillUbicacion: (isNew && prefillUbicacion) ? prefillUbicacion : null
   };
 
-  // v67: resetear el state del form inline de compatibilidad al abrir
-  _pmCompatInlineReset();
-  // v69: si vino precarga (desde botón "+" de una tarjeta de cliente/sector/etc.),
-  // cargamos esos valores en el form inline para que el usuario solo tenga que
-  // apretar "Agregar" (o directamente "Guardar" y el Fix A los agrega solos).
-  if (prefillUbicacion && pmCompatState) {
-    pmCompatState.clienteId = prefillUbicacion.clienteId || null;
-    pmCompatState.sectorId = prefillUbicacion.sectorId || null;
-    pmCompatState.equipoId = prefillUbicacion.equipoId || null;
-    pmCompatState.conjuntoId = prefillUbicacion.conjuntoId || null;
-    pmCompatState.subconjuntoId = prefillUbicacion.subconjuntoId || null;
-  }
   _renderPmModal(prod);
 }
 
 // v69: Wrapper para abrir el form de Nuevo Producto pre-rellenando la ubicación
 // según el nodo de la matriz desde donde se llamó (botón "+" en cada tarjeta).
+// v70: Devuelve HTML (solo lectura) con las "rutas" donde se usa un producto.
+// Recorre las tablas de composición nuevas. Si el producto no está en ningún
+// lado, devuelve ''.
+function _pmRutasDelProductoHtml(productoId) {
+  const rutas = [];
+  // En subconjuntos
+  subconjuntoProductos.filter(sp => sp.producto_id === productoId).forEach(sp => {
+    const sub = subconjuntos.find(s => s.id === sp.subconjunto_id);
+    if (!sub) return;
+    // Buscar el conjunto que contiene ese subconjunto
+    const cs = conjuntoSubconjuntos.find(x => x.subconjunto_id === sub.id);
+    const con = cs ? conjuntos.find(c => c.id === cs.conjunto_id) : null;
+    const cli = sub.cliente_id ? clientes.find(c => c.id === sub.cliente_id) : null;
+    const partes = [cli ? cli.nombre : '?'];
+    if (con && !_esConjuntoDefault(con)) partes.push(con.nombre);
+    if (!_esSubconjuntoDefault(sub)) partes.push(sub.nombre);
+    rutas.push({ texto: partes.join(' › '), cant: sp.cantidad || 1 });
+  });
+  // En conjuntos (directos)
+  conjuntoProductos.filter(cp => cp.producto_id === productoId).forEach(cp => {
+    const con = conjuntos.find(c => c.id === cp.conjunto_id);
+    if (!con) return;
+    const cli = con.cliente_id ? clientes.find(c => c.id === con.cliente_id) : null;
+    const partes = [cli ? cli.nombre : '?'];
+    if (!_esConjuntoDefault(con)) partes.push(con.nombre);
+    rutas.push({ texto: partes.join(' › '), cant: cp.cantidad || 1 });
+  });
+  // En equipos (directos)
+  equipoProductos.filter(ep => ep.producto_id === productoId).forEach(ep => {
+    const eq = equipos.find(e => e.id === ep.equipo_id);
+    if (!eq) return;
+    const sec = sectores.find(s => s.id === eq.sector_id);
+    const cli = sec ? clientes.find(c => c.id === sec.cliente_id) : null;
+    const partes = [cli ? cli.nombre : '?'];
+    if (sec) partes.push(sec.nombre);
+    if (!_esEquipoDefault(eq)) partes.push(eq.nombre);
+    rutas.push({ texto: partes.join(' › '), cant: ep.cantidad || 1 });
+  });
+  if (rutas.length === 0) return '';
+  let h = '<div style="display:flex;flex-direction:column;gap:4px">';
+  rutas.forEach(r => {
+    h += '<div style="background:#EEF4FB;border:1px solid #A8C8E8;border-radius:4px;padding:4px 8px;font-size:11px;color:#0C447C">';
+    h += '📍 ' + escapeHtml(r.texto);
+    h += ' <span style="background:#0C447C;color:#fff;border-radius:6px;padding:0 5px;font-size:9px;margin-left:4px">×' + r.cant + '</span>';
+    h += '</div>';
+  });
+  h += '</div>';
+  return h;
+}
+
 function pmNuevoConUbicacion(opts) {
   showProductoMatrizForm(null, opts || {});
 }
@@ -9707,16 +9743,22 @@ function _renderPmModal(prod) {
     foto_url: prod ? (prod.foto_url || '') : ''
   };
 
-  // ----- 1ro: EQUIPOS COMPATIBLES (UBICACIONES) -----
-  // v67: el form de "asignar compatibilidad" está inline acá adentro, sin modal aparte.
-  h += '<div style="margin-bottom:14px">';
-  h += '<div style="font-size:12px;font-weight:600;color:#5F5E5A;margin-bottom:8px">Equipos compatibles</div>';
-  h += '<div class="ef-help" style="margin-bottom:8px">Definí en qué cliente/sector/equipo/conjunto/subconjunto se usa este producto. Si se usa en varios equipos, asigná cada ruta. Sin ninguna, queda como producto genérico (sin ubicación específica).</div>';
-  // Form inline (cliente obligatorio, resto opcional). Se agrega como chip al apretar "Agregar".
-  h += '<div id="pm-compat-inline" style="background:#F5F3EC;border:1px solid #C8C6BE;border-radius:6px;padding:10px;margin-bottom:10px">' + _pmCompatInlineFormHtml() + '</div>';
-  // Lista de chips ya cargados
-  h += '<div id="pm-ubicaciones-list">' + _pmUbicacionesListHtml() + '</div>';
-  h += '</div>';
+  // ----- v70: la composición (en qué equipo/conjunto/subconjunto va el
+  // producto) se gestiona desde los modales de contenedor (Editar Conjunto,
+  // Editar Equipo, etc.) o con el botón "+" de cada nivel en la matriz.
+  // El modal del producto ya NO tiene el form de compatibilidad: solo edita
+  // los datos propios del producto y sus procesos.
+  if (prod) {
+    // Mostrar (solo lectura) dónde está usado actualmente este producto.
+    const rutasHtml = _pmRutasDelProductoHtml(prod.id);
+    if (rutasHtml) {
+      h += '<div style="margin-bottom:14px">';
+      h += '<div style="font-size:12px;font-weight:600;color:#5F5E5A;margin-bottom:6px">Se usa en</div>';
+      h += rutasHtml;
+      h += '<div class="ef-help" style="margin-top:6px">Para cambiar dónde se usa este producto, editá el conjunto/equipo correspondiente desde la matriz.</div>';
+      h += '</div>';
+    }
+  }
 
   // ----- 2do: DATOS DEL PRODUCTO -----
   h += '<div style="padding-top:12px;border-top:1px solid #E8E6DF">';
@@ -10313,42 +10355,24 @@ async function _sincronizarComposicionV70(savedProductoId, ubicaciones) {
 async function saveProductoMatriz(productoId) {
   const descripcion = document.getElementById('pm-desc').value.trim();
   if (!descripcion) { toast('La descripción es obligatoria', true); return; }
-  // v68 Fix A: si el form inline de compatibilidad tiene cliente cargado pero
-  // no se apretó "Agregar", lo agregamos automáticamente para que no se pierda.
-  if (pmCompatState && pmCompatState.clienteId) {
-    await _ensureDefaultsCliente(pmCompatState.clienteId);
-    // Verificar duplicado antes de pushear
-    const dup = pmFormState.ubicacionesPendientes.find(u =>
-      u.cliente_id === pmCompatState.clienteId &&
-      u.sector_id === pmCompatState.sectorId &&
-      u.equipo_id === pmCompatState.equipoId &&
-      u.conjunto_id === pmCompatState.conjuntoId &&
-      u.subconjunto_id === pmCompatState.subconjuntoId
-    );
-    if (!dup) {
-      pmFormState.ubicacionesPendientes.push({
-        cliente_id: pmCompatState.clienteId,
-        sector_id: pmCompatState.sectorId,
-        equipo_id: pmCompatState.equipoId,
-        conjunto_id: pmCompatState.conjuntoId,
-        subconjunto_id: pmCompatState.subconjuntoId,
-        cantidad: 1
-      });
-    }
-    // Limpiar el form inline
-    _pmCompatInlineReset();
-  }
   const codigo_cliente = document.getElementById('pm-cod-cli').value.trim() || null;
   const matVal = document.getElementById('pm-material-value').value;
   const material_id = matVal ? parseInt(matVal) : null;
   const presentacion_mat_prima = document.getElementById('pm-presentacion').value.trim() || null;
   const fotoEl = document.getElementById('photo-url-pm');
   const foto_url = fotoEl ? (fotoEl.value || null) : null;
-  // cliente_id: lo determinamos desde la primera ubicacion pendiente.
-  // Si no hay ubicaciones, queda como genérico (cliente_id = null).
+
+  // v70 Camino B: el cliente del producto.
+  // - Si edito: mantengo el cliente_id que ya tenía.
+  // - Si creo desde el "+" de una tarjeta: lo tomo del prefill.
+  // - Si creo suelto: queda genérico (null).
   let cliente_id = null;
-  if (pmFormState && pmFormState.ubicacionesPendientes && pmFormState.ubicacionesPendientes.length > 0) {
-    cliente_id = pmFormState.ubicacionesPendientes[0].cliente_id;
+  const prefill = pmFormState && pmFormState.prefillUbicacion;
+  if (productoId) {
+    const prodPrev = productosMatriz.find(p => p.id === productoId);
+    cliente_id = prodPrev ? (prodPrev.cliente_id || null) : null;
+  } else if (prefill && prefill.clienteId) {
+    cliente_id = prefill.clienteId;
   }
 
   const payload = {
@@ -10374,29 +10398,21 @@ async function saveProductoMatriz(productoId) {
         orden: 0
       });
     }
+    // v70: si el producto se creó desde el botón "+" de una tarjeta de la
+    // matriz, lo asociamos automáticamente al contenedor destino. Se inserta
+    // en la tabla de composición del nivel más específico del prefill.
+    if (prefill) {
+      if (prefill.subconjuntoId) {
+        await sb.from('subconjunto_productos').insert({ subconjunto_id: prefill.subconjuntoId, producto_id: savedProductoId, cantidad: 1 });
+      } else if (prefill.conjuntoId) {
+        await sb.from('conjunto_productos').insert({ conjunto_id: prefill.conjuntoId, producto_id: savedProductoId, cantidad: 1 });
+      } else if (prefill.equipoId) {
+        await sb.from('equipo_productos').insert({ equipo_id: prefill.equipoId, producto_id: savedProductoId, cantidad: 1 });
+      }
+    }
   }
-
-  // Sincronizar ubicaciones: borrar las viejas, insertar las nuevas con cantidad.
-  await sb.from('productos_matriz_ubicaciones').delete().eq('producto_id', savedProductoId);
-  if (pmFormState && pmFormState.ubicacionesPendientes && pmFormState.ubicacionesPendientes.length > 0) {
-    const inserts = pmFormState.ubicacionesPendientes.map(u => ({
-      producto_id: savedProductoId,
-      cliente_id: u.cliente_id,
-      sector_id: u.sector_id,
-      equipo_id: u.equipo_id,
-      conjunto_id: u.conjunto_id,
-      subconjunto_id: u.subconjunto_id,
-      cantidad: u.cantidad || 1
-    }));
-    const { error: errU } = await sb.from('productos_matriz_ubicaciones').insert(inserts);
-    if (errU) { toast('Producto guardado pero error en ubicaciones: ' + errU.message, true); console.error(errU); }
-    await _sincronizarRelacionesNM(pmFormState.ubicacionesPendientes);
-    await _sincronizarComposicionV70(savedProductoId, pmFormState.ubicacionesPendientes);
-  } else {
-    await sb.from('subconjunto_productos').delete().eq('producto_id', savedProductoId);
-    await sb.from('conjunto_productos').delete().eq('producto_id', savedProductoId);
-    await sb.from('equipo_productos').delete().eq('producto_id', savedProductoId);
-  }
+  // v70 Camino B: saveProductoMatriz NO sincroniza la composición del producto.
+  // La composición se gestiona exclusivamente desde los modales de contenedor.
 
   document.getElementById('prod-matriz-modal').remove();
   pmFormState = null;
