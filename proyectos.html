@@ -9074,8 +9074,8 @@ function _matrizRenderClienteNode(cli) {
       let inner = '';
       const secs = _matrizSectoresDelCliente(cli.id);
       secs.forEach(sec => {
-        const cnt2 = _matrizCountProdsDelSector(sec.id);
-        if (cnt2 === 0) return;
+        // v70: mostrar todos los sectores (aunque estén vacíos), para poder
+        // navegar y cargar contenido. Son pocos sectores por cliente.
         inner += _matrizRenderSectorNode(sec, cli.id);
       });
       const directos = _matrizProductosEnNivel({
@@ -9109,10 +9109,10 @@ function _matrizRenderSectorNode(sec, cliId) {
       const eqs = _matrizEquiposDelSector(sec.id);
       eqs.forEach(eq => {
         const cnt2 = _matrizCountProdsDelEquipo(eq.id);
-        if (cnt2 === 0) return;
-        // v69: si el equipo es el "Sin equipo específico" default, promovemos sus
-        // hijos directamente al sector (no renderizamos el nodo del equipo).
+        // v70: equipos default vacíos no se muestran; equipos reales sí
+        // (aunque estén vacíos), para poder cargarles conjuntos/productos.
         if (_esEquipoDefault(eq)) {
+          if (cnt2 === 0) return;
           inner += _matrizRenderInnerEquipo(eq, cliId);
         } else {
           inner += _matrizRenderEquipoNode(eq, cliId);
@@ -9141,9 +9141,12 @@ function _matrizRenderInnerEquipo(eq, cliId) {
   const cons = _matrizConjuntosDelEquipo(eq.id, cliId);
   cons.forEach(con => {
     const cnt2 = _matrizCountProdsDelConjunto(con.id);
-    if (cnt2 === 0) return;
-    // v69: si el conjunto es default, promover sus hijos al nivel del equipo.
+    // v70: los conjuntos default vacíos NO se muestran (son estructura interna).
+    // Los conjuntos reales SÍ se muestran aunque estén vacíos, para poder
+    // cargarles productos con el botón "+".
     if (_esConjuntoDefault(con)) {
+      if (cnt2 === 0) return;
+      // default con productos: promover sus hijos al nivel del equipo.
       inner += _matrizRenderInnerConjunto(con, cliId);
     } else {
       inner += _matrizRenderConjuntoNode(con, cliId);
@@ -9380,8 +9383,209 @@ function _pmRutasDelProductoHtml(productoId) {
   return h;
 }
 
+// v70: "+ Nuevo producto" desde una tarjeta de la matriz. Abre un modal con
+// los datos del producto + selectores de ubicación precargados según dónde se
+// apretó el "+". El usuario revisa la ubicación (ya viene puesta) y carga el
+// producto. Al crear, queda asignado a esa ubicación.
+let nuevoProdUbicState = null;
+
 function pmNuevoConUbicacion(opts) {
-  showProductoMatrizForm(null, opts || {});
+  opts = opts || {};
+  nuevoProdUbicState = {
+    clienteId: opts.clienteId || null,
+    sectorId: (opts.sectorId && opts.sectorId !== 'null') ? opts.sectorId : null,
+    equipoId: (opts.equipoId && opts.equipoId !== 'null') ? opts.equipoId : null,
+    conjuntoId: (opts.conjuntoId && opts.conjuntoId !== 'null') ? opts.conjuntoId : null,
+    subconjuntoId: (opts.subconjuntoId && opts.subconjuntoId !== 'null') ? opts.subconjuntoId : null
+  };
+  _renderNuevoProdUbicModal();
+}
+
+function _renderNuevoProdUbicModal() {
+  const st = nuevoProdUbicState;
+  if (!st) return;
+  const existing = document.getElementById('np-ubic-modal');
+  if (existing) existing.remove();
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'np-ubic-modal';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '620px'; m.style.maxHeight = '90vh'; m.style.overflowY = 'auto';
+  let h = '<div class="md-t">Nuevo producto</div>';
+
+  // Datos del producto
+  h += '<div class="ef"><div class="ef-l">Descripción <span style="color:#A32D2D">*</span></div>';
+  h += '<input type="text" class="ef-i" id="np-desc" placeholder="Ej. Eje cónico"></div>';
+  h += '<div class="row">';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Código de cliente</div>';
+  h += '<input type="text" class="ef-i" id="np-cod"></div>';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Material</div>';
+  h += '<select class="ef-i" id="np-material">';
+  h += '<option value="">(Sin material)</option>';
+  materiales.slice().sort((a, b) => (a.nombre || '').localeCompare(b.nombre || '')).forEach(mat => {
+    h += '<option value="' + mat.id + '">' + escapeHtml(mat.nombre) + '</option>';
+  });
+  h += '</select></div>';
+  h += '</div>';
+  h += '<div class="ef"><div class="ef-l">Presentación de materia prima</div>';
+  h += '<input type="text" class="ef-i" id="np-presentacion" placeholder="Ej. Redondo Ø50"></div>';
+
+  // Ubicación (precargada)
+  h += '<div style="font-size:12px;font-weight:600;color:#5F5E5A;margin:14px 0 6px">Ubicación en la matriz</div>';
+  h += '<div class="row">';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Cliente</div>';
+  h += '<select class="ef-i" id="np-cliente" onchange="_npUbicClienteChange()">';
+  h += '<option value="">(Genérico)</option>';
+  clientes.slice().sort((a, b) => (a.nombre || '').localeCompare(b.nombre || '')).forEach(c => {
+    h += '<option value="' + c.id + '"' + (c.id === st.clienteId ? ' selected' : '') + '>' + escapeHtml(c.nombre) + '</option>';
+  });
+  h += '</select></div>';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Sector</div>';
+  h += '<select class="ef-i" id="np-sector" onchange="_npUbicSectorChange()"></select></div>';
+  h += '</div>';
+  h += '<div class="row">';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Equipo</div>';
+  h += '<select class="ef-i" id="np-equipo" onchange="_npUbicEquipoChange()"></select></div>';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Conjunto (opcional)</div>';
+  h += '<select class="ef-i" id="np-conjunto" onchange="_npUbicConjuntoChange()"></select></div>';
+  h += '</div>';
+  h += '<div class="ef"><div class="ef-l">Subconjunto (opcional)</div>';
+  h += '<select class="ef-i" id="np-subconjunto"></select></div>';
+
+  h += '<div class="actions">';
+  h += '<button class="b" onclick="document.getElementById(\'np-ubic-modal\').remove();nuevoProdUbicState=null">Cancelar</button>';
+  h += '<button class="b b-p" onclick="_npUbicCrear()">Crear producto</button>';
+  h += '</div>';
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
+  // Inicializar cascada de selects con los valores precargados
+  _npUbicClienteChange(true);
+}
+
+// Las funciones de cascada. El parámetro `usarPrecarga` indica si hay que
+// respetar los valores de nuevoProdUbicState (primera vez) o resetear.
+function _npUbicClienteChange(usarPrecarga) {
+  const st = nuevoProdUbicState;
+  const cliSel = document.getElementById('np-cliente');
+  const secSel = document.getElementById('np-sector');
+  if (!cliSel || !secSel) return;
+  const cliId = cliSel.value ? parseInt(cliSel.value) : null;
+  if (!cliId) {
+    secSel.innerHTML = '<option value="">—</option>'; secSel.disabled = true;
+  } else {
+    secSel.disabled = false;
+    const secs = sectores.filter(s => s.cliente_id === cliId).sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+    secSel.innerHTML = secs.map(s => {
+      const sel = usarPrecarga ? (s.id === st.sectorId) : _esSectorGeneral(s);
+      return '<option value="' + s.id + '"' + (sel ? ' selected' : '') + '>' + escapeHtml(s.nombre) + '</option>';
+    }).join('');
+  }
+  _npUbicSectorChange(usarPrecarga);
+}
+
+function _npUbicSectorChange(usarPrecarga) {
+  const st = nuevoProdUbicState;
+  const secSel = document.getElementById('np-sector');
+  const eqSel = document.getElementById('np-equipo');
+  if (!secSel || !eqSel) return;
+  const secId = secSel.value ? parseInt(secSel.value) : null;
+  if (!secId) {
+    eqSel.innerHTML = '<option value="">—</option>'; eqSel.disabled = true;
+  } else {
+    eqSel.disabled = false;
+    const eqs = equipos.filter(e => e.sector_id === secId).sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+    eqSel.innerHTML = eqs.map(e => {
+      const sel = usarPrecarga ? (e.id === st.equipoId) : _esEquipoDefault(e);
+      return '<option value="' + e.id + '"' + (sel ? ' selected' : '') + '>' + escapeHtml(e.nombre) + '</option>';
+    }).join('');
+  }
+  _npUbicEquipoChange(usarPrecarga);
+}
+
+function _npUbicEquipoChange(usarPrecarga) {
+  const st = nuevoProdUbicState;
+  const eqSel = document.getElementById('np-equipo');
+  const conSel = document.getElementById('np-conjunto');
+  if (!eqSel || !conSel) return;
+  const eqId = eqSel.value ? parseInt(eqSel.value) : null;
+  let h = '<option value="">(Ninguno — va directo al equipo)</option>';
+  if (eqId) {
+    const conIds = equipoConjuntos.filter(ec => ec.equipo_id === eqId).map(ec => ec.conjunto_id);
+    const cons = conjuntos.filter(c => conIds.includes(c.id) && !_esConjuntoDefault(c))
+      .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+    cons.forEach(c => {
+      const sel = usarPrecarga && c.id === st.conjuntoId;
+      h += '<option value="' + c.id + '"' + (sel ? ' selected' : '') + '>' + escapeHtml(c.nombre) + '</option>';
+    });
+  }
+  conSel.innerHTML = h;
+  _npUbicConjuntoChange(usarPrecarga);
+}
+
+function _npUbicConjuntoChange(usarPrecarga) {
+  const st = nuevoProdUbicState;
+  const conSel = document.getElementById('np-conjunto');
+  const subSel = document.getElementById('np-subconjunto');
+  if (!conSel || !subSel) return;
+  const conId = conSel.value ? parseInt(conSel.value) : null;
+  let h = '<option value="">(Ninguno — va directo al conjunto)</option>';
+  if (conId) {
+    subSel.disabled = false;
+    const subIds = conjuntoSubconjuntos.filter(cs => cs.conjunto_id === conId).map(cs => cs.subconjunto_id);
+    const subs = subconjuntos.filter(s => subIds.includes(s.id) && !_esSubconjuntoDefault(s))
+      .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+    subs.forEach(s => {
+      const sel = usarPrecarga && s.id === st.subconjuntoId;
+      h += '<option value="' + s.id + '"' + (sel ? ' selected' : '') + '>' + escapeHtml(s.nombre) + '</option>';
+    });
+  } else {
+    subSel.disabled = true;
+  }
+  subSel.innerHTML = h;
+}
+
+async function _npUbicCrear() {
+  const desc = document.getElementById('np-desc').value.trim();
+  if (!desc) { toast('La descripción es obligatoria', true); return; }
+  const cliId = document.getElementById('np-cliente').value ? parseInt(document.getElementById('np-cliente').value) : null;
+  const codigo = document.getElementById('np-cod').value.trim() || null;
+  const matVal = document.getElementById('np-material').value;
+  const materialId = matVal ? parseInt(matVal) : null;
+  const presentacion = document.getElementById('np-presentacion').value.trim() || null;
+  const eqSel = document.getElementById('np-equipo');
+  const conSel = document.getElementById('np-conjunto');
+  const subSel = document.getElementById('np-subconjunto');
+  const equipoId = eqSel && eqSel.value ? parseInt(eqSel.value) : null;
+  const conjuntoId = conSel && conSel.value ? parseInt(conSel.value) : null;
+  const subconjuntoId = subSel && subSel.value ? parseInt(subSel.value) : null;
+
+  showSpinner('Creando producto...');
+  try {
+    const { data: nuevo, error } = await sb.from('productos_matriz').insert({
+      descripcion: desc,
+      cliente_id: cliId,
+      codigo_cliente: codigo,
+      material_id: materialId,
+      presentacion_mat_prima: presentacion,
+      updated_at: new Date().toISOString()
+    }).select().single();
+    if (error) { toast('Error: ' + error.message, true); return; }
+    // Asignar a la composición según el nivel más específico
+    if (subconjuntoId) {
+      await sb.from('subconjunto_productos').insert({ subconjunto_id: subconjuntoId, producto_id: nuevo.id, cantidad: 1 });
+    } else if (conjuntoId) {
+      await sb.from('conjunto_productos').insert({ conjunto_id: conjuntoId, producto_id: nuevo.id, cantidad: 1 });
+    } else if (equipoId) {
+      await sb.from('equipo_productos').insert({ equipo_id: equipoId, producto_id: nuevo.id, cantidad: 1 });
+    }
+    document.getElementById('np-ubic-modal').remove();
+    nuevoProdUbicState = null;
+    await loadAll();
+    toast('Producto creado');
+    // Llevar a la vista del producto nuevo para cargar procesos
+    navigate({ view: 'productoMatriz', productoId: nuevo.id });
+    setTimeout(() => {
+      showProcesoForm(null, { tipo: 'producto', parentId: nuevo.id });
+    }, 100);
+  } finally {
+    hideSpinner();
+  }
 }
 
 // =============================================================================
@@ -9711,6 +9915,19 @@ async function _ecCrearNuevo() {
       nuevoId = data.id;
     }
     if (nuevoId) {
+      // Vincular inmediatamente el item nuevo al contenedor en edición, en la DB.
+      // Así aparece en la matriz aunque el usuario no apriete "Guardar".
+      if (st.tipo === 'equipo' && tipo === 'conjunto') {
+        await sb.from('equipo_conjuntos').insert({ equipo_id: st.id, conjunto_id: nuevoId, cantidad: 1 });
+      } else if (st.tipo === 'equipo' && tipo === 'producto') {
+        await sb.from('equipo_productos').insert({ equipo_id: st.id, producto_id: nuevoId, cantidad: 1 });
+      } else if (st.tipo === 'conjunto' && tipo === 'subconjunto') {
+        await sb.from('conjunto_subconjuntos').insert({ conjunto_id: st.id, subconjunto_id: nuevoId, cantidad: 1 });
+      } else if (st.tipo === 'conjunto' && tipo === 'producto') {
+        await sb.from('conjunto_productos').insert({ conjunto_id: st.id, producto_id: nuevoId, cantidad: 1 });
+      } else if (st.tipo === 'subconjunto' && tipo === 'producto') {
+        await sb.from('subconjunto_productos').insert({ subconjunto_id: st.id, producto_id: nuevoId, cantidad: 1 });
+      }
       // Recargar datos para que el item nuevo esté en las listas globales
       await loadAll();
       // Agregar el item nuevo a la composición en edición
