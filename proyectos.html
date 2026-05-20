@@ -5491,6 +5491,7 @@ function renderProductoMatrizDetail() {
   h += '<b>Material:</b> ' + escapeHtml(matLbl) + ' &nbsp; <b>Presentación:</b> ' + escapeHtml(prod.presentacion_mat_prima || '—') + '<br>';
   h += '<div style="margin-top:8px;display:flex;gap:6px">';
   h += '<button class="b b-icon" onclick="showProductoMatrizForm(' + prod.id + ')">Editar producto</button>';
+  h += '<button class="b b-icon" onclick="duplicarProductoMatriz(' + prod.id + ')">Duplicar</button>';
   h += '<button class="b b-icon b-d" onclick="confirmDeleteProductoMatriz(' + prod.id + ')">Eliminar producto</button>';
   h += '</div></div></div>';
 
@@ -9523,6 +9524,12 @@ function _renderEditarContenedorModal() {
   // Footer
   h += '<div class="actions">';
   h += '<button class="b" onclick="document.getElementById(\'edit-cont-modal\').remove();editContenedorState=null">Cancelar</button>';
+  // v70 Fase 4: botón duplicar (solo conjunto y subconjunto)
+  if (st.tipo === 'conjunto') {
+    h += '<button class="b" onclick="document.getElementById(\'edit-cont-modal\').remove();editContenedorState=null;showDuplicarConjuntoModal(' + st.id + ')">Duplicar conjunto</button>';
+  } else if (st.tipo === 'subconjunto') {
+    h += '<button class="b" onclick="document.getElementById(\'edit-cont-modal\').remove();editContenedorState=null;showDuplicarSubconjuntoModal(' + st.id + ')">Duplicar subconjunto</button>';
+  }
   h += '<button class="b b-p" onclick="_ecGuardar()">Guardar</button>';
   h += '</div>';
   m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
@@ -9708,6 +9715,409 @@ async function _ecGuardar() {
   await loadAll();
   toast('Composición actualizada');
   render();
+  } finally {
+    hideSpinner();
+  }
+}
+
+// =============================================================================
+// v70 Fase 4: DUPLICAR producto / conjunto / subconjunto
+// =============================================================================
+
+// Helper central: duplica un producto de la matriz con todos sus procesos.
+// Devuelve el id del producto nuevo, o null si falló.
+// `overrides` permite cambiar campos del producto nuevo (ej. cliente_id, descripcion).
+async function _duplicarProductoMatriz(productoIdOrig, overrides) {
+  const orig = productosMatriz.find(p => p.id === productoIdOrig);
+  if (!orig) return null;
+  const ov = overrides || {};
+  const payload = {
+    descripcion: ov.descripcion !== undefined ? ov.descripcion : ((orig.descripcion || '') + ' (copia)'),
+    cliente_id: ov.cliente_id !== undefined ? ov.cliente_id : (orig.cliente_id || null),
+    codigo_cliente: orig.codigo_cliente || null,
+    material_id: orig.material_id || null,
+    presentacion_mat_prima: orig.presentacion_mat_prima || null,
+    foto_url: orig.foto_url || null,
+    updated_at: new Date().toISOString()
+  };
+  const { data: nuevo, error } = await sb.from('productos_matriz').insert(payload).select().single();
+  if (error) { console.error('Error duplicando producto:', error); return null; }
+  // Copiar procesos
+  const procs = productosMatrizProcesos.filter(pp => pp.producto_id === productoIdOrig)
+    .sort((a, b) => (a.orden || 0) - (b.orden || 0));
+  if (procs.length > 0) {
+    const inserts = procs.map((pp, i) => ({
+      producto_id: nuevo.id,
+      proceso: pp.proceso,
+      descripcion: (payload.descripcion) + ' - ' + (pp.proceso || ''),
+      duracion_estimada_min: pp.duracion_estimada_min,
+      duracion_margen_min: pp.duracion_margen_min,
+      duracion_operario_min: pp.duracion_operario_min,
+      tipo: pp.tipo,
+      maquina_ideal_id: pp.maquina_ideal_id,
+      maquina_ideal_nombre: pp.maquina_ideal_nombre,
+      operario_ideal_id: pp.operario_ideal_id,
+      maquinas_suplentes: pp.maquinas_suplentes,
+      operarios_suplentes: pp.operarios_suplentes,
+      trabajo_a_realizar: pp.trabajo_a_realizar,
+      orden: i + 1
+    }));
+    await sb.from('productos_matriz_procesos').insert(inserts);
+  }
+  return nuevo.id;
+}
+
+// ---- Duplicar producto suelto (botón en la vista del producto) ----
+function duplicarProductoMatriz(productoId) {
+  const prod = productosMatriz.find(p => p.id === productoId);
+  if (!prod) return;
+  confirmModal({
+    titulo: 'Duplicar producto',
+    mensaje: '¿Crear una copia de "' + (prod.descripcion || '') + '" con todos sus procesos? La copia queda sin asignar a ningún conjunto.',
+    textoConfirmar: 'Duplicar',
+    onConfirm: async () => {
+      showSpinner('Duplicando producto...');
+      try {
+        const nuevoId = await _duplicarProductoMatriz(productoId, {});
+        await loadAll();
+        if (nuevoId) {
+          toast('Producto duplicado');
+          navigate({ view: 'productoMatriz', productoId: nuevoId });
+        } else {
+          toast('Error al duplicar', true);
+          render();
+        }
+      } finally {
+        hideSpinner();
+      }
+    }
+  });
+}
+
+// ---- Duplicar conjunto (modal con checkboxes por producto) ----
+let duplicarConjuntoState = null;
+
+function showDuplicarConjuntoModal(conjuntoId) {
+  const con = conjuntos.find(c => c.id === conjuntoId);
+  if (!con) return;
+  // Juntar todos los productos del conjunto (directos + de subconjuntos)
+  const productosInfo = [];  // {prodId, nombre, cantidad, subId|null, subNombre|null}
+  conjuntoProductos.filter(cp => cp.conjunto_id === conjuntoId).forEach(cp => {
+    const p = productosMatriz.find(x => x.id === cp.producto_id);
+    if (p) productosInfo.push({ prodId: p.id, nombre: p.descripcion, cantidad: cp.cantidad || 1, subId: null, subNombre: null });
+  });
+  conjuntoSubconjuntos.filter(cs => cs.conjunto_id === conjuntoId).forEach(cs => {
+    const sub = subconjuntos.find(s => s.id === cs.subconjunto_id);
+    if (!sub) return;
+    subconjuntoProductos.filter(sp => sp.subconjunto_id === sub.id).forEach(sp => {
+      const p = productosMatriz.find(x => x.id === sp.producto_id);
+      if (p) productosInfo.push({ prodId: p.id, nombre: p.descripcion, cantidad: sp.cantidad || 1, subId: sub.id, subNombre: sub.nombre });
+    });
+  });
+  duplicarConjuntoState = {
+    conjuntoId,
+    nombreOrig: con.nombre,
+    clienteOrig: con.cliente_id,
+    productos: productosInfo.map(pi => Object.assign({}, pi, { modo: 'duplicar' }))  // modo: 'duplicar' | 'mismo'
+  };
+  _renderDuplicarConjuntoModal();
+}
+
+function _renderDuplicarConjuntoModal() {
+  const st = duplicarConjuntoState;
+  if (!st) return;
+  const existing = document.getElementById('dup-con-modal');
+  if (existing) existing.remove();
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'dup-con-modal';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '640px'; m.style.maxHeight = '90vh'; m.style.overflowY = 'auto';
+  let h = '<div class="md-t">Duplicar conjunto: ' + escapeHtml(st.nombreOrig) + '</div>';
+
+  // Cliente destino
+  h += '<div class="ef"><div class="ef-l">Cliente destino</div>';
+  h += '<select class="ef-i" id="dup-cliente" onchange="_dupConClienteChange()">';
+  clientes.slice().sort((a, b) => (a.nombre || '').localeCompare(b.nombre || '')).forEach(c => {
+    h += '<option value="' + c.id + '"' + (c.id === st.clienteOrig ? ' selected' : '') + '>' + escapeHtml(c.nombre) + '</option>';
+  });
+  h += '</select></div>';
+
+  // Sector y equipo destino
+  h += '<div class="row">';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Sector destino</div>';
+  h += '<select class="ef-i" id="dup-sector" onchange="_dupConSectorChange()"></select></div>';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Equipo destino</div>';
+  h += '<select class="ef-i" id="dup-equipo"></select></div>';
+  h += '</div>';
+
+  // Nombre del conjunto nuevo
+  h += '<div class="ef"><div class="ef-l">Nombre del conjunto nuevo</div>';
+  h += '<input type="text" class="ef-i" id="dup-nombre" value="' + escapeHtml(st.nombreOrig + ' (copia)') + '"></div>';
+
+  // Aviso de cliente distinto
+  h += '<div id="dup-aviso-cliente" style="display:none;background:#FEF5E7;color:#854F0B;padding:8px 12px;border-radius:5px;font-size:11px;margin-bottom:10px">Al duplicar a otro cliente, todos los productos se crean nuevos. Para compartir productos entre clientes vas a poder usar los gemelos más adelante.</div>';
+
+  // Control "marcar todos"
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin:12px 0 6px">';
+  h += '<div style="font-size:12px;font-weight:600;color:#5F5E5A">Productos del conjunto (' + st.productos.length + ')</div>';
+  h += '<div id="dup-marcar-todos" style="font-size:11px">';
+  h += '<a onclick="_dupConMarcarTodos(\'duplicar\')" style="cursor:pointer;color:#0C447C;margin-right:8px">Todos: duplicar</a>';
+  h += '<a onclick="_dupConMarcarTodos(\'mismo\')" style="cursor:pointer;color:#0C447C">Todos: usar el mismo</a>';
+  h += '</div></div>';
+
+  // Lista de productos
+  h += '<div id="dup-prod-list" style="border:1px solid #C8C6BE;border-radius:5px;max-height:280px;overflow-y:auto">';
+  h += _dupConProdListHtml();
+  h += '</div>';
+
+  h += '<div class="actions">';
+  h += '<button class="b" onclick="document.getElementById(\'dup-con-modal\').remove();duplicarConjuntoState=null">Cancelar</button>';
+  h += '<button class="b b-p" onclick="_dupConEjecutar()">Duplicar conjunto</button>';
+  h += '</div>';
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
+  // Inicializar selects de sector/equipo
+  _dupConClienteChange();
+}
+
+function _dupConProdListHtml() {
+  const st = duplicarConjuntoState;
+  if (!st || st.productos.length === 0) {
+    return '<div style="padding:14px;text-align:center;color:#888;font-size:11px;font-style:italic">El conjunto no tiene productos.</div>';
+  }
+  // ¿Cliente distinto? Entonces checkboxes bloqueados
+  const cliSel = document.getElementById('dup-cliente');
+  const clienteDistinto = cliSel ? (parseInt(cliSel.value) !== st.clienteOrig) : false;
+  let h = '';
+  st.productos.forEach((pi, idx) => {
+    h += '<div style="display:flex;align-items:center;padding:6px 10px;border-bottom:1px solid #F5F3EC;font-size:12px;gap:8px">';
+    h += '<div style="flex:1;min-width:0">';
+    h += '<div style="font-weight:600">' + escapeHtml(pi.nombre) + '</div>';
+    if (pi.subNombre) h += '<div style="font-size:10px;color:#888">en ' + escapeHtml(pi.subNombre) + '</div>';
+    h += '</div>';
+    if (clienteDistinto) {
+      h += '<span style="font-size:10px;color:#888;font-style:italic">se duplica</span>';
+    } else {
+      h += '<label style="font-size:11px;margin-right:8px"><input type="radio" name="dup-modo-' + idx + '" value="duplicar"' + (pi.modo === 'duplicar' ? ' checked' : '') + ' onchange="_dupConSetModo(' + idx + ',\'duplicar\')"> Duplicar</label>';
+      h += '<label style="font-size:11px"><input type="radio" name="dup-modo-' + idx + '" value="mismo"' + (pi.modo === 'mismo' ? ' checked' : '') + ' onchange="_dupConSetModo(' + idx + ',\'mismo\')"> Usar el mismo</label>';
+    }
+    h += '</div>';
+  });
+  return h;
+}
+
+function _dupConSetModo(idx, modo) {
+  if (duplicarConjuntoState && duplicarConjuntoState.productos[idx]) {
+    duplicarConjuntoState.productos[idx].modo = modo;
+  }
+}
+
+function _dupConMarcarTodos(modo) {
+  if (!duplicarConjuntoState) return;
+  duplicarConjuntoState.productos.forEach(pi => { pi.modo = modo; });
+  const list = document.getElementById('dup-prod-list');
+  if (list) list.innerHTML = _dupConProdListHtml();
+}
+
+function _dupConClienteChange() {
+  const st = duplicarConjuntoState;
+  if (!st) return;
+  const cliSel = document.getElementById('dup-cliente');
+  const cliId = cliSel ? parseInt(cliSel.value) : st.clienteOrig;
+  // Mostrar/ocultar aviso
+  const aviso = document.getElementById('dup-aviso-cliente');
+  if (aviso) aviso.style.display = (cliId !== st.clienteOrig) ? 'block' : 'none';
+  // Si cliente distinto, forzar todos los productos a 'duplicar'
+  if (cliId !== st.clienteOrig) {
+    st.productos.forEach(pi => { pi.modo = 'duplicar'; });
+  }
+  // Poblar sectores del cliente
+  const secSel = document.getElementById('dup-sector');
+  if (secSel) {
+    const secs = sectores.filter(s => s.cliente_id === cliId).sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+    secSel.innerHTML = secs.map(s => '<option value="' + s.id + '"' + (_esSectorGeneral(s) ? ' selected' : '') + '>' + escapeHtml(s.nombre) + '</option>').join('');
+  }
+  _dupConSectorChange();
+  // Refrescar lista de productos (para bloquear/desbloquear radios)
+  const list = document.getElementById('dup-prod-list');
+  if (list) list.innerHTML = _dupConProdListHtml();
+}
+
+function _dupConSectorChange() {
+  const secSel = document.getElementById('dup-sector');
+  const eqSel = document.getElementById('dup-equipo');
+  if (!secSel || !eqSel) return;
+  const secId = parseInt(secSel.value);
+  const eqs = equipos.filter(e => e.sector_id === secId).sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+  eqSel.innerHTML = eqs.map(e => '<option value="' + e.id + '"' + (_esEquipoDefault(e) ? ' selected' : '') + '>' + escapeHtml(e.nombre) + '</option>').join('');
+}
+
+// Helper: ¿es el sector "General" (default)?
+function _esSectorGeneral(s) {
+  return s && (s.nombre || '').trim().toLowerCase() === 'general';
+}
+
+async function _dupConEjecutar() {
+  const st = duplicarConjuntoState;
+  if (!st) return;
+  const nombreNuevo = document.getElementById('dup-nombre').value.trim();
+  if (!nombreNuevo) { toast('Ingresá el nombre del conjunto nuevo', true); return; }
+  const cliId = parseInt(document.getElementById('dup-cliente').value);
+  const eqSel = document.getElementById('dup-equipo');
+  const equipoDestino = eqSel && eqSel.value ? parseInt(eqSel.value) : null;
+  if (!equipoDestino) { toast('Elegí un equipo destino', true); return; }
+
+  showSpinner('Duplicando conjunto...');
+  try {
+    // 1. Crear el conjunto nuevo
+    const { data: nuevoCon, error: conErr } = await sb.from('conjuntos')
+      .insert({ cliente_id: cliId, nombre: nombreNuevo }).select().single();
+    if (conErr) { toast('Error al crear conjunto: ' + conErr.message, true); return; }
+
+    // 2. Vincular el conjunto nuevo al equipo destino
+    await sb.from('equipo_conjuntos').insert({ equipo_id: equipoDestino, conjunto_id: nuevoCon.id, cantidad: 1 });
+
+    // 3. Resolver cada producto (duplicar o usar el mismo) y agrupar por destino
+    //    (subconjunto nuevo o directo al conjunto).
+    // Primero, duplicar los subconjuntos como contenedores nuevos.
+    const subMap = {};  // subId viejo -> subId nuevo
+    for (const pi of st.productos) {
+      if (pi.subId && !subMap[pi.subId]) {
+        const subOrig = subconjuntos.find(s => s.id === pi.subId);
+        const { data: nuevoSub, error: subErr } = await sb.from('subconjuntos')
+          .insert({ cliente_id: cliId, nombre: subOrig ? subOrig.nombre : 'Subconjunto' }).select().single();
+        if (!subErr && nuevoSub) {
+          subMap[pi.subId] = nuevoSub.id;
+          await sb.from('conjunto_subconjuntos').insert({ conjunto_id: nuevoCon.id, subconjunto_id: nuevoSub.id, cantidad: 1 });
+        }
+      }
+    }
+    // 4. Procesar productos
+    for (const pi of st.productos) {
+      let prodIdFinal = pi.prodId;
+      if (pi.modo === 'duplicar') {
+        const nuevoProdId = await _duplicarProductoMatriz(pi.prodId, {
+          cliente_id: cliId,
+          descripcion: (productosMatriz.find(p => p.id === pi.prodId) || {}).descripcion || 'Producto'
+        });
+        if (nuevoProdId) prodIdFinal = nuevoProdId;
+      }
+      // Insertar en la tabla de composición correspondiente
+      if (pi.subId && subMap[pi.subId]) {
+        await sb.from('subconjunto_productos').insert({ subconjunto_id: subMap[pi.subId], producto_id: prodIdFinal, cantidad: pi.cantidad });
+      } else {
+        await sb.from('conjunto_productos').insert({ conjunto_id: nuevoCon.id, producto_id: prodIdFinal, cantidad: pi.cantidad });
+      }
+    }
+    document.getElementById('dup-con-modal').remove();
+    duplicarConjuntoState = null;
+    await loadAll();
+    toast('Conjunto duplicado');
+    render();
+  } finally {
+    hideSpinner();
+  }
+}
+
+// ---- Duplicar subconjunto ----
+let duplicarSubconjuntoState = null;
+
+function showDuplicarSubconjuntoModal(subconjuntoId) {
+  const sub = subconjuntos.find(s => s.id === subconjuntoId);
+  if (!sub) return;
+  const productosInfo = [];
+  subconjuntoProductos.filter(sp => sp.subconjunto_id === subconjuntoId).forEach(sp => {
+    const p = productosMatriz.find(x => x.id === sp.producto_id);
+    if (p) productosInfo.push({ prodId: p.id, nombre: p.descripcion, cantidad: sp.cantidad || 1 });
+  });
+  duplicarSubconjuntoState = {
+    subconjuntoId,
+    nombreOrig: sub.nombre,
+    clienteOrig: sub.cliente_id,
+    productos: productosInfo.map(pi => Object.assign({}, pi, { modo: 'duplicar' }))
+  };
+  _renderDuplicarSubconjuntoModal();
+}
+
+function _renderDuplicarSubconjuntoModal() {
+  const st = duplicarSubconjuntoState;
+  if (!st) return;
+  const existing = document.getElementById('dup-sub-modal');
+  if (existing) existing.remove();
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'dup-sub-modal';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '600px'; m.style.maxHeight = '90vh'; m.style.overflowY = 'auto';
+  let h = '<div class="md-t">Duplicar subconjunto: ' + escapeHtml(st.nombreOrig) + '</div>';
+  h += '<div class="ef-help" style="margin-bottom:10px">El subconjunto duplicado queda en el mismo cliente. Después podés vincularlo a un conjunto desde la matriz.</div>';
+  h += '<div class="ef"><div class="ef-l">Nombre del subconjunto nuevo</div>';
+  h += '<input type="text" class="ef-i" id="dupsub-nombre" value="' + escapeHtml(st.nombreOrig + ' (copia)') + '"></div>';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin:12px 0 6px">';
+  h += '<div style="font-size:12px;font-weight:600;color:#5F5E5A">Productos (' + st.productos.length + ')</div>';
+  h += '<div style="font-size:11px">';
+  h += '<a onclick="_dupSubMarcarTodos(\'duplicar\')" style="cursor:pointer;color:#0C447C;margin-right:8px">Todos: duplicar</a>';
+  h += '<a onclick="_dupSubMarcarTodos(\'mismo\')" style="cursor:pointer;color:#0C447C">Todos: usar el mismo</a>';
+  h += '</div></div>';
+  h += '<div id="dupsub-prod-list" style="border:1px solid #C8C6BE;border-radius:5px;max-height:260px;overflow-y:auto">';
+  h += _dupSubProdListHtml();
+  h += '</div>';
+  h += '<div class="actions">';
+  h += '<button class="b" onclick="document.getElementById(\'dup-sub-modal\').remove();duplicarSubconjuntoState=null">Cancelar</button>';
+  h += '<button class="b b-p" onclick="_dupSubEjecutar()">Duplicar subconjunto</button>';
+  h += '</div>';
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
+}
+
+function _dupSubProdListHtml() {
+  const st = duplicarSubconjuntoState;
+  if (!st || st.productos.length === 0) {
+    return '<div style="padding:14px;text-align:center;color:#888;font-size:11px;font-style:italic">Sin productos.</div>';
+  }
+  let h = '';
+  st.productos.forEach((pi, idx) => {
+    h += '<div style="display:flex;align-items:center;padding:6px 10px;border-bottom:1px solid #F5F3EC;font-size:12px;gap:8px">';
+    h += '<div style="flex:1;min-width:0;font-weight:600">' + escapeHtml(pi.nombre) + '</div>';
+    h += '<label style="font-size:11px;margin-right:8px"><input type="radio" name="dupsub-modo-' + idx + '" value="duplicar"' + (pi.modo === 'duplicar' ? ' checked' : '') + ' onchange="_dupSubSetModo(' + idx + ',\'duplicar\')"> Duplicar</label>';
+    h += '<label style="font-size:11px"><input type="radio" name="dupsub-modo-' + idx + '" value="mismo"' + (pi.modo === 'mismo' ? ' checked' : '') + ' onchange="_dupSubSetModo(' + idx + ',\'mismo\')"> Usar el mismo</label>';
+    h += '</div>';
+  });
+  return h;
+}
+
+function _dupSubSetModo(idx, modo) {
+  if (duplicarSubconjuntoState && duplicarSubconjuntoState.productos[idx]) {
+    duplicarSubconjuntoState.productos[idx].modo = modo;
+  }
+}
+
+function _dupSubMarcarTodos(modo) {
+  if (!duplicarSubconjuntoState) return;
+  duplicarSubconjuntoState.productos.forEach(pi => { pi.modo = modo; });
+  const list = document.getElementById('dupsub-prod-list');
+  if (list) list.innerHTML = _dupSubProdListHtml();
+}
+
+async function _dupSubEjecutar() {
+  const st = duplicarSubconjuntoState;
+  if (!st) return;
+  const nombreNuevo = document.getElementById('dupsub-nombre').value.trim();
+  if (!nombreNuevo) { toast('Ingresá el nombre del subconjunto nuevo', true); return; }
+  showSpinner('Duplicando subconjunto...');
+  try {
+    const { data: nuevoSub, error: subErr } = await sb.from('subconjuntos')
+      .insert({ cliente_id: st.clienteOrig, nombre: nombreNuevo }).select().single();
+    if (subErr) { toast('Error: ' + subErr.message, true); return; }
+    for (const pi of st.productos) {
+      let prodIdFinal = pi.prodId;
+      if (pi.modo === 'duplicar') {
+        const nuevoProdId = await _duplicarProductoMatriz(pi.prodId, {
+          cliente_id: st.clienteOrig,
+          descripcion: (productosMatriz.find(p => p.id === pi.prodId) || {}).descripcion || 'Producto'
+        });
+        if (nuevoProdId) prodIdFinal = nuevoProdId;
+      }
+      await sb.from('subconjunto_productos').insert({ subconjunto_id: nuevoSub.id, producto_id: prodIdFinal, cantidad: pi.cantidad });
+    }
+    document.getElementById('dup-sub-modal').remove();
+    duplicarSubconjuntoState = null;
+    await loadAll();
+    toast('Subconjunto duplicado');
+    render();
   } finally {
     hideSpinner();
   }
