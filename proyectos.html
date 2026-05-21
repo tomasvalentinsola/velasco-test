@@ -9222,11 +9222,12 @@ function _matrizRenderInnerConjunto(con, cliId) {
 function _matrizRenderConjuntoNode(con, cliId) {
   const cnt = _matrizCountProdsDelConjunto(con.id);
   const warn = _matrizNivelTieneProblemas({ conjuntoId: con.id }) ? _warningIconHtml('Algún producto debajo requiere atención') : '';
-  // v69: prefill del botón "+". Tomo una ubicación existente del conjunto para
-  // pre-rellenar sector y equipo. Si no hay, quedan vacíos y el usuario los elige.
-  const ubicEjemplo = productosMatrizUbicaciones.find(u => u.conjunto_id === con.id && u.cliente_id === cliId);
-  const sectorIdPrefill = ubicEjemplo && ubicEjemplo.sector_id ? ubicEjemplo.sector_id : 'null';
-  const equipoIdPrefill = ubicEjemplo && ubicEjemplo.equipo_id ? ubicEjemplo.equipo_id : 'null';
+  // v70: prefill del botón "+". El equipo del conjunto se saca de la tabla
+  // nueva equipo_conjuntos (no de productos_matriz_ubicaciones que está vacía).
+  const ecRel = equipoConjuntos.find(ec => ec.conjunto_id === con.id);
+  const equipoDelConjunto = ecRel ? equipos.find(e => e.id === ecRel.equipo_id) : null;
+  const equipoIdPrefill = equipoDelConjunto ? equipoDelConjunto.id : 'null';
+  const sectorIdPrefill = equipoDelConjunto && equipoDelConjunto.sector_id ? equipoDelConjunto.sector_id : 'null';
   return _matrizRenderNode(
     'con:' + con.id,
     '📦',
@@ -9258,12 +9259,18 @@ function _matrizRenderInnerSubconjunto(sub, cliId) {
 function _matrizRenderSubconjuntoNode(sub, cliId) {
   const cnt = _matrizCountProdsDelSubconjunto(sub.id);
   const warn = _matrizNivelTieneProblemas({ subconjuntoId: sub.id }) ? _warningIconHtml('Algún producto debajo requiere atención') : '';
-  // v69: prefill del botón "+". Igual al conjunto, busco una ubicación
-  // existente del subconjunto para tomar sector/equipo/conjunto.
-  const ubicEjemplo = productosMatrizUbicaciones.find(u => u.subconjunto_id === sub.id && u.cliente_id === cliId);
-  const sectorIdPrefill = ubicEjemplo && ubicEjemplo.sector_id ? ubicEjemplo.sector_id : 'null';
-  const equipoIdPrefill = ubicEjemplo && ubicEjemplo.equipo_id ? ubicEjemplo.equipo_id : 'null';
-  const conjuntoIdPrefill = ubicEjemplo && ubicEjemplo.conjunto_id ? ubicEjemplo.conjunto_id : 'null';
+  // v70: prefill del botón "+". El conjunto del subconjunto se saca de
+  // conjunto_subconjuntos; el equipo, de equipo_conjuntos.
+  const csRel = conjuntoSubconjuntos.find(cs => cs.subconjunto_id === sub.id);
+  const conjuntoIdPrefill = csRel ? csRel.conjunto_id : 'null';
+  let equipoIdPrefill = 'null', sectorIdPrefill = 'null';
+  if (csRel) {
+    const ecRel = equipoConjuntos.find(ec => ec.conjunto_id === csRel.conjunto_id);
+    if (ecRel) {
+      const eq = equipos.find(e => e.id === ecRel.equipo_id);
+      if (eq) { equipoIdPrefill = eq.id; sectorIdPrefill = eq.sector_id || 'null'; }
+    }
+  }
   return _matrizRenderNode(
     'sub:' + sub.id,
     '📦',
@@ -9629,15 +9636,12 @@ function _ceEquipoChange(usarPrecarga) {
   const conSel = document.getElementById('ce-conjunto');
   if (!conSel) return;
   const eqId = eqSel && eqSel.value ? parseInt(eqSel.value) : null;
-  console.log('[_ceEquipoChange] usarPrecarga=', usarPrecarga, 'eqId=', eqId, 'st.conjuntoId=', st.conjuntoId, 'st.equipoId=', st.equipoId);
   const esProducto = st.tipo === 'producto';
   let h = esProducto ? '<option value="">(Ninguno — directo al equipo)</option>' : '<option value="">(Elegir conjunto)</option>';
   if (eqId) {
     const conIds = equipoConjuntos.filter(ec => ec.equipo_id === eqId).map(ec => ec.conjunto_id);
-    console.log('[_ceEquipoChange] conIds del equipo', eqId, '=', conIds);
     const cons = conjuntos.filter(c => conIds.includes(c.id) && !_esConjuntoDefault(c))
       .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
-    console.log('[_ceEquipoChange] conjuntos no-default:', cons.map(c => c.id + ':' + c.nombre));
     cons.forEach(c => {
       const sel = usarPrecarga && st.conjuntoId && c.id === st.conjuntoId;
       h += '<option value="' + c.id + '"' + (sel ? ' selected' : '') + '>' + escapeHtml(c.nombre) + '</option>';
