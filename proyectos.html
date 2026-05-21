@@ -167,6 +167,9 @@ let equipoProductos = [];
 let conjuntoProductos = [];
 let subconjuntoProductos = [];
 let productosGemelos = [];
+// v70 Fase 6: notas de envío registradas. Cada fila es un documento congelado
+// (snapshot del cliente y de los ítems al momento de generarse).
+let notasEnvio = [];
 // v62: toggles "mostrar inactivos" por módulo (solo dentro del módulo Recursos).
 // Cada uno es una llave booleana que se setea desde la UI.
 let mostrarInactivos = { clientes: false, materiales: false, operarios: false, maquinas: false };
@@ -922,7 +925,7 @@ async function loadAll() {
   // funciona sin tocar nada).
   try {
     const [pm, pmp, mat, sec, eq, con, sub, ce, sc, pmu, iu, pmc, ph, cc,
-           ec, cs, ep, cp, sp, pg] = await Promise.all([
+           ec, cs, ep, cp, sp, pg, ne] = await Promise.all([
       sb.from('productos_matriz').select('*').order('descripcion'),
       sb.from('productos_matriz_procesos').select('*').order('orden', { ascending: true, nullsFirst: false }),
       sb.from('materiales').select('*').order('nombre'),
@@ -943,7 +946,9 @@ async function loadAll() {
       sb.from('equipo_productos').select('*'),
       sb.from('conjunto_productos').select('*'),
       sb.from('subconjunto_productos').select('*'),
-      sb.from('productos_gemelos').select('*')
+      sb.from('productos_gemelos').select('*'),
+      // v70 Fase 6: notas de envío
+      sb.from('notas_envio').select('*').order('id', { ascending: false })
     ]);
     productosMatriz = pm.data || [];
     productosMatrizProcesos = pmp.data || [];
@@ -966,6 +971,7 @@ async function loadAll() {
     conjuntoProductos = cp.data || [];
     subconjuntoProductos = sp.data || [];
     productosGemelos = pg.data || [];
+    notasEnvio = ne.data || [];
   } catch(e) {
     console.warn('[loadAll] Tablas matriz/jerarquia no disponibles aun:', e);
     productosMatriz = [];
@@ -1094,7 +1100,7 @@ function renderCrumbs() {
   } else if (nav.view === 'clientes') {
     h = '<a onclick="navigate({view:\'projects\'})">Proyectos</a> <span class="sep">›</span> Clientes';
   } else if (nav.view === 'recursos') {
-    const tabLabels = { clientes: 'Clientes', matriz: 'Matriz de Productos', rrhh: 'RRHH', maquinas: 'Máquinas', materiales: 'Materiales' };
+    const tabLabels = { clientes: 'Clientes', matriz: 'Matriz de Productos', rrhh: 'RRHH', maquinas: 'Máquinas', materiales: 'Materiales', notas: 'Notas de envío' };
     const tab = nav.tab || _recursosLastTab || 'matriz';
     const tabLbl = tabLabels[tab] || tab;
     h = '<a onclick="navigate({view:\'projects\'})">Proyectos</a> <span class="sep">›</span> ' +
@@ -2845,6 +2851,10 @@ function renderProjectDetail() {
     });
   }
   h += '</div>';
+
+  // v70 Fase 6: sección de notas de envío vinculadas a este proyecto.
+  h += _neSeccionProyectoHtml(proj.id);
+
   main.innerHTML = h;
   setupPhotoPaste();
   // v62: bindear cambio del combo de contacto en el form de edit (si existe)
@@ -7042,6 +7052,7 @@ function renderRecursos() {
   const tabs = [
     ['matriz', 'Matriz de Productos'],
     ['clientes', 'Clientes'],
+    ['notas', 'Notas de envío'],
     ['rrhh', 'RRHH'],
     ['maquinas', 'Máquinas'],
     ['materiales', 'Materiales']
@@ -7068,6 +7079,8 @@ function renderRecursos() {
     h += '</div>';
   } else if (activeTab === 'clientes') {
     h += renderClientesTab();
+  } else if (activeTab === 'notas') {
+    h += renderNotasEnvioTab();
   }
   main.innerHTML = h;
 }
@@ -13494,11 +13507,16 @@ const _NE_EMISOR = {
 // Prefijo fijo de la numeración. Solo incrementan los 8 dígitos de la derecha.
 const _NE_PREFIJO = '0002';
 
-// Estado del modal de nota de envío (se rearma cada vez que se abre).
-let _neState = { projId: null, items: [] };
-
 const _NE_MESES = ['enero','febrero','marzo','abril','mayo','junio','julio',
   'agosto','septiembre','octubre','noviembre','diciembre'];
+
+// Estado del modal de nota de envío (se rearma cada vez que se abre).
+// mode: 'nuevo' (desde proyecto) | 'editar' (desde una nota guardada)
+let _neState = { mode: 'nuevo', projId: null, notaId: null, numero: null, clienteId: null, items: [] };
+
+// Filtros de la pestaña Notas de envío (sesión).
+const _NE_DEFAULT_FILTERS = { numero: '', cliente_id: '', proyecto_id: '', desde: '', hasta: '', itemTexto: '' };
+let _neFilters = { ..._NE_DEFAULT_FILTERS };
 
 // Formatea una fecha ISO (YYYY-MM-DD) a "21 de mayo de 2026".
 function _neFmtFechaLarga(iso) {
@@ -13510,6 +13528,14 @@ function _neFmtFechaLarga(iso) {
   return d + ' de ' + _NE_MESES[m] + ' de ' + y;
 }
 
+// Formatea una fecha ISO a "21/05/2026".
+function _neFmtFechaCorta(iso) {
+  if (!iso) return '—';
+  const p = iso.split('-');
+  if (p.length !== 3) return iso;
+  return p[2] + '/' + p[1] + '/' + p[0];
+}
+
 // Formatea un CUIT de 11 dígitos a XX-XXXXXXXX-X. Si no son 11 dígitos
 // limpios, lo devuelve tal cual.
 function _neFmtCuit(cuit) {
@@ -13518,21 +13544,18 @@ function _neFmtCuit(cuit) {
   return c.slice(0, 2) + '-' + c.slice(2, 10) + '-' + c.slice(10);
 }
 
-// Abre el modal de edición de la nota de envío para un proyecto.
+// ---------------------------------------------------------------------
+// Apertura del modal
+// ---------------------------------------------------------------------
+
+// Abre el modal en modo "nuevo" con los datos del proyecto precargados.
 function showNotaEnvioModal(projId) {
   const proj = getProject(projId) || proyectos.find(p => p.id === projId);
   if (!proj) { toast('Proyecto no encontrado', true); return; }
   const cliente = clientes.find(c => c.id === proj.cliente_id);
   if (!cliente) { toast('El proyecto no tiene cliente asignado', true); return; }
 
-  // Items del proyecto, precargados. Se editan solo para la nota.
   const itemsProj = items.filter(i => i.proyecto_id === projId);
-  _neState = {
-    projId: projId,
-    items: itemsProj.map(it => ({ cantidad: it.cantidad || 1, descripcion: it.descripcion || '' }))
-  };
-
-  // Contacto del proyecto (si tiene).
   const contacto = proj.contacto_id ? clienteContactos.find(c => c.id === proj.contacto_id) : null;
   const contactoNombre = contacto ? [contacto.nombre, contacto.apellido].filter(Boolean).join(' ') : '';
 
@@ -13541,30 +13564,74 @@ function showNotaEnvioModal(projId) {
     String(hoy.getMonth() + 1).padStart(2, '0') + '-' +
     String(hoy.getDate()).padStart(2, '0');
 
+  _neRenderModal({
+    mode: 'nuevo', projId: projId, notaId: null, numero: null, clienteId: proj.cliente_id,
+    tituloCliente: clN(proj.cliente_id),
+    datos: {
+      nombre: cliente.nombre || '', razon: cliente.razon_social || '', cuit: cliente.cuit || '',
+      contacto: contactoNombre, direccion: cliente.direccion_entrega || '',
+      fecha: hoyIso, observaciones: '', pedido: proj.pedido_nro || ''
+    },
+    items: itemsProj.map(it => ({ cantidad: it.cantidad || 1, descripcion: it.descripcion || '' }))
+  });
+}
+
+// Abre el modal en modo "editar" con los datos de una nota guardada.
+function editarNotaEnvio(notaId) {
+  const n = notasEnvio.find(x => x.id === notaId);
+  if (!n) { toast('Nota no encontrada', true); return; }
+  _neRenderModal({
+    mode: 'editar', projId: n.proyecto_id, notaId: n.id, numero: n.numero, clienteId: n.cliente_id,
+    tituloCliente: n.cliente_nombre || clN(n.cliente_id) || '',
+    datos: {
+      nombre: n.cliente_nombre || '', razon: n.cliente_razon_social || '', cuit: n.cliente_cuit || '',
+      contacto: n.cliente_contacto || '', direccion: n.cliente_direccion || '',
+      fecha: n.fecha || '', observaciones: n.observaciones || '', pedido: n.pedido_nro || ''
+    },
+    items: Array.isArray(n.items) ? n.items.map(it => ({ cantidad: it.cantidad || 1, descripcion: it.descripcion || '' })) : []
+  });
+}
+
+// Render del modal de edición (unifica modo nuevo y editar).
+function _neRenderModal(cfg) {
+  _neState = {
+    mode: cfg.mode, projId: cfg.projId, notaId: cfg.notaId,
+    numero: cfg.numero, clienteId: cfg.clienteId, items: cfg.items.slice()
+  };
+  const d = cfg.datos;
+  const esEditar = cfg.mode === 'editar';
+
+  const prev = document.getElementById('ne-modal');
+  if (prev) prev.remove();
+
   const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'ne-modal';
   const m = document.createElement('div'); m.className = 'md';
   m.style.maxWidth = '620px'; m.style.maxHeight = '92vh'; m.style.overflowY = 'auto';
 
-  let h = '<div class="md-t">Nota de envío — ' + escapeHtml(clN(proj.cliente_id)) + '</div>';
-  h += '<div style="font-size:11px;color:#5F5E5A;margin-bottom:10px">Revisá los datos y los ítems. Lo que edites acá <b>solo afecta a la nota</b>, no modifica el proyecto.</div>';
+  let h = '<div class="md-t">' + (esEditar
+    ? 'Editar nota de envío ' + escapeHtml(cfg.numero)
+    : 'Nota de envío — ' + escapeHtml(cfg.tituloCliente)) + '</div>';
+  h += '<div style="font-size:11px;color:#5F5E5A;margin-bottom:10px">' + (esEditar
+    ? 'Editás el contenido de la nota. El número <b>' + escapeHtml(cfg.numero) + '</b> se mantiene.'
+    : 'Revisá los datos y los ítems. Lo que edites acá <b>solo afecta a la nota</b>, no modifica el proyecto.') + '</div>';
 
-  // --- Datos del cliente (editables solo para la nota) ---
+  // --- Datos del cliente ---
   h += '<div class="section-t" style="margin-top:4px"><span>Datos del cliente</span></div>';
   h += '<div class="ef"><div class="ef-l">Señores (nombre del cliente)</div>';
-  h += '<input type="text" class="ef-i" id="ne-nombre" value="' + escapeHtml(cliente.nombre || '') + '"></div>';
+  h += '<input type="text" class="ef-i" id="ne-nombre" value="' + escapeHtml(d.nombre) + '"></div>';
   h += '<div class="ef"><div class="ef-l">Razón social</div>';
-  h += '<input type="text" class="ef-i" id="ne-razon" value="' + escapeHtml(cliente.razon_social || '') + '" placeholder="Cargala en Recursos > Clientes para tenerla por defecto"></div>';
+  h += '<input type="text" class="ef-i" id="ne-razon" value="' + escapeHtml(d.razon) + '" placeholder="Cargala en Recursos > Clientes para tenerla por defecto"></div>';
   h += '<div class="row">';
   h += '<div class="ef" style="flex:1"><div class="ef-l">CUIT</div>';
-  h += '<input type="text" class="ef-i" id="ne-cuit" value="' + escapeHtml(cliente.cuit || '') + '"></div>';
+  h += '<input type="text" class="ef-i" id="ne-cuit" value="' + escapeHtml(d.cuit) + '"></div>';
   h += '<div class="ef" style="flex:1"><div class="ef-l">Contacto</div>';
-  h += '<input type="text" class="ef-i" id="ne-contacto" value="' + escapeHtml(contactoNombre) + '"></div></div>';
+  h += '<input type="text" class="ef-i" id="ne-contacto" value="' + escapeHtml(d.contacto) + '"></div></div>';
   h += '<div class="ef"><div class="ef-l">Dirección de entrega</div>';
-  h += '<input type="text" class="ef-i" id="ne-direccion" value="' + escapeHtml(cliente.direccion_entrega || '') + '" placeholder="Cargala en Recursos > Clientes para tenerla por defecto"></div>';
+  h += '<input type="text" class="ef-i" id="ne-direccion" value="' + escapeHtml(d.direccion) + '" placeholder="Cargala en Recursos > Clientes para tenerla por defecto"></div>';
 
   // --- Fecha ---
   h += '<div class="ef"><div class="ef-l">Fecha</div>';
-  h += '<input type="date" class="ef-i" id="ne-fecha" value="' + hoyIso + '" style="max-width:200px"></div>';
+  h += '<input type="date" class="ef-i" id="ne-fecha" value="' + escapeHtml(d.fecha) + '" style="max-width:200px"></div>';
 
   // --- Items ---
   h += '<div class="section-t" style="margin-top:14px"><span>Ítems de la nota</span>';
@@ -13573,25 +13640,27 @@ function showNotaEnvioModal(projId) {
 
   // --- Observaciones ---
   h += '<div class="ef" style="margin-top:12px"><div class="ef-l">Observaciones</div>';
-  h += '<textarea class="ef-i" id="ne-obs" rows="2" placeholder="Texto opcional. Aparece arriba de la línea \'Corresponde a:\'"></textarea></div>';
+  h += '<textarea class="ef-i" id="ne-obs" rows="2" placeholder="Texto opcional. Aparece arriba de la línea \'Corresponde a:\'">' + escapeHtml(d.observaciones) + '</textarea></div>';
 
   // --- Corresponde a ---
   h += '<div class="ef"><div class="ef-l">Corresponde a: Pedido</div>';
-  h += '<input type="text" class="ef-i" id="ne-pedido" value="' + escapeHtml(proj.pedido_nro || '') + '" placeholder="Nº de pedido" style="max-width:200px"></div>';
+  h += '<input type="text" class="ef-i" id="ne-pedido" value="' + escapeHtml(d.pedido) + '" placeholder="Nº de pedido" style="max-width:200px"></div>';
 
   h += '<div class="actions" style="margin-top:14px">';
   h += '<button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button>';
-  h += '<button class="b b-p" onclick="generarNotaEnvio()">🚚 Generar nota de envío</button></div>';
+  h += '<button class="b b-p" onclick="generarNotaEnvio()">' + (esEditar ? '💾 Guardar y ver PDF' : '🚚 Generar nota de envío') + '</button></div>';
 
   m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
 }
 
-// HTML de la lista editable de ítems de la nota.
+// ---------------------------------------------------------------------
+// Lista editable de ítems dentro del modal
+// ---------------------------------------------------------------------
+
 function _neRenderItemsList() {
   if (!_neState.items.length) {
     return '<div style="font-size:12px;color:#888;font-style:italic;padding:10px;text-align:center;background:#FAFAF7;border-radius:4px">Sin ítems. Apretá "+ Agregar ítem".</div>';
   }
-  // Encabezado de columnas
   let h = '<div style="display:flex;gap:8px;align-items:center;padding:2px 4px;font-size:10px;font-weight:700;color:#5F5E5A;text-transform:uppercase;letter-spacing:0.5px">';
   h += '<div style="width:70px;text-align:center">Cantidad</div>';
   h += '<div style="flex:1">Descripción</div><div style="width:30px"></div></div>';
@@ -13605,8 +13674,7 @@ function _neRenderItemsList() {
   return h;
 }
 
-// Vuelca los valores de los inputs de la lista al estado (para no perder
-// ediciones al agregar/quitar filas).
+// Vuelca los valores de los inputs de la lista al estado.
 function _neSyncItems() {
   document.querySelectorAll('[data-ne-cant]').forEach(el => {
     const idx = parseInt(el.dataset.neCant, 10);
@@ -13633,9 +13701,12 @@ function _neRemoveItem(idx) {
   document.getElementById('ne-items').innerHTML = _neRenderItemsList();
 }
 
-// Reserva el siguiente número de nota de envío incrementando el contador
-// en la DB. Devuelve el número formateado (ej. "0002-00000001") o null si
-// hubo error.
+// ---------------------------------------------------------------------
+// Numeración y guardado
+// ---------------------------------------------------------------------
+
+// Reserva el siguiente número de nota incrementando el contador en la DB.
+// Devuelve el número formateado (ej. "0002-00000001") o null si hubo error.
 async function _neReservarNumero() {
   const { data: row, error: e1 } = await sb.from('contadores')
     .select('valor').eq('clave', 'nota_envio').single();
@@ -13645,13 +13716,11 @@ async function _neReservarNumero() {
   }
   const actual = row.valor || 0;
   const nuevo = actual + 1;
-  // Update condicionado al valor leído: si otro generó una nota en el medio,
-  // no afecta filas y reintentamos una vez.
   const { data: upd, error: e2 } = await sb.from('contadores')
     .update({ valor: nuevo }).eq('clave', 'nota_envio').eq('valor', actual).select();
   if (e2) { toast('Error al actualizar el contador: ' + e2.message, true); return null; }
   if (!upd || !upd.length) {
-    // Reintento simple
+    // Otro usuario reservó un número en el medio: reintentamos una vez.
     const { data: row2 } = await sb.from('contadores')
       .select('valor').eq('clave', 'nota_envio').single();
     const actual2 = row2 ? (row2.valor || 0) : actual;
@@ -13667,13 +13736,9 @@ async function _neReservarNumero() {
   return _NE_PREFIJO + '-' + String(nuevo).padStart(8, '0');
 }
 
-// Genera la nota de envío: reserva número, arma el HTML y lo abre en una
-// ventana nueva (igual que "Generar carpeta").
+// Genera (modo nuevo) o guarda (modo editar) la nota y abre el PDF.
 async function generarNotaEnvio() {
   _neSyncItems();
-  const proj = getProject(_neState.projId) || proyectos.find(p => p.id === _neState.projId);
-  if (!proj) { toast('Proyecto no encontrado', true); return; }
-
   const getV = id => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
   const nombre = getV('ne-nombre');
   const razon = getV('ne-razon');
@@ -13684,30 +13749,247 @@ async function generarNotaEnvio() {
   const obs = getV('ne-obs');
   const pedido = getV('ne-pedido');
 
-  const itemsNota = _neState.items.filter(it => (it.descripcion || '').trim() !== '');
-  if (!itemsNota.length) { toast('Agregá al menos un ítem con descripción', true); return; }
+  const itemsClean = _neState.items
+    .filter(it => (it.descripcion || '').trim() !== '')
+    .map(it => ({ cantidad: it.cantidad || 0, descripcion: (it.descripcion || '').trim() }));
+  if (!itemsClean.length) { toast('Agregá al menos un ítem con descripción', true); return; }
 
-  const numero = await _neReservarNumero();
-  if (!numero) return;  // el toast de error ya se mostró
+  let numero;
+  if (_neState.mode === 'nuevo') {
+    numero = await _neReservarNumero();
+    if (!numero) return;  // el toast de error ya se mostró
+    const payload = {
+      numero: numero, proyecto_id: _neState.projId, cliente_id: _neState.clienteId,
+      pedido_nro: pedido || null, fecha: fecha || null,
+      cliente_nombre: nombre || null, cliente_razon_social: razon || null,
+      cliente_cuit: cuit || null, cliente_contacto: contacto || null,
+      cliente_direccion: direccion || null, observaciones: obs || null,
+      items: itemsClean
+    };
+    const { error } = await sb.from('notas_envio').insert(payload);
+    if (error) { toast('Error al guardar la nota: ' + error.message, true); return; }
+    toast('Nota de envío ' + numero + ' generada');
+  } else {
+    numero = _neState.numero;
+    const payload = {
+      pedido_nro: pedido || null, fecha: fecha || null,
+      cliente_nombre: nombre || null, cliente_razon_social: razon || null,
+      cliente_cuit: cuit || null, cliente_contacto: contacto || null,
+      cliente_direccion: direccion || null, observaciones: obs || null,
+      items: itemsClean, updated_at: new Date().toISOString()
+    };
+    const { error } = await sb.from('notas_envio').update(payload).eq('id', _neState.notaId);
+    if (error) { toast('Error al guardar la nota: ' + error.message, true); return; }
+    toast('Nota ' + numero + ' actualizada');
+  }
 
-  const html = _neBuildHtml({ numero, nombre, razon, cuit, contacto, direccion, fecha, obs, pedido, items: itemsNota });
-
-  const w = window.open('', '_blank');
-  if (!w) { toast('Permitir pop-ups para generar la nota de envío', true); return; }
-  w.document.open();
-  w.document.write(html);
-  w.document.close();
+  await loadAll();
+  _neAbrirPdf({ numero: numero, nombre, razon, cuit, contacto, direccion, fecha, obs, pedido, items: itemsClean });
 
   const modal = document.getElementById('ne-modal');
   if (modal) modal.remove();
-  toast('Nota de envío ' + numero + ' generada');
+  render();
+}
+
+// ---------------------------------------------------------------------
+// Acciones sobre notas guardadas
+// ---------------------------------------------------------------------
+
+// Reabre el PDF de una nota guardada en una ventana nueva.
+function _neVerPdf(notaId) {
+  const n = notasEnvio.find(x => x.id === notaId);
+  if (!n) { toast('Nota no encontrada', true); return; }
+  _neAbrirPdf({
+    numero: n.numero, nombre: n.cliente_nombre, razon: n.cliente_razon_social,
+    cuit: n.cliente_cuit, contacto: n.cliente_contacto, direccion: n.cliente_direccion,
+    fecha: n.fecha, obs: n.observaciones, pedido: n.pedido_nro,
+    items: Array.isArray(n.items) ? n.items : []
+  });
+}
+
+// Elimina una nota del registro (el número no se reutiliza).
+function _neEliminar(notaId) {
+  const n = notasEnvio.find(x => x.id === notaId);
+  if (!n) return;
+  confirmModal({
+    titulo: 'Eliminar nota de envío',
+    mensaje: 'Eliminar la nota ' + n.numero + '? El número no se reutiliza.',
+    textoConfirmar: 'Eliminar',
+    onConfirm: async () => {
+      const { error } = await sb.from('notas_envio').delete().eq('id', notaId);
+      if (error) { toast('Error: ' + error.message, true); return; }
+      await loadAll();
+      toast('Nota eliminada');
+      render();
+    }
+  });
+}
+
+// Navega a la pestaña Notas de envío con los filtros puestos para que
+// figure solo esa nota (filtro por número exacto).
+function _neIrANota(notaId) {
+  const n = notasEnvio.find(x => x.id === notaId);
+  if (!n) { toast('Nota no encontrada', true); return; }
+  _neFilters = { ..._NE_DEFAULT_FILTERS, numero: n.numero };
+  navigate({ view: 'recursos', tab: 'notas' });
+}
+
+// ---------------------------------------------------------------------
+// Sección de notas vinculadas dentro del detalle del proyecto
+// ---------------------------------------------------------------------
+
+function _neSeccionProyectoHtml(projId) {
+  const notas = notasEnvio.filter(n => n.proyecto_id === projId)
+    .slice().sort((a, b) => (b.id || 0) - (a.id || 0));
+  let h = '<div class="section-t" style="margin-top:18px"><span>Notas de envío</span></div>';
+  if (!notas.length) {
+    h += '<div style="font-size:12px;color:#888;font-style:italic;padding:10px 12px;background:#FAFAF7;border-radius:4px">Este proyecto no tiene notas de envío. Generá una con el botón 🚚 Nota de envío de arriba.</div>';
+    return h;
+  }
+  notas.forEach(n => {
+    const cant = Array.isArray(n.items) ? n.items.length : 0;
+    h += '<div style="display:flex;align-items:center;gap:10px;padding:7px 12px;background:#fff;border:1px solid #E8E6DF;border-radius:4px;margin-bottom:5px">';
+    h += '<div style="flex:1;min-width:0">';
+    h += '<div style="font-size:13px;font-weight:700">' + escapeHtml(n.numero || '') + '</div>';
+    h += '<div style="font-size:11px;color:#5F5E5A">' + escapeHtml(_neFmtFechaCorta(n.fecha)) + ' · ' + cant + ' ítem(s)</div>';
+    h += '</div>';
+    h += '<button class="b b-icon" onclick="_neVerPdf(' + n.id + ')" title="Abrir el PDF en otra pestaña">Ver PDF</button>';
+    h += '<button class="b b-icon" onclick="_neIrANota(' + n.id + ')" title="Ir a la pestaña Notas de envío filtrada por esta nota">Ir →</button>';
+    h += '</div>';
+  });
+  return h;
+}
+
+// ---------------------------------------------------------------------
+// Pestaña Notas de envío (Recursos)
+// ---------------------------------------------------------------------
+
+function renderNotasEnvioTab() {
+  let h = '';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
+  h += '<h2 style="font-size:16px;font-weight:600;margin:0">Notas de envío</h2></div>';
+
+  // --- Filtros ---
+  h += '<div style="background:#F5F3EC;border:1px solid #E0DDD3;border-radius:6px;padding:10px 12px;margin-bottom:12px">';
+  h += '<div class="row">';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Nº de nota</div>';
+  h += '<input type="text" class="ef-i" id="nef-numero" value="' + escapeHtml(_neFilters.numero) + '" placeholder="Ej. 0002-00000001" oninput="_neAplicarFiltros()"></div>';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Cliente</div><select class="ef-i" id="nef-cliente" onchange="_neAplicarFiltros()">';
+  h += '<option value="">Todos</option>';
+  const cliConNotas = [...new Set(notasEnvio.map(n => n.cliente_id).filter(Boolean))]
+    .map(id => clientes.find(c => c.id === id)).filter(Boolean)
+    .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+  cliConNotas.forEach(c => {
+    h += '<option value="' + c.id + '"' + (_neFilters.cliente_id === String(c.id) ? ' selected' : '') + '>' + escapeHtml(c.nombre) + '</option>';
+  });
+  h += '</select></div>';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Proyecto</div><select class="ef-i" id="nef-proyecto" onchange="_neAplicarFiltros()">';
+  h += '<option value="">Todos</option>';
+  const projConNotas = [...new Set(notasEnvio.map(n => n.proyecto_id).filter(Boolean))]
+    .map(id => proyectos.find(p => p.id === id)).filter(Boolean);
+  projConNotas.forEach(p => {
+    const lbl = (p.pedido_nro ? 'Ped. ' + p.pedido_nro + ' — ' : '') + (p.descripcion || '(sin descripción)');
+    h += '<option value="' + p.id + '"' + (_neFilters.proyecto_id === String(p.id) ? ' selected' : '') + '>' + escapeHtml(lbl) + '</option>';
+  });
+  h += '</select></div>';
+  h += '</div>';
+  h += '<div class="row">';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Desde</div>';
+  h += '<input type="date" class="ef-i" id="nef-desde" value="' + escapeHtml(_neFilters.desde) + '" onchange="_neAplicarFiltros()"></div>';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Hasta</div>';
+  h += '<input type="date" class="ef-i" id="nef-hasta" value="' + escapeHtml(_neFilters.hasta) + '" onchange="_neAplicarFiltros()"></div>';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Descripción de ítem</div>';
+  h += '<input type="text" class="ef-i" id="nef-item" value="' + escapeHtml(_neFilters.itemTexto) + '" placeholder="Ej. eje" oninput="_neAplicarFiltros()"></div>';
+  h += '</div>';
+  h += '<div style="text-align:right"><button class="b" onclick="_neLimpiarFiltros()" style="font-size:11px;padding:3px 12px">Limpiar filtros</button></div>';
+  h += '</div>';
+
+  h += '<div id="ne-lista">' + _neListaHtml() + '</div>';
+  return h;
+}
+
+// Lee los inputs de filtro al estado y re-renderiza solo la lista.
+function _neAplicarFiltros() {
+  const g = id => { const el = document.getElementById(id); return el ? el.value : ''; };
+  _neFilters = {
+    numero: g('nef-numero').trim(),
+    cliente_id: g('nef-cliente'),
+    proyecto_id: g('nef-proyecto'),
+    desde: g('nef-desde'),
+    hasta: g('nef-hasta'),
+    itemTexto: g('nef-item').trim()
+  };
+  const cont = document.getElementById('ne-lista');
+  if (cont) cont.innerHTML = _neListaHtml();
+}
+
+function _neLimpiarFiltros() {
+  _neFilters = { ..._NE_DEFAULT_FILTERS };
+  render();
+}
+
+// Aplica los filtros y devuelve el HTML de la lista de notas.
+function _neListaHtml() {
+  let rows = notasEnvio.slice();
+  const f = _neFilters;
+  if (f.numero) {
+    const t = f.numero.toLowerCase();
+    rows = rows.filter(n => (n.numero || '').toLowerCase().includes(t));
+  }
+  if (f.cliente_id) rows = rows.filter(n => String(n.cliente_id) === f.cliente_id);
+  if (f.proyecto_id) rows = rows.filter(n => String(n.proyecto_id) === f.proyecto_id);
+  if (f.desde) rows = rows.filter(n => (n.fecha || '') >= f.desde);
+  if (f.hasta) rows = rows.filter(n => (n.fecha || '') <= f.hasta);
+  if (f.itemTexto) {
+    const t = f.itemTexto.toLowerCase();
+    rows = rows.filter(n => Array.isArray(n.items) &&
+      n.items.some(it => (it.descripcion || '').toLowerCase().includes(t)));
+  }
+  rows.sort((a, b) => (b.id || 0) - (a.id || 0));
+
+  if (!rows.length) {
+    return '<div class="list-empty" style="padding:24px">No hay notas de envío que coincidan con los filtros.</div>';
+  }
+  let h = '<div style="font-size:11px;color:#5F5E5A;margin-bottom:6px">' + rows.length + ' nota(s)</div>';
+  h += '<div style="display:flex;gap:10px;align-items:center;padding:4px 12px;font-size:10px;font-weight:700;color:#5F5E5A;text-transform:uppercase;letter-spacing:0.5px">';
+  h += '<div style="width:130px">Nº de nota</div><div style="width:96px">Fecha</div><div style="flex:1">Cliente</div>';
+  h += '<div style="width:90px">Pedido</div><div style="width:54px;text-align:center">Ítems</div><div style="width:210px"></div></div>';
+  rows.forEach(n => {
+    const cant = Array.isArray(n.items) ? n.items.length : 0;
+    h += '<div style="display:flex;gap:10px;align-items:center;padding:7px 12px;background:#fff;border:1px solid #E8E6DF;border-radius:4px;margin-bottom:5px">';
+    h += '<div style="width:130px;font-weight:700;font-size:12px">' + escapeHtml(n.numero || '') + '</div>';
+    h += '<div style="width:96px;font-size:12px">' + escapeHtml(_neFmtFechaCorta(n.fecha)) + '</div>';
+    h += '<div style="flex:1;min-width:0;font-size:12px">' + escapeHtml(n.cliente_nombre || clN(n.cliente_id) || '—') + '</div>';
+    h += '<div style="width:90px;font-size:12px">' + escapeHtml(n.pedido_nro || '—') + '</div>';
+    h += '<div style="width:54px;text-align:center;font-size:12px">' + cant + '</div>';
+    h += '<div style="width:210px;display:flex;gap:3px;justify-content:flex-end">';
+    h += '<button class="b b-icon" onclick="_neVerPdf(' + n.id + ')" title="Abrir el PDF">Ver PDF</button>';
+    h += '<button class="b b-icon" onclick="editarNotaEnvio(' + n.id + ')" title="Editar">Editar</button>';
+    h += '<button class="b b-icon b-d" onclick="_neEliminar(' + n.id + ')" title="Eliminar">🗑</button>';
+    h += '</div></div>';
+  });
+  return h;
+}
+
+// ---------------------------------------------------------------------
+// Generación del documento HTML (PDF)
+// ---------------------------------------------------------------------
+
+// Abre el HTML de la nota en una ventana nueva (igual que "Generar carpeta").
+function _neAbrirPdf(d) {
+  const html = _neBuildHtml(d);
+  const w = window.open('', '_blank');
+  if (!w) { toast('Permitir pop-ups para ver la nota de envío', true); return; }
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
 }
 
 // Arma el documento HTML completo de la nota de envío.
 function _neBuildHtml(d) {
   const esc = escapeHtml;
   let filas = '';
-  d.items.forEach(it => {
+  (d.items || []).forEach(it => {
     filas += '<tr><td class="ne-c">' + esc(String(it.cantidad)) + '</td><td class="ne-d">' + esc(it.descripcion) + '</td></tr>';
   });
 
@@ -13759,7 +14041,7 @@ body { font-family: Arial, Helvetica, sans-serif; font-size: 11px; color: #000; 
 .ne-tabla-wrap { margin-top: 14px; min-height: 360px; }
 table.ne-tabla { width: 100%; border-collapse: collapse; }
 table.ne-tabla thead th {
-  border: 1.6px solid #C0392B; border-radius: 0;
+  border: 1.6px solid #C0392B;
   padding: 4px 8px; font-size: 11px; font-weight: 700; text-align: left;
 }
 table.ne-tabla thead th.ne-th-cant { width: 90px; }
@@ -13822,6 +14104,7 @@ table.ne-tabla tbody td.ne-d { text-align: left; }
 <script>setTimeout(function(){ window.print(); }, 400);<\/script>
 </body></html>`;
 }
+
 
 // Hardcoded checklist for "Despacho/Cierre" processes
 const DESPACHO_CHECKLIST = [
