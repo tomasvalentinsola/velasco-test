@@ -9401,9 +9401,174 @@ function _pmRutasDelProductoHtml(productoId) {
   return h;
 }
 
-// =============================================================================
-// v70 Fase 5b: MODAL ÚNICO DE CREACIÓN
-// =============================================================================
+// v70 Parte B: devuelve la ubicación actual de un producto (una sola).
+// Retorna {clienteId, sectorId, equipoId, conjuntoId, subconjuntoId} o null.
+function _pmUbicacionActual(productoId) {
+  // Subconjunto
+  const sp = subconjuntoProductos.find(x => x.producto_id === productoId);
+  if (sp) {
+    const sub = subconjuntos.find(s => s.id === sp.subconjunto_id);
+    const cs = conjuntoSubconjuntos.find(x => x.subconjunto_id === sp.subconjunto_id);
+    const con = cs ? conjuntos.find(c => c.id === cs.conjunto_id) : null;
+    const ec = con ? equipoConjuntos.find(x => x.conjunto_id === con.id) : null;
+    const eq = ec ? equipos.find(e => e.id === ec.equipo_id) : null;
+    return {
+      clienteId: sub ? sub.cliente_id : null,
+      sectorId: eq ? eq.sector_id : null,
+      equipoId: eq ? eq.id : null,
+      conjuntoId: con ? con.id : null,
+      subconjuntoId: sp.subconjunto_id
+    };
+  }
+  // Conjunto directo
+  const cp = conjuntoProductos.find(x => x.producto_id === productoId);
+  if (cp) {
+    const con = conjuntos.find(c => c.id === cp.conjunto_id);
+    const ec = con ? equipoConjuntos.find(x => x.conjunto_id === con.id) : null;
+    const eq = ec ? equipos.find(e => e.id === ec.equipo_id) : null;
+    return {
+      clienteId: con ? con.cliente_id : null,
+      sectorId: eq ? eq.sector_id : null,
+      equipoId: eq ? eq.id : null,
+      conjuntoId: cp.conjunto_id,
+      subconjuntoId: null
+    };
+  }
+  // Equipo directo
+  const ep = equipoProductos.find(x => x.producto_id === productoId);
+  if (ep) {
+    const eq = equipos.find(e => e.id === ep.equipo_id);
+    const sec = eq ? sectores.find(s => s.id === eq.sector_id) : null;
+    return {
+      clienteId: sec ? sec.cliente_id : null,
+      sectorId: eq ? eq.sector_id : null,
+      equipoId: ep.equipo_id,
+      conjuntoId: null,
+      subconjuntoId: null
+    };
+  }
+  return null;
+}
+
+// Inicializa los selectores de ubicación del modal de producto con la
+// ubicación actual. Se llama después de renderizar el modal.
+function _pmUbicInicializar(productoId) {
+  const ubic = productoId ? _pmUbicacionActual(productoId) : null;
+  _pmUbicState = ubic || { clienteId: null, sectorId: null, equipoId: null, conjuntoId: null, subconjuntoId: null };
+  const cliSel = document.getElementById('pm-ubic-cliente');
+  if (cliSel && _pmUbicState.clienteId) cliSel.value = String(_pmUbicState.clienteId);
+  _pmUbicClienteChange(true);
+}
+
+let _pmUbicState = null;
+
+function _pmUbicClienteChange(usarPrecarga) {
+  const secSel = document.getElementById('pm-ubic-sector');
+  const cliSel = document.getElementById('pm-ubic-cliente');
+  if (!secSel || !cliSel) return;
+  const cliId = cliSel.value ? parseInt(cliSel.value) : null;
+  if (!cliId) {
+    secSel.innerHTML = '<option value="">—</option>'; secSel.disabled = true;
+  } else {
+    secSel.disabled = false;
+    const secs = sectores.filter(s => s.cliente_id === cliId).sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+    secSel.innerHTML = secs.map(s => {
+      const sel = usarPrecarga && _pmUbicState && s.id === _pmUbicState.sectorId;
+      return '<option value="' + s.id + '"' + (sel ? ' selected' : '') + '>' + escapeHtml(s.nombre) + '</option>';
+    }).join('');
+  }
+  _pmUbicSectorChange(usarPrecarga);
+}
+
+function _pmUbicSectorChange(usarPrecarga) {
+  const secSel = document.getElementById('pm-ubic-sector');
+  const eqSel = document.getElementById('pm-ubic-equipo');
+  if (!eqSel || !secSel) return;
+  const secId = secSel.value ? parseInt(secSel.value) : null;
+  if (!secId) {
+    eqSel.innerHTML = '<option value="">—</option>'; eqSel.disabled = true;
+  } else {
+    eqSel.disabled = false;
+    const eqs = equipos.filter(e => e.sector_id === secId).sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+    eqSel.innerHTML = eqs.map(e => {
+      const sel = usarPrecarga && _pmUbicState && e.id === _pmUbicState.equipoId;
+      return '<option value="' + e.id + '"' + (sel ? ' selected' : '') + '>' + escapeHtml(e.nombre) + '</option>';
+    }).join('');
+  }
+  _pmUbicEquipoChange(usarPrecarga);
+}
+
+function _pmUbicEquipoChange(usarPrecarga) {
+  const eqSel = document.getElementById('pm-ubic-equipo');
+  const conSel = document.getElementById('pm-ubic-conjunto');
+  if (!conSel || !eqSel) return;
+  const eqId = eqSel.value ? parseInt(eqSel.value) : null;
+  let h = '<option value="">(Ninguno — directo al equipo)</option>';
+  if (eqId) {
+    const conIds = equipoConjuntos.filter(ec => ec.equipo_id === eqId).map(ec => ec.conjunto_id);
+    const cons = conjuntos.filter(c => conIds.includes(c.id) && !_esConjuntoDefault(c))
+      .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+    cons.forEach(c => {
+      const sel = usarPrecarga && _pmUbicState && c.id === _pmUbicState.conjuntoId;
+      h += '<option value="' + c.id + '"' + (sel ? ' selected' : '') + '>' + escapeHtml(c.nombre) + '</option>';
+    });
+  }
+  conSel.innerHTML = h;
+  _pmUbicConjuntoChange(usarPrecarga);
+}
+
+function _pmUbicConjuntoChange(usarPrecarga) {
+  const conSel = document.getElementById('pm-ubic-conjunto');
+  const subSel = document.getElementById('pm-ubic-subconjunto');
+  if (!subSel || !conSel) return;
+  const conId = conSel.value ? parseInt(conSel.value) : null;
+  let h = '<option value="">(Ninguno — directo al conjunto)</option>';
+  if (conId) {
+    subSel.disabled = false;
+    const subIds = conjuntoSubconjuntos.filter(cs => cs.conjunto_id === conId).map(cs => cs.subconjunto_id);
+    const subs = subconjuntos.filter(s => subIds.includes(s.id) && !_esSubconjuntoDefault(s))
+      .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+    subs.forEach(s => {
+      const sel = usarPrecarga && _pmUbicState && s.id === _pmUbicState.subconjuntoId;
+      h += '<option value="' + s.id + '"' + (sel ? ' selected' : '') + '>' + escapeHtml(s.nombre) + '</option>';
+    });
+  } else {
+    subSel.disabled = true;
+  }
+  subSel.innerHTML = h;
+}
+
+// Lee la ubicación elegida en el modal de producto.
+function _pmUbicLeer() {
+  const get = (id) => {
+    const el = document.getElementById(id);
+    return el && el.value ? parseInt(el.value) : null;
+  };
+  return {
+    clienteId: get('pm-ubic-cliente'),
+    sectorId: get('pm-ubic-sector'),
+    equipoId: get('pm-ubic-equipo'),
+    conjuntoId: get('pm-ubic-conjunto'),
+    subconjuntoId: get('pm-ubic-subconjunto')
+  };
+}
+
+// Sincroniza la ubicación de un producto: borra todas sus filas de composición
+// y crea la nueva según el nivel más específico elegido.
+async function _pmSincronizarUbicacion(productoId, ubic) {
+  await sb.from('subconjunto_productos').delete().eq('producto_id', productoId);
+  await sb.from('conjunto_productos').delete().eq('producto_id', productoId);
+  await sb.from('equipo_productos').delete().eq('producto_id', productoId);
+  if (ubic.subconjuntoId) {
+    await sb.from('subconjunto_productos').insert({ subconjunto_id: ubic.subconjuntoId, producto_id: productoId, cantidad: 1 });
+  } else if (ubic.conjuntoId) {
+    await sb.from('conjunto_productos').insert({ conjunto_id: ubic.conjuntoId, producto_id: productoId, cantidad: 1 });
+  } else if (ubic.equipoId) {
+    await sb.from('equipo_productos').insert({ equipo_id: ubic.equipoId, producto_id: productoId, cantidad: 1 });
+  }
+  // Si no hay equipo, el producto queda sin ubicación (genérico).
+}
+
 // Un solo modal para crear Sector / Equipo / Conjunto / Subconjunto / Producto.
 // Se abre desde el "+" de cada tarjeta de la matriz y desde el botón azul
 // global. Tiene:
@@ -11375,15 +11540,32 @@ function _renderPmModal(prod) {
   // El modal del producto ya NO tiene el form de compatibilidad: solo edita
   // los datos propios del producto y sus procesos.
   if (prod) {
-    // Mostrar (solo lectura) dónde está usado actualmente este producto.
-    const rutasHtml = _pmRutasDelProductoHtml(prod.id);
-    if (rutasHtml) {
-      h += '<div style="margin-bottom:14px">';
-      h += '<div style="font-size:12px;font-weight:600;color:#5F5E5A;margin-bottom:6px">Se usa en</div>';
-      h += rutasHtml;
-      h += '<div class="ef-help" style="margin-top:6px">Para cambiar dónde se usa este producto, editá el conjunto/equipo correspondiente desde la matriz.</div>';
-      h += '</div>';
-    }
+    // v70 Parte B: sección de ubicación EDITABLE. El producto tiene UNA sola
+    // ubicación (el modelo multi-ubicación se maneja con gemelos). Mostramos
+    // 5 selectores en cascada precargados con la ubicación actual.
+    h += '<div style="margin-bottom:14px">';
+    h += '<div style="font-size:12px;font-weight:600;color:#5F5E5A;margin-bottom:6px">Ubicación en la matriz</div>';
+    h += '<div class="row">';
+    h += '<div class="ef" style="flex:1"><div class="ef-l">🏢 Cliente</div>';
+    h += '<select class="ef-i" id="pm-ubic-cliente" onchange="_pmUbicClienteChange()">';
+    h += '<option value="">(Genérico)</option>';
+    clientes.slice().sort((a, b) => (a.nombre || '').localeCompare(b.nombre || '')).forEach(c => {
+      h += '<option value="' + c.id + '">' + escapeHtml(c.nombre) + '</option>';
+    });
+    h += '</select></div>';
+    h += '<div class="ef" style="flex:1"><div class="ef-l">🏭 Sector</div>';
+    h += '<select class="ef-i" id="pm-ubic-sector" onchange="_pmUbicSectorChange()"></select></div>';
+    h += '</div>';
+    h += '<div class="row">';
+    h += '<div class="ef" style="flex:1"><div class="ef-l">🤖 Equipo</div>';
+    h += '<select class="ef-i" id="pm-ubic-equipo" onchange="_pmUbicEquipoChange()"></select></div>';
+    h += '<div class="ef" style="flex:1"><div class="ef-l">📦 Conjunto (opcional)</div>';
+    h += '<select class="ef-i" id="pm-ubic-conjunto" onchange="_pmUbicConjuntoChange()"></select></div>';
+    h += '</div>';
+    h += '<div class="ef"><div class="ef-l">📦 Subconjunto (opcional)</div>';
+    h += '<select class="ef-i" id="pm-ubic-subconjunto"></select></div>';
+    h += '<div class="ef-help">El producto se ubica en un solo lugar. Si la misma pieza va en otro lado, se maneja como gemelo.</div>';
+    h += '</div>';
   }
 
   // ----- 2do: DATOS DEL PRODUCTO -----
@@ -11424,6 +11606,9 @@ function _renderPmModal(prod) {
   h += '</div>';
   m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
   setupPhotoPaste();
+  // v70 Parte B: inicializar los selectores de ubicación con la ubicación
+  // actual del producto (solo en edición; al crear no hay ubicación previa).
+  if (prod) _pmUbicInicializar(prod.id);
 }
 
 // Captura valores actuales del form (para preservarlos al re-renderizar).
@@ -12037,8 +12222,13 @@ async function saveProductoMatriz(productoId) {
       }
     }
   }
-  // v70 Camino B: saveProductoMatriz NO sincroniza la composición del producto.
-  // La composición se gestiona exclusivamente desde los modales de contenedor.
+  // v70 Parte B: al editar un producto existente, sincronizamos su ubicación
+  // con lo elegido en los selectores. (Al crear, la ubicación ya se manejó
+  // arriba con el prefill.)
+  if (productoId) {
+    const ubic = _pmUbicLeer();
+    await _pmSincronizarUbicacion(productoId, ubic);
+  }
 
   document.getElementById('prod-matriz-modal').remove();
   pmFormState = null;
