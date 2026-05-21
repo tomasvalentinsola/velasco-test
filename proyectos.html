@@ -10186,8 +10186,9 @@ function _ecAgregarItem() {
   h += '<input type="text" class="ef-i" id="ec-add-search" placeholder="Buscar por nombre..." oninput="_ecAddRenderLista()" style="flex:1;margin:0">';
   h += '<button class="b b-p" onclick="_ecCrearNuevo()" style="flex:0 0 auto;white-space:nowrap">+ Crear nuevo</button>';
   h += '</div>';
-  // v70: filtros extra (solo aplican cuando el tipo activo es "producto")
-  h += '<div id="ec-add-filtros" style="display:flex;gap:8px;margin-bottom:10px">';
+  // v70: filtros extra. Fila 1: material + código (solo productos).
+  // Fila 2: jerarquía sector/equipo/conjunto (productos y subconjuntos).
+  h += '<div id="ec-add-filtros" style="display:flex;gap:8px;margin-bottom:8px">';
   h += '<select class="ef-i" id="ec-add-fmaterial" onchange="_ecAddRenderLista()" style="flex:1;margin:0;font-size:11px">';
   h += '<option value="">Todos los materiales</option>';
   materiales.slice().sort((a, b) => (a.nombre || '').localeCompare(b.nombre || '')).forEach(mat => {
@@ -10196,9 +10197,73 @@ function _ecAgregarItem() {
   h += '</select>';
   h += '<input type="text" class="ef-i" id="ec-add-fcodigo" placeholder="Código de cliente" oninput="_ecAddRenderLista()" style="flex:1;margin:0;font-size:11px">';
   h += '</div>';
-  h += '<div id="ec-add-list" style="max-height:340px;overflow-y:auto;border:1px solid #C8C6BE;border-radius:5px"></div>';
+  // Fila 2: filtros de jerarquía (cascada)
+  h += '<div id="ec-add-filtros-jer" style="display:flex;gap:8px;margin-bottom:10px">';
+  h += '<select class="ef-i" id="ec-add-fsector" onchange="_ecAddFsectorChange()" style="flex:1;margin:0;font-size:11px"><option value="">Todos los sectores</option></select>';
+  h += '<select class="ef-i" id="ec-add-fequipo" onchange="_ecAddFequipoChange()" style="flex:1;margin:0;font-size:11px"><option value="">Todos los equipos</option></select>';
+  h += '<select class="ef-i" id="ec-add-fconjunto" onchange="_ecAddRenderLista()" style="flex:1;margin:0;font-size:11px"><option value="">Todos los conjuntos</option></select>';
+  h += '</div>';
+  h += '<div id="ec-add-list" style="max-height:320px;overflow-y:auto;border:1px solid #C8C6BE;border-radius:5px"></div>';
   h += '<div class="actions"><button class="b" onclick="document.getElementById(\'ec-agregar-modal\').remove()">Cancelar</button></div>';
   m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
+  _ecAddFsectorPoblar();
+  _ecAddRenderLista();
+}
+
+// Devuelve el cliente del contenedor que se está editando.
+function _ecClienteIdContenedor() {
+  const st = editContenedorState;
+  if (!st) return null;
+  if (st.tipo === 'equipo') {
+    const eq = equipos.find(e => e.id === st.id);
+    const sec = eq ? sectores.find(s => s.id === eq.sector_id) : null;
+    return sec ? sec.cliente_id : null;
+  }
+  return st.clienteId || null;
+}
+
+// Poblar el select de sectores del filtro de jerarquía.
+function _ecAddFsectorPoblar() {
+  const secSel = document.getElementById('ec-add-fsector');
+  if (!secSel) return;
+  const cliId = _ecClienteIdContenedor();
+  let h = '<option value="">Todos los sectores</option>';
+  if (cliId) {
+    sectores.filter(s => s.cliente_id === cliId)
+      .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''))
+      .forEach(s => { h += '<option value="' + s.id + '">' + escapeHtml(s.nombre) + '</option>'; });
+  }
+  secSel.innerHTML = h;
+}
+
+function _ecAddFsectorChange() {
+  const secSel = document.getElementById('ec-add-fsector');
+  const eqSel = document.getElementById('ec-add-fequipo');
+  if (!eqSel) return;
+  const secId = secSel && secSel.value ? parseInt(secSel.value) : null;
+  let h = '<option value="">Todos los equipos</option>';
+  if (secId) {
+    equipos.filter(e => e.sector_id === secId)
+      .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''))
+      .forEach(e => { h += '<option value="' + e.id + '">' + escapeHtml(e.nombre) + '</option>'; });
+  }
+  eqSel.innerHTML = h;
+  _ecAddFequipoChange();
+}
+
+function _ecAddFequipoChange() {
+  const eqSel = document.getElementById('ec-add-fequipo');
+  const conSel = document.getElementById('ec-add-fconjunto');
+  if (!conSel) return;
+  const eqId = eqSel && eqSel.value ? parseInt(eqSel.value) : null;
+  let h = '<option value="">Todos los conjuntos</option>';
+  if (eqId) {
+    const conIds = equipoConjuntos.filter(ec => ec.equipo_id === eqId).map(ec => ec.conjunto_id);
+    conjuntos.filter(c => conIds.includes(c.id) && !_esConjuntoDefault(c))
+      .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''))
+      .forEach(c => { h += '<option value="' + c.id + '">' + escapeHtml(c.nombre) + '</option>'; });
+  }
+  conSel.innerHTML = h;
   _ecAddRenderLista();
 }
 
@@ -10284,12 +10349,50 @@ function _ecAddRenderLista() {
   const fmaterial = fmatEl && fmatEl.value ? parseInt(fmatEl.value) : null;
   const fcodEl = document.getElementById('ec-add-fcodigo');
   const fcodigo = fcodEl ? fcodEl.value.trim().toLowerCase() : '';
-  // Mostrar u ocultar los filtros extra según el tipo (solo para productos)
+  // Filtros de jerarquía
+  const fsecEl = document.getElementById('ec-add-fsector');
+  const fsector = fsecEl && fsecEl.value ? parseInt(fsecEl.value) : null;
+  const feqEl = document.getElementById('ec-add-fequipo');
+  const fequipo = feqEl && feqEl.value ? parseInt(feqEl.value) : null;
+  const fconEl = document.getElementById('ec-add-fconjunto');
+  const fconjunto = fconEl && fconEl.value ? parseInt(fconEl.value) : null;
+  // El filtro material/código solo aplica a productos: ocultarlo si no.
   const filtrosBox = document.getElementById('ec-add-filtros');
   if (filtrosBox) filtrosBox.style.display = (tipo === 'producto') ? 'flex' : 'none';
+  // El filtro de jerarquía aplica a productos y subconjuntos.
+  const filtrosJer = document.getElementById('ec-add-filtros-jer');
+  if (filtrosJer) filtrosJer.style.display = (tipo === 'conjunto') ? 'none' : 'flex';
+
+  // Conjunto de ids permitidos por el filtro de jerarquía (productos).
+  // Si no hay filtro de jerarquía activo, queda null (sin restricción).
+  let prodIdsJerarquia = null;
+  if (tipo === 'producto' && (fconjunto || fequipo || fsector)) {
+    prodIdsJerarquia = new Set();
+    if (fconjunto) {
+      _matrizProdIdsConjunto(fconjunto).forEach(id => prodIdsJerarquia.add(id));
+    } else if (fequipo) {
+      _matrizProdIdsEquipo(fequipo).forEach(id => prodIdsJerarquia.add(id));
+    } else if (fsector) {
+      _matrizProdIdsSector(fsector).forEach(id => prodIdsJerarquia.add(id));
+    }
+  }
+  // Para subconjuntos: ids permitidos según jerarquía.
+  let subIdsJerarquia = null;
+  if (tipo === 'subconjunto' && (fconjunto || fequipo || fsector)) {
+    subIdsJerarquia = new Set();
+    if (fconjunto) {
+      conjuntoSubconjuntos.filter(cs => cs.conjunto_id === fconjunto).forEach(cs => subIdsJerarquia.add(cs.subconjunto_id));
+    } else if (fequipo) {
+      const conIds = equipoConjuntos.filter(ec => ec.equipo_id === fequipo).map(ec => ec.conjunto_id);
+      conjuntoSubconjuntos.filter(cs => conIds.includes(cs.conjunto_id)).forEach(cs => subIdsJerarquia.add(cs.subconjunto_id));
+    } else if (fsector) {
+      const eqIds = equipos.filter(e => e.sector_id === fsector).map(e => e.id);
+      const conIds = equipoConjuntos.filter(ec => eqIds.includes(ec.equipo_id)).map(ec => ec.conjunto_id);
+      conjuntoSubconjuntos.filter(cs => conIds.includes(cs.conjunto_id)).forEach(cs => subIdsJerarquia.add(cs.subconjunto_id));
+    }
+  }
 
   const yaIds = new Set(st.items.filter(it => it.tipo === tipo).map(it => it.id));
-  // candidatos como objetos completos para poder filtrar y mostrar más datos
   let candidatos;
   if (tipo === 'producto') {
     candidatos = productosMatriz.filter(p => !yaIds.has(p.id));
@@ -10298,6 +10401,7 @@ function _ecAddRenderLista() {
     }
     if (fmaterial) candidatos = candidatos.filter(p => p.material_id === fmaterial);
     if (fcodigo) candidatos = candidatos.filter(p => (p.codigo_cliente || '').toLowerCase().includes(fcodigo));
+    if (prodIdsJerarquia) candidatos = candidatos.filter(p => prodIdsJerarquia.has(p.id));
     candidatos = candidatos.map(p => ({
       id: p.id,
       nombre: p.descripcion || '?',
@@ -10311,6 +10415,7 @@ function _ecAddRenderLista() {
     candidatos = candidatos.map(c => ({ id: c.id, nombre: c.nombre || '?', sub: '' }));
   } else if (tipo === 'subconjunto') {
     candidatos = subconjuntos.filter(s => !yaIds.has(s.id) && (!st.clienteId || s.cliente_id === st.clienteId) && !_esSubconjuntoDefault(s));
+    if (subIdsJerarquia) candidatos = candidatos.filter(s => subIdsJerarquia.has(s.id));
     candidatos = candidatos.map(s => ({ id: s.id, nombre: s.nombre || '?', sub: '' }));
   } else {
     candidatos = [];
