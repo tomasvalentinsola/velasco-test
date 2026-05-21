@@ -13624,8 +13624,24 @@ function _neRenderModal(cfg) {
   h += '<div class="row">';
   h += '<div class="ef" style="flex:1"><div class="ef-l">CUIT</div>';
   h += '<input type="text" class="ef-i" id="ne-cuit" value="' + escapeHtml(d.cuit) + '"></div>';
+  // Contacto: viene por default el del proyecto, pero se puede elegir otro
+  // contacto del cliente o escribir uno a mano.
   h += '<div class="ef" style="flex:1"><div class="ef-l">Contacto</div>';
-  h += '<input type="text" class="ef-i" id="ne-contacto" value="' + escapeHtml(d.contacto) + '"></div></div>';
+  const _neContNombres = clienteContactos
+    .filter(c => c.cliente_id === _neState.clienteId && c.activo !== false)
+    .map(c => [c.nombre, c.apellido].filter(Boolean).join(' '))
+    .filter(Boolean);
+  const _neContLibre = d.contacto && !_neContNombres.includes(d.contacto);
+  h += '<select class="ef-i" id="ne-contacto-sel" onchange="_neContactoSelChange()">';
+  h += '<option value="">— Sin contacto —</option>';
+  _neContNombres.forEach(nom => {
+    const sel = (!_neContLibre && d.contacto === nom) ? ' selected' : '';
+    h += '<option value="' + escapeHtml(nom) + '"' + sel + '>' + escapeHtml(nom) + '</option>';
+  });
+  h += '<option value="__otro__"' + (_neContLibre ? ' selected' : '') + '>✎ Escribir a mano...</option>';
+  h += '</select>';
+  h += '<input type="text" class="ef-i" id="ne-contacto" value="' + escapeHtml(_neContLibre ? d.contacto : '') + '" placeholder="Nombre del contacto" style="margin-top:5px;' + (_neContLibre ? '' : 'display:none') + '">';
+  h += '</div></div>';
   h += '<div class="ef"><div class="ef-l">Dirección de entrega</div>';
   h += '<input type="text" class="ef-i" id="ne-direccion" value="' + escapeHtml(d.direccion) + '" placeholder="Cargala en Recursos > Clientes para tenerla por defecto"></div>';
 
@@ -13701,6 +13717,20 @@ function _neRemoveItem(idx) {
   document.getElementById('ne-items').innerHTML = _neRenderItemsList();
 }
 
+// Muestra/oculta el input de contacto a mano según el desplegable.
+function _neContactoSelChange() {
+  const sel = document.getElementById('ne-contacto-sel');
+  const inp = document.getElementById('ne-contacto');
+  if (!sel || !inp) return;
+  if (sel.value === '__otro__') {
+    inp.style.display = '';
+    inp.focus();
+  } else {
+    inp.style.display = 'none';
+    inp.value = '';
+  }
+}
+
 // ---------------------------------------------------------------------
 // Numeración y guardado
 // ---------------------------------------------------------------------
@@ -13743,7 +13773,10 @@ async function generarNotaEnvio() {
   const nombre = getV('ne-nombre');
   const razon = getV('ne-razon');
   const cuit = getV('ne-cuit');
-  const contacto = getV('ne-contacto');
+  // Contacto: del desplegable, o del input si se eligió "Escribir a mano".
+  let contacto = '';
+  const cSel = document.getElementById('ne-contacto-sel');
+  if (cSel) contacto = (cSel.value === '__otro__') ? getV('ne-contacto') : cSel.value.trim();
   const direccion = getV('ne-direccion');
   const fecha = getV('ne-fecha');
   const obs = getV('ne-obs');
@@ -14069,8 +14102,9 @@ table.ne-tabla td.ne-d { text-align: left; }
 .ne-corresponde { font-size: 11px; }
 .ne-recibi { margin-top: 8px; font-size: 11px; }
 .ne-firma { margin-top: 26px; text-align: right; font-size: 11px; }
-.ne-firma-linea { display: inline-block; border-top: 1px dotted #000; width: 230px; }
-.ne-firma-label { margin-top: 2px; }
+.ne-firma-box { display: inline-block; width: 230px; }
+.ne-firma-linea { border-top: 1px dotted #000; width: 100%; }
+.ne-firma-label { margin-top: 2px; text-align: center; }
 </style></head><body>
 <img class="ne-wm" src="${LOGO_SOLO_DATA_URL}" alt="">
 <div class="ne-content">
@@ -14113,8 +14147,10 @@ table.ne-tabla td.ne-d { text-align: left; }
     <div class="ne-corresponde"><span class="ne-bold">Corresponde a:</span> Pedido ${esc(d.pedido || '')}</div>
     <div class="ne-recibi">"Recibí conforme las mercaderías en las cantidades indicadas"<br>Fecha:</div>
     <div class="ne-firma">
-      <div class="ne-firma-linea"></div>
-      <div class="ne-firma-label">Firma, Aclaración y DNI</div>
+      <div class="ne-firma-box">
+        <div class="ne-firma-linea"></div>
+        <div class="ne-firma-label">Firma, Aclaración y DNI</div>
+      </div>
     </div>
   </div>
 
