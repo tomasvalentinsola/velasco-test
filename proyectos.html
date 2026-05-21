@@ -9111,11 +9111,18 @@ function _matrizRenderSectorNode(sec, cliId) {
       let inner = '';
       const eqs = _matrizEquiposDelSector(sec.id);
       eqs.forEach(eq => {
-        const cnt2 = _matrizCountProdsDelEquipo(eq.id);
-        // v70: equipos default vacíos no se muestran; equipos reales sí
-        // (aunque estén vacíos), para poder cargarles conjuntos/productos.
         if (_esEquipoDefault(eq)) {
-          if (cnt2 === 0) return;
+          // v70: el equipo default se promociona (muestra sus hijos al nivel
+          // del sector) si tiene productos directos O conjuntos reales —
+          // aunque esos conjuntos estén vacíos, para poder cargarles cosas.
+          const tieneProds = equipoProductos.some(ep => ep.equipo_id === eq.id);
+          const conjuntosReales = _matrizConjuntosDelEquipo(eq.id, cliId).filter(c => !_esConjuntoDefault(c));
+          if (!tieneProds && conjuntosReales.length === 0) {
+            // ver si el conjunto default tiene algo
+            const defaultConProds = _matrizConjuntosDelEquipo(eq.id, cliId)
+              .some(c => _esConjuntoDefault(c) && _matrizCountProdsDelConjunto(c.id) > 0);
+            if (!defaultConProds) return;
+          }
           inner += _matrizRenderInnerEquipo(eq, cliId);
         } else {
           inner += _matrizRenderEquipoNode(eq, cliId);
@@ -9132,7 +9139,8 @@ function _matrizRenderSectorNode(sec, cliId) {
       return inner;
     },
     null,
-    'pmNuevoConUbicacion({clienteId:' + cliId + ',sectorId:' + sec.id + ',contexto:\'sector\'})'
+    'pmNuevoConUbicacion({clienteId:' + cliId + ',sectorId:' + sec.id + ',contexto:\'sector\'})',
+    'showEditarSectorModal(' + sec.id + ')'
   );
 }
 
@@ -9914,6 +9922,128 @@ function showEditarSubconjuntoModal(subconjuntoId) {
   });
   editContenedorState = { tipo: 'subconjunto', id: subconjuntoId, nombre: sub.nombre, items, clienteId: sub.cliente_id };
   _renderEditarContenedorModal();
+}
+
+// v70: Modal de Editar Sector. El sector es simple: solo nombre. Incluye
+// botón eliminar (con las mismas opciones desvincular/borrar todo).
+function showEditarSectorModal(sectorId) {
+  const sec = sectores.find(s => s.id === sectorId);
+  if (!sec) return;
+  const esGeneral = _esSectorGeneral(sec);
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'edit-sector-modal';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '480px';
+  let h = '<div class="md-t">Editar sector</div>';
+  h += '<div class="ef"><div class="ef-l">Nombre</div>';
+  h += '<input type="text" class="ef-i" id="es-nombre" value="' + escapeHtml(sec.nombre) + '"' + (esGeneral ? ' disabled' : '') + '>';
+  if (esGeneral) h += '<div class="ef-help">El sector "General" es estructura del sistema y no se puede renombrar ni eliminar.</div>';
+  h += '</div>';
+  h += '<div class="actions" style="justify-content:space-between">';
+  if (!esGeneral) {
+    h += '<button class="b" style="color:#A32D2D" onclick="eliminarSector(' + sectorId + ')">Eliminar sector</button>';
+  } else {
+    h += '<span></span>';
+  }
+  h += '<div style="display:flex;gap:6px">';
+  h += '<button class="b" onclick="document.getElementById(\'edit-sector-modal\').remove()">Cancelar</button>';
+  if (!esGeneral) h += '<button class="b b-p" onclick="_esGuardarSector(' + sectorId + ')">Guardar</button>';
+  h += '</div></div>';
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
+}
+
+async function _esGuardarSector(sectorId) {
+  const nombre = (document.getElementById('es-nombre').value || '').trim();
+  if (!nombre) { toast('El nombre no puede estar vacío', true); return; }
+  showSpinner('Guardando sector...');
+  try {
+    const { error } = await sb.from('sectores').update({ nombre }).eq('id', sectorId);
+    if (error) { toast('Error: ' + error.message, true); return; }
+    document.getElementById('edit-sector-modal').remove();
+    await loadAll();
+    toast('Sector actualizado');
+    render();
+  } finally {
+    hideSpinner();
+  }
+}
+
+function eliminarSector(sectorId) {
+  const sec = sectores.find(s => s.id === sectorId);
+  if (!sec) return;
+  if (_esSectorGeneral(sec)) { toast('No se puede eliminar el sector General', true); return; }
+  const eqs = equipos.filter(e => e.sector_id === sectorId);
+  // ¿Tiene contenido real? (equipos no-default o productos)
+  let totalProds = 0;
+  eqs.forEach(e => { totalProds += _matrizProdIdsEquipo(e.id).size; });
+  const eqsReales = eqs.filter(e => !_esEquipoDefault(e));
+
+  const sm = document.getElementById('edit-sector-modal'); if (sm) sm.remove();
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'del-cont-modal';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '480px'; m.style.zIndex = '1100';
+  let h = '<div class="md-t">Eliminar sector: ' + escapeHtml(sec.nombre) + '</div>';
+  if (eqsReales.length === 0 && totalProds === 0) {
+    h += '<div style="font-size:13px;color:#5F5E5A;line-height:1.5;margin-bottom:14px">El sector está vacío. ¿Eliminarlo?</div>';
+    h += '<div class="actions">';
+    h += '<button class="b" onclick="document.getElementById(\'del-cont-modal\').remove()">Cancelar</button>';
+    h += '<button class="b" style="background:#A32D2D;color:#fff;border-color:#A32D2D" onclick="_ejecutarEliminarSector(' + sectorId + ',\'borrar\')">Eliminar</button>';
+    h += '</div>';
+  } else {
+    h += '<div style="font-size:13px;color:#5F5E5A;line-height:1.5;margin-bottom:14px">El sector contiene ' + eqsReales.length + ' equipo(s) y ' + totalProds + ' producto(s) en total. ¿Qué hacer?</div>';
+    h += '<div class="actions" style="flex-direction:column;gap:8px;align-items:stretch">';
+    h += '<button class="b" style="background:#A32D2D;color:#fff;border-color:#A32D2D" onclick="_confirmarBorrarTodoSector(' + sectorId + ')">Borrar todo (equipos, conjuntos y productos)</button>';
+    h += '<button class="b" onclick="document.getElementById(\'del-cont-modal\').remove()">Cancelar</button>';
+    h += '</div>';
+    h += '<div class="ef-help">Para eliminar un sector con contenido solo está disponible "Borrar todo". Si querés conservar equipos o productos, movélos a otro sector antes (editando cada equipo).</div>';
+  }
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd);
+}
+
+function _confirmarBorrarTodoSector(sectorId) {
+  const eqs = equipos.filter(e => e.sector_id === sectorId);
+  let totalProds = 0;
+  eqs.forEach(e => { totalProds += _matrizProdIdsEquipo(e.id).size; });
+  const dm = document.getElementById('del-cont-modal'); if (dm) dm.remove();
+  confirmModal({
+    titulo: 'Borrar sector completo',
+    mensaje: 'Se eliminará el sector, sus ' + eqs.length + ' equipo(s), sus conjuntos/subconjuntos y se borrarán los productos que no se usen en otro lado (' + totalProds + ' producto(s) aproximadamente). Esta acción no se puede deshacer.',
+    textoConfirmar: 'Borrar todo',
+    onConfirm: () => _ejecutarEliminarSector(sectorId, 'borrar')
+  });
+}
+
+async function _ejecutarEliminarSector(sectorId, modo) {
+  const dm = document.getElementById('del-cont-modal'); if (dm) dm.remove();
+  showSpinner('Eliminando sector...');
+  try {
+    const eqs = equipos.filter(e => e.sector_id === sectorId);
+    // Borrar productos huérfanos, conjuntos, subconjuntos de cada equipo
+    for (const eq of eqs) {
+      const prodIds = [..._matrizProdIdsEquipo(eq.id)];
+      for (const pid of prodIds) {
+        if (!_productoUsadoEnOtroLado(pid, 'equipo', eq.id)) {
+          // Verificar que no esté en conjuntos de OTROS equipos tampoco —
+          // _productoUsadoEnOtroLado ya cubre conjunto/subconjunto/equipo.
+          await sb.from('productos_matriz').delete().eq('id', pid);
+        }
+      }
+      const conIds = equipoConjuntos.filter(ec => ec.equipo_id === eq.id).map(ec => ec.conjunto_id);
+      for (const cid of conIds) {
+        const con = conjuntos.find(c => c.id === cid);
+        if (con && _esConjuntoDefault(con)) continue;
+        const subIds = conjuntoSubconjuntos.filter(cs => cs.conjunto_id === cid).map(cs => cs.subconjunto_id);
+        for (const sid of subIds) {
+          await sb.from('subconjuntos').delete().eq('id', sid);
+        }
+        await sb.from('conjuntos').delete().eq('id', cid);
+      }
+      await sb.from('equipos').delete().eq('id', eq.id);
+    }
+    await sb.from('sectores').delete().eq('id', sectorId);
+    await loadAll();
+    toast('Sector eliminado');
+    render();
+  } finally {
+    hideSpinner();
+  }
 }
 
 function _renderEditarContenedorModal() {
