@@ -8363,7 +8363,10 @@ function renderMatrizTab() {
     h += '<button class="b" style="' + style + ';padding:6px 16px;font-size:12px;border:none;border-radius:0" onclick="navigate({view:\'recursos\',tab:\'matriz\',matrizView:\'' + v + '\'})">' + lbl + '</button>';
   });
   h += '</div>';
+  h += '<div style="display:flex;gap:6px">';
+  h += '<button class="b" onclick="showClienteForm(null)">+ Nuevo cliente</button>';
   h += '<button class="b b-p" onclick="pmNuevoConUbicacion({contexto:\'global\'})">+ Nuevo producto</button>';
+  h += '</div>';
   h += '</div>';
 
   // Barra de filtros
@@ -9495,7 +9498,7 @@ function _ceCamposHtml() {
   h += '<div style="font-size:12px;font-weight:600;color:#5F5E5A;margin:14px 0 6px">Ubicación</div>';
 
   // Cliente (siempre)
-  h += '<div class="ef"><div class="ef-l">Cliente</div>';
+  h += '<div class="ef"><div class="ef-l">🏢 Cliente</div>';
   h += '<select class="ef-i" id="ce-cliente" onchange="_ceClienteChange()">';
   h += '<option value="">(Elegir cliente)</option>';
   clientes.slice().sort((a, b) => (a.nombre || '').localeCompare(b.nombre || '')).forEach(c => {
@@ -9505,23 +9508,23 @@ function _ceCamposHtml() {
 
   // Sector (para equipo, conjunto, subconjunto, producto)
   if (tipo !== 'sector') {
-    h += '<div class="ef"><div class="ef-l">Sector</div>';
+    h += '<div class="ef"><div class="ef-l">🏭 Sector</div>';
     h += '<select class="ef-i" id="ce-sector" onchange="_ceSectorChange()"></select></div>';
   }
   // Equipo (para conjunto, subconjunto, producto)
   if (tipo === 'conjunto' || tipo === 'subconjunto' || tipo === 'producto') {
-    h += '<div class="ef"><div class="ef-l">Equipo</div>';
+    h += '<div class="ef"><div class="ef-l">🤖 Equipo</div>';
     h += '<select class="ef-i" id="ce-equipo" onchange="_ceEquipoChange()"></select></div>';
   }
   // Conjunto (para subconjunto, producto) — opcional para producto
   if (tipo === 'subconjunto' || tipo === 'producto') {
     const lbl = tipo === 'producto' ? 'Conjunto (opcional)' : 'Conjunto';
-    h += '<div class="ef"><div class="ef-l">' + lbl + '</div>';
+    h += '<div class="ef"><div class="ef-l">📦 ' + lbl + '</div>';
     h += '<select class="ef-i" id="ce-conjunto" onchange="_ceConjuntoChange()"></select></div>';
   }
   // Subconjunto (solo para producto, opcional)
   if (tipo === 'producto') {
-    h += '<div class="ef"><div class="ef-l">Subconjunto (opcional)</div>';
+    h += '<div class="ef"><div class="ef-l">📦 Subconjunto (opcional)</div>';
     h += '<select class="ef-i" id="ce-subconjunto"></select></div>';
   }
 
@@ -9689,8 +9692,12 @@ async function _ceCrear() {
     if (tipo === 'sector') {
       const nombre = (document.getElementById('ce-nombre').value || '').trim();
       if (!nombre) { toast('Ingresá el nombre', true); return; }
-      const { error } = await sb.from('sectores').insert({ cliente_id: ruta.clienteId, nombre });
+      const { data: nuevoSec, error } = await sb.from('sectores').insert({ cliente_id: ruta.clienteId, nombre }).select().single();
       if (error) { toast('Error: ' + error.message, true); return; }
+      // v70: auto-crear el equipo default "Sin equipo específico" del sector,
+      // así se le pueden colgar conjuntos/productos sin tener que crear un
+      // equipo manualmente primero.
+      await sb.from('equipos').insert({ sector_id: nuevoSec.id, nombre: 'Sin equipo específico' });
 
     } else if (tipo === 'equipo') {
       const nombre = (document.getElementById('ce-nombre').value || '').trim();
