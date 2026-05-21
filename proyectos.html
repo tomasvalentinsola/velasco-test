@@ -8363,7 +8363,7 @@ function renderMatrizTab() {
     h += '<button class="b" style="' + style + ';padding:6px 16px;font-size:12px;border:none;border-radius:0" onclick="navigate({view:\'recursos\',tab:\'matriz\',matrizView:\'' + v + '\'})">' + lbl + '</button>';
   });
   h += '</div>';
-  h += '<button class="b b-p" onclick="showProductoMatrizForm(null)">+ Nuevo producto</button>';
+  h += '<button class="b b-p" onclick="pmNuevoConUbicacion({contexto:\'global\'})">+ Nuevo producto</button>';
   h += '</div>';
 
   // Barra de filtros
@@ -9088,7 +9088,7 @@ function _matrizRenderClienteNode(cli) {
       return inner;
     },
     null,
-    'pmNuevoConUbicacion({clienteId:' + cli.id + '})',
+    'pmNuevoConUbicacion({clienteId:' + cli.id + ',contexto:\'cliente\'})',
     null,
     cli.foto_url || null
   );
@@ -9129,7 +9129,7 @@ function _matrizRenderSectorNode(sec, cliId) {
       return inner;
     },
     null,
-    'pmNuevoConUbicacion({clienteId:' + cliId + ',sectorId:' + sec.id + '})'
+    'pmNuevoConUbicacion({clienteId:' + cliId + ',sectorId:' + sec.id + ',contexto:\'sector\'})'
   );
 }
 
@@ -9180,7 +9180,7 @@ function _matrizRenderEquipoNode(eq, cliId) {
       return inner;
     },
     null,
-    'pmNuevoConUbicacion({clienteId:' + cliId + ',sectorId:' + eq.sector_id + ',equipoId:' + eq.id + '})',
+    'pmNuevoConUbicacion({clienteId:' + cliId + ',sectorId:' + eq.sector_id + ',equipoId:' + eq.id + ',contexto:\'equipo\'})',
     'showEditarEquipoModal(' + eq.id + ')'
   );
 }
@@ -9229,7 +9229,7 @@ function _matrizRenderConjuntoNode(con, cliId) {
       return inner;
     },
     22,
-    'pmNuevoConUbicacion({clienteId:' + cliId + ',sectorId:' + sectorIdPrefill + ',equipoId:' + equipoIdPrefill + ',conjuntoId:' + con.id + '})',
+    'pmNuevoConUbicacion({clienteId:' + cliId + ',sectorId:' + sectorIdPrefill + ',equipoId:' + equipoIdPrefill + ',conjuntoId:' + con.id + ',contexto:\'conjunto\'})',
     'showEditarConjuntoModal(' + con.id + ')',
     con.foto_url || null
   );
@@ -9266,7 +9266,7 @@ function _matrizRenderSubconjuntoNode(sub, cliId) {
       return inner;
     },
     14,
-    'pmNuevoConUbicacion({clienteId:' + cliId + ',sectorId:' + sectorIdPrefill + ',equipoId:' + equipoIdPrefill + ',conjuntoId:' + conjuntoIdPrefill + ',subconjuntoId:' + sub.id + '})',
+    'pmNuevoConUbicacion({clienteId:' + cliId + ',sectorId:' + sectorIdPrefill + ',equipoId:' + equipoIdPrefill + ',conjuntoId:' + conjuntoIdPrefill + ',subconjuntoId:' + sub.id + ',contexto:\'subconjunto\'})',
     'showEditarSubconjuntoModal(' + sub.id + ')'
   );
 }
@@ -9383,155 +9383,270 @@ function _pmRutasDelProductoHtml(productoId) {
   return h;
 }
 
-// v70: "+ Nuevo producto" desde una tarjeta de la matriz. Abre un modal con
-// los datos del producto + selectores de ubicación precargados según dónde se
-// apretó el "+". El usuario revisa la ubicación (ya viene puesta) y carga el
-// producto. Al crear, queda asignado a esa ubicación.
-let nuevoProdUbicState = null;
+// =============================================================================
+// v70 Fase 5b: MODAL ÚNICO DE CREACIÓN
+// =============================================================================
+// Un solo modal para crear Sector / Equipo / Conjunto / Subconjunto / Producto.
+// Se abre desde el "+" de cada tarjeta de la matriz y desde el botón azul
+// global. Tiene:
+//  - Desplegable "¿Qué crear?" con opciones según el contexto.
+//  - Ruta explícita (cliente/sector/equipo/conjunto/subconjunto) precargada
+//    y editable. Cuántos selectores se muestran depende del tipo a crear.
+//  - Campos según el tipo: sector/equipo -> nombre; conjunto/subconjunto ->
+//    nombre + foto; producto -> modal completo.
 
+let crearEntidadState = null;
+
+// `opts` = { clienteId, sectorId, equipoId, conjuntoId, subconjuntoId, contexto }
+// `contexto` = 'cliente' | 'sector' | 'equipo' | 'conjunto' | 'subconjunto' | 'global'
 function pmNuevoConUbicacion(opts) {
   opts = opts || {};
-  nuevoProdUbicState = {
-    clienteId: opts.clienteId || null,
-    sectorId: (opts.sectorId && opts.sectorId !== 'null') ? opts.sectorId : null,
-    equipoId: (opts.equipoId && opts.equipoId !== 'null') ? opts.equipoId : null,
-    conjuntoId: (opts.conjuntoId && opts.conjuntoId !== 'null') ? opts.conjuntoId : null,
-    subconjuntoId: (opts.subconjuntoId && opts.subconjuntoId !== 'null') ? opts.subconjuntoId : null
+  const norm = (v) => (v && v !== 'null') ? parseInt(v) : null;
+  crearEntidadState = {
+    contexto: opts.contexto || 'global',
+    clienteId: norm(opts.clienteId),
+    sectorId: norm(opts.sectorId),
+    equipoId: norm(opts.equipoId),
+    conjuntoId: norm(opts.conjuntoId),
+    subconjuntoId: norm(opts.subconjuntoId),
+    tipo: null  // se setea al renderizar según el contexto
   };
-  _renderNuevoProdUbicModal();
+  // Tipo inicial por defecto según contexto
+  const opcionesPorContexto = _ceOpcionesDeContexto(crearEntidadState.contexto);
+  crearEntidadState.tipo = opcionesPorContexto[0];
+  _renderCrearEntidadModal();
 }
 
-function _renderNuevoProdUbicModal() {
-  const st = nuevoProdUbicState;
+// Devuelve qué tipos se pueden crear según el contexto donde se apretó "+".
+function _ceOpcionesDeContexto(contexto) {
+  if (contexto === 'cliente') return ['sector'];
+  if (contexto === 'sector') return ['equipo', 'conjunto', 'subconjunto', 'producto'];
+  if (contexto === 'equipo') return ['conjunto', 'subconjunto', 'producto'];
+  if (contexto === 'conjunto') return ['subconjunto', 'producto'];
+  if (contexto === 'subconjunto') return ['producto'];
+  // global: se puede crear cualquier cosa
+  return ['producto', 'conjunto', 'subconjunto', 'equipo', 'sector'];
+}
+
+const _ceTipoLabel = {
+  sector: 'Sector', equipo: 'Equipo', conjunto: 'Conjunto',
+  subconjunto: 'Subconjunto', producto: 'Producto'
+};
+
+function _renderCrearEntidadModal() {
+  const st = crearEntidadState;
   if (!st) return;
-  const existing = document.getElementById('np-ubic-modal');
+  const existing = document.getElementById('crear-ent-modal');
   if (existing) existing.remove();
-  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'np-ubic-modal';
-  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '620px'; m.style.maxHeight = '90vh'; m.style.overflowY = 'auto';
-  let h = '<div class="md-t">Nuevo producto</div>';
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'crear-ent-modal';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '640px';
+  m.style.maxHeight = '90vh'; m.style.overflowY = 'auto';
 
-  // Datos del producto
-  h += '<div class="ef"><div class="ef-l">Descripción <span style="color:#A32D2D">*</span></div>';
-  h += '<input type="text" class="ef-i" id="np-desc" placeholder="Ej. Eje cónico"></div>';
-  h += '<div class="row">';
-  h += '<div class="ef" style="flex:1"><div class="ef-l">Código de cliente</div>';
-  h += '<input type="text" class="ef-i" id="np-cod"></div>';
-  h += '<div class="ef" style="flex:1"><div class="ef-l">Material</div>';
-  h += '<select class="ef-i" id="np-material">';
-  h += '<option value="">(Sin material)</option>';
-  materiales.slice().sort((a, b) => (a.nombre || '').localeCompare(b.nombre || '')).forEach(mat => {
-    h += '<option value="' + mat.id + '">' + escapeHtml(mat.nombre) + '</option>';
+  const opciones = _ceOpcionesDeContexto(st.contexto);
+
+  let h = '<div class="md-t">Crear nuevo</div>';
+
+  // Desplegable "¿Qué crear?"
+  h += '<div class="ef"><div class="ef-l">¿Qué querés crear?</div>';
+  h += '<select class="ef-i" id="ce-tipo" onchange="_ceTipoChange()">';
+  opciones.forEach(op => {
+    h += '<option value="' + op + '"' + (op === st.tipo ? ' selected' : '') + '>' + _ceTipoLabel[op] + '</option>';
   });
   h += '</select></div>';
-  h += '</div>';
-  h += '<div class="ef"><div class="ef-l">Presentación de materia prima</div>';
-  h += '<input type="text" class="ef-i" id="np-presentacion" placeholder="Ej. Redondo Ø50"></div>';
 
-  // Ubicación (precargada)
-  h += '<div style="font-size:12px;font-weight:600;color:#5F5E5A;margin:14px 0 6px">Ubicación en la matriz</div>';
-  h += '<div class="row">';
-  h += '<div class="ef" style="flex:1"><div class="ef-l">Cliente</div>';
-  h += '<select class="ef-i" id="np-cliente" onchange="_npUbicClienteChange()">';
-  h += '<option value="">(Genérico)</option>';
-  clientes.slice().sort((a, b) => (a.nombre || '').localeCompare(b.nombre || '')).forEach(c => {
-    h += '<option value="' + c.id + '"' + (c.id === st.clienteId ? ' selected' : '') + '>' + escapeHtml(c.nombre) + '</option>';
-  });
-  h += '</select></div>';
-  h += '<div class="ef" style="flex:1"><div class="ef-l">Sector</div>';
-  h += '<select class="ef-i" id="np-sector" onchange="_npUbicSectorChange()"></select></div>';
-  h += '</div>';
-  h += '<div class="row">';
-  h += '<div class="ef" style="flex:1"><div class="ef-l">Equipo</div>';
-  h += '<select class="ef-i" id="np-equipo" onchange="_npUbicEquipoChange()"></select></div>';
-  h += '<div class="ef" style="flex:1"><div class="ef-l">Conjunto (opcional)</div>';
-  h += '<select class="ef-i" id="np-conjunto" onchange="_npUbicConjuntoChange()"></select></div>';
-  h += '</div>';
-  h += '<div class="ef"><div class="ef-l">Subconjunto (opcional)</div>';
-  h += '<select class="ef-i" id="np-subconjunto"></select></div>';
+  // Contenedor de campos dinámicos (cambia según el tipo)
+  h += '<div id="ce-campos">' + _ceCamposHtml() + '</div>';
 
   h += '<div class="actions">';
-  h += '<button class="b" onclick="document.getElementById(\'np-ubic-modal\').remove();nuevoProdUbicState=null">Cancelar</button>';
-  h += '<button class="b b-p" onclick="_npUbicCrear()">Crear producto</button>';
+  h += '<button class="b" onclick="document.getElementById(\'crear-ent-modal\').remove();crearEntidadState=null">Cancelar</button>';
+  h += '<button class="b b-p" onclick="_ceCrear()">Crear</button>';
   h += '</div>';
   m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
-  // Inicializar cascada de selects con los valores precargados
-  _npUbicClienteChange(true);
+  _ceInicializarSelects();
 }
 
-// Las funciones de cascada. El parámetro `usarPrecarga` indica si hay que
-// respetar los valores de nuevoProdUbicState (primera vez) o resetear.
-function _npUbicClienteChange(usarPrecarga) {
-  const st = nuevoProdUbicState;
-  const cliSel = document.getElementById('np-cliente');
-  const secSel = document.getElementById('np-sector');
-  if (!cliSel || !secSel) return;
-  const cliId = cliSel.value ? parseInt(cliSel.value) : null;
-  if (!cliId) {
-    secSel.innerHTML = '<option value="">—</option>'; secSel.disabled = true;
-  } else {
-    secSel.disabled = false;
-    const secs = sectores.filter(s => s.cliente_id === cliId).sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
-    secSel.innerHTML = secs.map(s => {
-      const sel = usarPrecarga ? (s.id === st.sectorId) : _esSectorGeneral(s);
-      return '<option value="' + s.id + '"' + (sel ? ' selected' : '') + '>' + escapeHtml(s.nombre) + '</option>';
-    }).join('');
+// Cuando cambia el tipo en el desplegable, re-renderizamos los campos.
+function _ceTipoChange() {
+  const sel = document.getElementById('ce-tipo');
+  if (!sel || !crearEntidadState) return;
+  crearEntidadState.tipo = sel.value;
+  const cont = document.getElementById('ce-campos');
+  if (cont) {
+    cont.innerHTML = _ceCamposHtml();
+    _ceInicializarSelects();
   }
-  _npUbicSectorChange(usarPrecarga);
 }
 
-function _npUbicSectorChange(usarPrecarga) {
-  const st = nuevoProdUbicState;
-  const secSel = document.getElementById('np-sector');
-  const eqSel = document.getElementById('np-equipo');
-  if (!secSel || !eqSel) return;
-  const secId = secSel.value ? parseInt(secSel.value) : null;
+// HTML de los campos según el tipo elegido. Incluye:
+//  - Ruta (selectores) hasta el nivel necesario.
+//  - Campos propios del tipo.
+function _ceCamposHtml() {
+  const st = crearEntidadState;
+  const tipo = st.tipo;
+  let h = '';
+
+  // ---- RUTA ----
+  // Qué niveles de ruta se muestran según el tipo a crear:
+  //  - sector: cliente
+  //  - equipo: cliente, sector
+  //  - conjunto: cliente, sector, equipo
+  //  - subconjunto: cliente, sector, equipo, conjunto
+  //  - producto: cliente, sector, equipo, conjunto (opc.), subconjunto (opc.)
+  h += '<div style="font-size:12px;font-weight:600;color:#5F5E5A;margin:14px 0 6px">Ubicación</div>';
+
+  // Cliente (siempre)
+  h += '<div class="ef"><div class="ef-l">Cliente</div>';
+  h += '<select class="ef-i" id="ce-cliente" onchange="_ceClienteChange()">';
+  h += '<option value="">(Elegir cliente)</option>';
+  clientes.slice().sort((a, b) => (a.nombre || '').localeCompare(b.nombre || '')).forEach(c => {
+    h += '<option value="' + c.id + '">' + escapeHtml(c.nombre) + '</option>';
+  });
+  h += '</select></div>';
+
+  // Sector (para equipo, conjunto, subconjunto, producto)
+  if (tipo !== 'sector') {
+    h += '<div class="ef"><div class="ef-l">Sector</div>';
+    h += '<select class="ef-i" id="ce-sector" onchange="_ceSectorChange()"></select></div>';
+  }
+  // Equipo (para conjunto, subconjunto, producto)
+  if (tipo === 'conjunto' || tipo === 'subconjunto' || tipo === 'producto') {
+    h += '<div class="ef"><div class="ef-l">Equipo</div>';
+    h += '<select class="ef-i" id="ce-equipo" onchange="_ceEquipoChange()"></select></div>';
+  }
+  // Conjunto (para subconjunto, producto) — opcional para producto
+  if (tipo === 'subconjunto' || tipo === 'producto') {
+    const lbl = tipo === 'producto' ? 'Conjunto (opcional)' : 'Conjunto';
+    h += '<div class="ef"><div class="ef-l">' + lbl + '</div>';
+    h += '<select class="ef-i" id="ce-conjunto" onchange="_ceConjuntoChange()"></select></div>';
+  }
+  // Subconjunto (solo para producto, opcional)
+  if (tipo === 'producto') {
+    h += '<div class="ef"><div class="ef-l">Subconjunto (opcional)</div>';
+    h += '<select class="ef-i" id="ce-subconjunto"></select></div>';
+  }
+
+  // ---- CAMPOS PROPIOS DEL TIPO ----
+  h += '<div style="font-size:12px;font-weight:600;color:#5F5E5A;margin:14px 0 6px">Datos</div>';
+
+  if (tipo === 'sector' || tipo === 'equipo') {
+    h += '<div class="ef"><div class="ef-l">Nombre <span style="color:#A32D2D">*</span></div>';
+    h += '<input type="text" class="ef-i" id="ce-nombre" placeholder="Nombre del ' + tipo + '"></div>';
+  } else if (tipo === 'conjunto' || tipo === 'subconjunto') {
+    h += '<div class="ef"><div class="ef-l">Nombre <span style="color:#A32D2D">*</span></div>';
+    h += '<input type="text" class="ef-i" id="ce-nombre" placeholder="Nombre del ' + tipo + '"></div>';
+    h += '<div class="ef-help" style="margin-bottom:4px">La foto se agrega después, desde el botón ✎ del ' + tipo + '.</div>';
+  } else if (tipo === 'producto') {
+    h += '<div class="ef"><div class="ef-l">Descripción <span style="color:#A32D2D">*</span></div>';
+    h += '<input type="text" class="ef-i" id="ce-desc" placeholder="Ej. Eje cónico"></div>';
+    h += '<div class="row">';
+    h += '<div class="ef" style="flex:1"><div class="ef-l">Código de cliente</div>';
+    h += '<input type="text" class="ef-i" id="ce-cod"></div>';
+    h += '<div class="ef" style="flex:1"><div class="ef-l">Material</div>';
+    h += '<select class="ef-i" id="ce-material"><option value="">(Sin material)</option>';
+    materiales.slice().sort((a, b) => (a.nombre || '').localeCompare(b.nombre || '')).forEach(mat => {
+      h += '<option value="' + mat.id + '">' + escapeHtml(mat.nombre) + '</option>';
+    });
+    h += '</select></div>';
+    h += '</div>';
+    h += '<div class="ef"><div class="ef-l">Presentación de materia prima</div>';
+    h += '<input type="text" class="ef-i" id="ce-presentacion" placeholder="Ej. Redondo Ø50"></div>';
+  }
+  return h;
+}
+
+// Inicializa la cascada de selects con los valores precargados del state.
+function _ceInicializarSelects() {
+  const st = crearEntidadState;
+  const cliSel = document.getElementById('ce-cliente');
+  if (cliSel && st.clienteId) cliSel.value = String(st.clienteId);
+  _ceClienteChange(true);
+}
+
+function _ceClienteChange(usarPrecarga) {
+  const st = crearEntidadState;
+  const cliSel = document.getElementById('ce-cliente');
+  const secSel = document.getElementById('ce-sector');
+  if (!cliSel) return;
+  const cliId = cliSel.value ? parseInt(cliSel.value) : null;
+  if (secSel) {
+    if (!cliId) {
+      secSel.innerHTML = '<option value="">(Elegir cliente primero)</option>';
+      secSel.disabled = true;
+    } else {
+      secSel.disabled = false;
+      const secs = sectores.filter(s => s.cliente_id === cliId).sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+      let h = '';
+      secs.forEach(s => {
+        let sel;
+        if (usarPrecarga && st.sectorId) sel = (s.id === st.sectorId);
+        else sel = _esSectorGeneral(s);
+        h += '<option value="' + s.id + '"' + (sel ? ' selected' : '') + '>' + escapeHtml(s.nombre) + '</option>';
+      });
+      secSel.innerHTML = h;
+    }
+  }
+  _ceSectorChange(usarPrecarga);
+}
+
+function _ceSectorChange(usarPrecarga) {
+  const st = crearEntidadState;
+  const secSel = document.getElementById('ce-sector');
+  const eqSel = document.getElementById('ce-equipo');
+  if (!eqSel) return;
+  const secId = secSel && secSel.value ? parseInt(secSel.value) : null;
   if (!secId) {
-    eqSel.innerHTML = '<option value="">—</option>'; eqSel.disabled = true;
+    eqSel.innerHTML = '<option value="">(Elegir sector primero)</option>';
+    eqSel.disabled = true;
   } else {
     eqSel.disabled = false;
     const eqs = equipos.filter(e => e.sector_id === secId).sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
-    eqSel.innerHTML = eqs.map(e => {
-      const sel = usarPrecarga ? (e.id === st.equipoId) : _esEquipoDefault(e);
-      return '<option value="' + e.id + '"' + (sel ? ' selected' : '') + '>' + escapeHtml(e.nombre) + '</option>';
-    }).join('');
+    let h = '';
+    eqs.forEach(e => {
+      let sel;
+      if (usarPrecarga && st.equipoId) sel = (e.id === st.equipoId);
+      else sel = _esEquipoDefault(e);
+      h += '<option value="' + e.id + '"' + (sel ? ' selected' : '') + '>' + escapeHtml(e.nombre) + '</option>';
+    });
+    eqSel.innerHTML = h;
   }
-  _npUbicEquipoChange(usarPrecarga);
+  _ceEquipoChange(usarPrecarga);
 }
 
-function _npUbicEquipoChange(usarPrecarga) {
-  const st = nuevoProdUbicState;
-  const eqSel = document.getElementById('np-equipo');
-  const conSel = document.getElementById('np-conjunto');
-  if (!eqSel || !conSel) return;
-  const eqId = eqSel.value ? parseInt(eqSel.value) : null;
-  let h = '<option value="">(Ninguno — va directo al equipo)</option>';
+function _ceEquipoChange(usarPrecarga) {
+  const st = crearEntidadState;
+  const eqSel = document.getElementById('ce-equipo');
+  const conSel = document.getElementById('ce-conjunto');
+  if (!conSel) return;
+  const eqId = eqSel && eqSel.value ? parseInt(eqSel.value) : null;
+  const esProducto = st.tipo === 'producto';
+  let h = esProducto ? '<option value="">(Ninguno — directo al equipo)</option>' : '<option value="">(Elegir conjunto)</option>';
   if (eqId) {
     const conIds = equipoConjuntos.filter(ec => ec.equipo_id === eqId).map(ec => ec.conjunto_id);
     const cons = conjuntos.filter(c => conIds.includes(c.id) && !_esConjuntoDefault(c))
       .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
     cons.forEach(c => {
-      const sel = usarPrecarga && c.id === st.conjuntoId;
+      const sel = usarPrecarga && st.conjuntoId && c.id === st.conjuntoId;
       h += '<option value="' + c.id + '"' + (sel ? ' selected' : '') + '>' + escapeHtml(c.nombre) + '</option>';
     });
   }
   conSel.innerHTML = h;
-  _npUbicConjuntoChange(usarPrecarga);
+  _ceConjuntoChange(usarPrecarga);
 }
 
-function _npUbicConjuntoChange(usarPrecarga) {
-  const st = nuevoProdUbicState;
-  const conSel = document.getElementById('np-conjunto');
-  const subSel = document.getElementById('np-subconjunto');
-  if (!conSel || !subSel) return;
-  const conId = conSel.value ? parseInt(conSel.value) : null;
-  let h = '<option value="">(Ninguno — va directo al conjunto)</option>';
+function _ceConjuntoChange(usarPrecarga) {
+  const st = crearEntidadState;
+  const conSel = document.getElementById('ce-conjunto');
+  const subSel = document.getElementById('ce-subconjunto');
+  if (!subSel) return;
+  const conId = conSel && conSel.value ? parseInt(conSel.value) : null;
+  let h = '<option value="">(Ninguno — directo al conjunto)</option>';
   if (conId) {
     subSel.disabled = false;
     const subIds = conjuntoSubconjuntos.filter(cs => cs.conjunto_id === conId).map(cs => cs.subconjunto_id);
     const subs = subconjuntos.filter(s => subIds.includes(s.id) && !_esSubconjuntoDefault(s))
       .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
     subs.forEach(s => {
-      const sel = usarPrecarga && s.id === st.subconjuntoId;
+      const sel = usarPrecarga && st.subconjuntoId && s.id === st.subconjuntoId;
       h += '<option value="' + s.id + '"' + (sel ? ' selected' : '') + '>' + escapeHtml(s.nombre) + '</option>';
     });
   } else {
@@ -9540,49 +9655,100 @@ function _npUbicConjuntoChange(usarPrecarga) {
   subSel.innerHTML = h;
 }
 
-async function _npUbicCrear() {
-  const desc = document.getElementById('np-desc').value.trim();
-  if (!desc) { toast('La descripción es obligatoria', true); return; }
-  const cliId = document.getElementById('np-cliente').value ? parseInt(document.getElementById('np-cliente').value) : null;
-  const codigo = document.getElementById('np-cod').value.trim() || null;
-  const matVal = document.getElementById('np-material').value;
-  const materialId = matVal ? parseInt(matVal) : null;
-  const presentacion = document.getElementById('np-presentacion').value.trim() || null;
-  const eqSel = document.getElementById('np-equipo');
-  const conSel = document.getElementById('np-conjunto');
-  const subSel = document.getElementById('np-subconjunto');
-  const equipoId = eqSel && eqSel.value ? parseInt(eqSel.value) : null;
-  const conjuntoId = conSel && conSel.value ? parseInt(conSel.value) : null;
-  const subconjuntoId = subSel && subSel.value ? parseInt(subSel.value) : null;
+// Lee los valores de ruta actualmente seleccionados en el modal.
+function _ceLeerRuta() {
+  const get = (id) => {
+    const el = document.getElementById(id);
+    return el && el.value ? parseInt(el.value) : null;
+  };
+  return {
+    clienteId: get('ce-cliente'),
+    sectorId: get('ce-sector'),
+    equipoId: get('ce-equipo'),
+    conjuntoId: get('ce-conjunto'),
+    subconjuntoId: get('ce-subconjunto')
+  };
+}
 
-  showSpinner('Creando producto...');
+async function _ceCrear() {
+  const st = crearEntidadState;
+  if (!st) return;
+  const tipo = st.tipo;
+  const ruta = _ceLeerRuta();
+
+  // Validaciones de ruta según el tipo
+  if (!ruta.clienteId) { toast('Elegí un cliente', true); return; }
+  if (tipo !== 'sector' && !ruta.sectorId) { toast('Elegí un sector', true); return; }
+  if ((tipo === 'conjunto' || tipo === 'subconjunto' || tipo === 'producto') && !ruta.equipoId) {
+    toast('Elegí un equipo', true); return;
+  }
+  if (tipo === 'subconjunto' && !ruta.conjuntoId) { toast('Elegí un conjunto', true); return; }
+
+  showSpinner('Creando ' + tipo + '...');
   try {
-    const { data: nuevo, error } = await sb.from('productos_matriz').insert({
-      descripcion: desc,
-      cliente_id: cliId,
-      codigo_cliente: codigo,
-      material_id: materialId,
-      presentacion_mat_prima: presentacion,
-      updated_at: new Date().toISOString()
-    }).select().single();
-    if (error) { toast('Error: ' + error.message, true); return; }
-    // Asignar a la composición según el nivel más específico
-    if (subconjuntoId) {
-      await sb.from('subconjunto_productos').insert({ subconjunto_id: subconjuntoId, producto_id: nuevo.id, cantidad: 1 });
-    } else if (conjuntoId) {
-      await sb.from('conjunto_productos').insert({ conjunto_id: conjuntoId, producto_id: nuevo.id, cantidad: 1 });
-    } else if (equipoId) {
-      await sb.from('equipo_productos').insert({ equipo_id: equipoId, producto_id: nuevo.id, cantidad: 1 });
+    if (tipo === 'sector') {
+      const nombre = (document.getElementById('ce-nombre').value || '').trim();
+      if (!nombre) { toast('Ingresá el nombre', true); return; }
+      const { error } = await sb.from('sectores').insert({ cliente_id: ruta.clienteId, nombre });
+      if (error) { toast('Error: ' + error.message, true); return; }
+
+    } else if (tipo === 'equipo') {
+      const nombre = (document.getElementById('ce-nombre').value || '').trim();
+      if (!nombre) { toast('Ingresá el nombre', true); return; }
+      const { error } = await sb.from('equipos').insert({ sector_id: ruta.sectorId, nombre });
+      if (error) { toast('Error: ' + error.message, true); return; }
+
+    } else if (tipo === 'conjunto') {
+      const nombre = (document.getElementById('ce-nombre').value || '').trim();
+      if (!nombre) { toast('Ingresá el nombre', true); return; }
+      const { data, error } = await sb.from('conjuntos').insert({ cliente_id: ruta.clienteId, nombre }).select().single();
+      if (error) { toast('Error: ' + error.message, true); return; }
+      // Vincular al equipo
+      await sb.from('equipo_conjuntos').insert({ equipo_id: ruta.equipoId, conjunto_id: data.id, cantidad: 1 });
+
+    } else if (tipo === 'subconjunto') {
+      const nombre = (document.getElementById('ce-nombre').value || '').trim();
+      if (!nombre) { toast('Ingresá el nombre', true); return; }
+      const { data, error } = await sb.from('subconjuntos').insert({ cliente_id: ruta.clienteId, nombre }).select().single();
+      if (error) { toast('Error: ' + error.message, true); return; }
+      // Vincular al conjunto
+      await sb.from('conjunto_subconjuntos').insert({ conjunto_id: ruta.conjuntoId, subconjunto_id: data.id, cantidad: 1 });
+
+    } else if (tipo === 'producto') {
+      const desc = (document.getElementById('ce-desc').value || '').trim();
+      if (!desc) { toast('La descripción es obligatoria', true); return; }
+      const codigo = (document.getElementById('ce-cod').value || '').trim() || null;
+      const matVal = document.getElementById('ce-material').value;
+      const materialId = matVal ? parseInt(matVal) : null;
+      const presentacion = (document.getElementById('ce-presentacion').value || '').trim() || null;
+      const { data, error } = await sb.from('productos_matriz').insert({
+        descripcion: desc, cliente_id: ruta.clienteId, codigo_cliente: codigo,
+        material_id: materialId, presentacion_mat_prima: presentacion,
+        updated_at: new Date().toISOString()
+      }).select().single();
+      if (error) { toast('Error: ' + error.message, true); return; }
+      // Asignar a la composición según el nivel más específico
+      if (ruta.subconjuntoId) {
+        await sb.from('subconjunto_productos').insert({ subconjunto_id: ruta.subconjuntoId, producto_id: data.id, cantidad: 1 });
+      } else if (ruta.conjuntoId) {
+        await sb.from('conjunto_productos').insert({ conjunto_id: ruta.conjuntoId, producto_id: data.id, cantidad: 1 });
+      } else if (ruta.equipoId) {
+        await sb.from('equipo_productos').insert({ equipo_id: ruta.equipoId, producto_id: data.id, cantidad: 1 });
+      }
+      document.getElementById('crear-ent-modal').remove();
+      crearEntidadState = null;
+      await loadAll();
+      toast('Producto creado');
+      navigate({ view: 'productoMatriz', productoId: data.id });
+      setTimeout(() => { showProcesoForm(null, { tipo: 'producto', parentId: data.id }); }, 100);
+      return;
     }
-    document.getElementById('np-ubic-modal').remove();
-    nuevoProdUbicState = null;
+
+    document.getElementById('crear-ent-modal').remove();
+    crearEntidadState = null;
     await loadAll();
-    toast('Producto creado');
-    // Llevar a la vista del producto nuevo para cargar procesos
-    navigate({ view: 'productoMatriz', productoId: nuevo.id });
-    setTimeout(() => {
-      showProcesoForm(null, { tipo: 'producto', parentId: nuevo.id });
-    }, 100);
+    toast(_ceTipoLabel[tipo] + ' creado');
+    render();
   } finally {
     hideSpinner();
   }
