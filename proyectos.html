@@ -9629,12 +9629,15 @@ function _ceEquipoChange(usarPrecarga) {
   const conSel = document.getElementById('ce-conjunto');
   if (!conSel) return;
   const eqId = eqSel && eqSel.value ? parseInt(eqSel.value) : null;
+  console.log('[_ceEquipoChange] usarPrecarga=', usarPrecarga, 'eqId=', eqId, 'st.conjuntoId=', st.conjuntoId, 'st.equipoId=', st.equipoId);
   const esProducto = st.tipo === 'producto';
   let h = esProducto ? '<option value="">(Ninguno — directo al equipo)</option>' : '<option value="">(Elegir conjunto)</option>';
   if (eqId) {
     const conIds = equipoConjuntos.filter(ec => ec.equipo_id === eqId).map(ec => ec.conjunto_id);
+    console.log('[_ceEquipoChange] conIds del equipo', eqId, '=', conIds);
     const cons = conjuntos.filter(c => conIds.includes(c.id) && !_esConjuntoDefault(c))
       .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
+    console.log('[_ceEquipoChange] conjuntos no-default:', cons.map(c => c.id + ':' + c.nombre));
     cons.forEach(c => {
       const sel = usarPrecarga && st.conjuntoId && c.id === st.conjuntoId;
       h += '<option value="' + c.id + '"' + (sel ? ' selected' : '') + '>' + escapeHtml(c.nombre) + '</option>';
@@ -10175,11 +10178,21 @@ function _ecAgregarItem() {
     h += '<label style="font-size:11px"><input type="radio" name="ec-add-tipo" value="' + tipos[1] + '" onclick="_ecAddTipoChange()"> ' + tipos[1] + 's</label>';
     h += '</div>';
   }
-  h += '<div style="display:flex;gap:8px;margin-bottom:10px">';
-  h += '<input type="text" class="ef-i" id="ec-add-search" placeholder="Buscar..." oninput="_ecAddRenderLista()" style="flex:1;margin:0">';
+  h += '<div style="display:flex;gap:8px;margin-bottom:8px">';
+  h += '<input type="text" class="ef-i" id="ec-add-search" placeholder="Buscar por nombre..." oninput="_ecAddRenderLista()" style="flex:1;margin:0">';
   h += '<button class="b b-p" onclick="_ecCrearNuevo()" style="flex:0 0 auto;white-space:nowrap">+ Crear nuevo</button>';
   h += '</div>';
-  h += '<div id="ec-add-list" style="max-height:360px;overflow-y:auto;border:1px solid #C8C6BE;border-radius:5px"></div>';
+  // v70: filtros extra (solo aplican cuando el tipo activo es "producto")
+  h += '<div id="ec-add-filtros" style="display:flex;gap:8px;margin-bottom:10px">';
+  h += '<select class="ef-i" id="ec-add-fmaterial" onchange="_ecAddRenderLista()" style="flex:1;margin:0;font-size:11px">';
+  h += '<option value="">Todos los materiales</option>';
+  materiales.slice().sort((a, b) => (a.nombre || '').localeCompare(b.nombre || '')).forEach(mat => {
+    h += '<option value="' + mat.id + '">' + escapeHtml(mat.nombre) + '</option>';
+  });
+  h += '</select>';
+  h += '<input type="text" class="ef-i" id="ec-add-fcodigo" placeholder="Código de cliente" oninput="_ecAddRenderLista()" style="flex:1;margin:0;font-size:11px">';
+  h += '</div>';
+  h += '<div id="ec-add-list" style="max-height:340px;overflow-y:auto;border:1px solid #C8C6BE;border-radius:5px"></div>';
   h += '<div class="actions"><button class="b" onclick="document.getElementById(\'ec-agregar-modal\').remove()">Cancelar</button></div>';
   m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
   _ecAddRenderLista();
@@ -10263,26 +10276,38 @@ function _ecAddRenderLista() {
   const tipo = _ecAddGetTipo();
   const searchEl = document.getElementById('ec-add-search');
   const search = searchEl ? searchEl.value.trim().toLowerCase() : '';
-  // Ya agregados (para excluir)
+  const fmatEl = document.getElementById('ec-add-fmaterial');
+  const fmaterial = fmatEl && fmatEl.value ? parseInt(fmatEl.value) : null;
+  const fcodEl = document.getElementById('ec-add-fcodigo');
+  const fcodigo = fcodEl ? fcodEl.value.trim().toLowerCase() : '';
+  // Mostrar u ocultar los filtros extra según el tipo (solo para productos)
+  const filtrosBox = document.getElementById('ec-add-filtros');
+  if (filtrosBox) filtrosBox.style.display = (tipo === 'producto') ? 'flex' : 'none';
+
   const yaIds = new Set(st.items.filter(it => it.tipo === tipo).map(it => it.id));
-  // Obtener candidatos según el tipo
+  // candidatos como objetos completos para poder filtrar y mostrar más datos
   let candidatos;
   if (tipo === 'producto') {
     candidatos = productosMatriz.filter(p => !yaIds.has(p.id));
-    // Filtrar por cliente del contenedor si aplica
     if (st.clienteId) {
       candidatos = candidatos.filter(p => p.cliente_id === st.clienteId || !p.cliente_id);
     }
-    candidatos = candidatos.map(p => ({ id: p.id, nombre: p.descripcion || '?' }));
+    if (fmaterial) candidatos = candidatos.filter(p => p.material_id === fmaterial);
+    if (fcodigo) candidatos = candidatos.filter(p => (p.codigo_cliente || '').toLowerCase().includes(fcodigo));
+    candidatos = candidatos.map(p => ({
+      id: p.id,
+      nombre: p.descripcion || '?',
+      sub: [(p.material_id ? (materiales.find(m => m.id === p.material_id) || {}).nombre : null),
+            (p.codigo_cliente ? 'Cód: ' + p.codigo_cliente : null)].filter(Boolean).join(' · ')
+    }));
   } else if (tipo === 'conjunto') {
-    // Conjuntos del mismo cliente del contenedor padre (equipo → sector → cliente)
     const eq = equipos.find(e => e.id === st.id);
     const cliId = eq ? (sectores.find(s => s.id === eq.sector_id) || {}).cliente_id : null;
-    candidatos = conjuntos.filter(c => !yaIds.has(c.id) && (!cliId || c.cliente_id === cliId));
-    candidatos = candidatos.map(c => ({ id: c.id, nombre: c.nombre || '?' }));
+    candidatos = conjuntos.filter(c => !yaIds.has(c.id) && (!cliId || c.cliente_id === cliId) && !_esConjuntoDefault(c));
+    candidatos = candidatos.map(c => ({ id: c.id, nombre: c.nombre || '?', sub: '' }));
   } else if (tipo === 'subconjunto') {
-    candidatos = subconjuntos.filter(s => !yaIds.has(s.id) && (!st.clienteId || s.cliente_id === st.clienteId));
-    candidatos = candidatos.map(s => ({ id: s.id, nombre: s.nombre || '?' }));
+    candidatos = subconjuntos.filter(s => !yaIds.has(s.id) && (!st.clienteId || s.cliente_id === st.clienteId) && !_esSubconjuntoDefault(s));
+    candidatos = candidatos.map(s => ({ id: s.id, nombre: s.nombre || '?', sub: '' }));
   } else {
     candidatos = [];
   }
@@ -10292,15 +10317,19 @@ function _ecAddRenderLista() {
   const list = document.getElementById('ec-add-list');
   if (!list) return;
   if (candidatos.length === 0) {
-    list.innerHTML = '<div style="padding:14px;text-align:center;color:#888;font-size:11px;font-style:italic">Sin opciones.</div>';
+    list.innerHTML = '<div style="padding:14px;text-align:center;color:#888;font-size:11px;font-style:italic">Sin resultados con esos filtros.</div>';
     return;
   }
   let h = '';
-  candidatos.slice(0, 100).forEach(c => {
+  candidatos.slice(0, 150).forEach(c => {
     h += '<div onclick="_ecAddElegir(\'' + tipo + '\',' + c.id + ',\'' + escapeHtml(c.nombre).replace(/'/g, "\\'") + '\')" style="padding:7px 10px;border-bottom:1px solid #F5F3EC;cursor:pointer;font-size:12px" onmouseenter="this.style.background=\'#E6F1FB\'" onmouseleave="this.style.background=\'\'">';
-    h += escapeHtml(c.nombre);
+    h += '<div style="font-weight:600">' + escapeHtml(c.nombre) + '</div>';
+    if (c.sub) h += '<div style="font-size:10px;color:#888">' + escapeHtml(c.sub) + '</div>';
     h += '</div>';
   });
+  if (candidatos.length > 150) {
+    h += '<div style="padding:8px;text-align:center;color:#888;font-size:10px;font-style:italic">' + (candidatos.length - 150) + ' resultado(s) más. Afiná la búsqueda.</div>';
+  }
   list.innerHTML = h;
 }
 
