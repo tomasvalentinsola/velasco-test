@@ -5500,16 +5500,13 @@ function renderProductoMatrizDetail() {
   h += '<button class="b b-icon b-d" onclick="confirmDeleteProductoMatriz(' + prod.id + ')">Eliminar producto</button>';
   h += '</div></div></div>';
 
-  // Equipos compatibles (read-only en la vista, se editan desde el form)
-  h += '<div class="section-t" style="margin-top:8px">Equipos compatibles</div>';
-  if (ubics.length === 0) {
-    h += '<div style="font-size:12px;color:#888;font-style:italic;padding:6px 0">Sin ubicaciones asignadas (producto sin ubicación específica).</div>';
+  // v70: Ubicación del producto (lee de las tablas nuevas de composición)
+  h += '<div class="section-t" style="margin-top:8px">Ubicación</div>';
+  const rutasHtml = _pmRutasDelProductoHtml(prod.id);
+  if (rutasHtml) {
+    h += rutasHtml;
   } else {
-    ubics.forEach(u => {
-      h += '<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:#F5F3EC;border:1px solid #C8C6BE;border-radius:5px;margin-bottom:5px;font-size:12px">';
-      h += '<span style="flex:1">' + _pmUbicacionRoute(u) + '</span>';
-      h += '</div>';
-    });
+    h += '<div style="font-size:12px;color:#888;font-style:italic;padding:6px 0">Sin ubicación asignada (producto genérico). Editá el producto para asignarle una ubicación.</div>';
   }
 
   // Procesos del producto
