@@ -2670,6 +2670,7 @@ function renderProjectDetail() {
   h += '<span style="display:flex;align-items:center;gap:10px"><span>' + escapeHtml(proj.descripcion || '(sin descripcion)') + '</span>' + stBadge + '</span>';
   h += '<div style="display:flex;gap:6px;flex-wrap:wrap">';
   h += '<button class="b" onclick="copyProjectForMail(' + proj.id + ')" title="Copia el proyecto formateado para pegar en el mail estandarizado">✉ Copiar mail</button>';
+  h += '<button class="b" onclick="showNotaEnvioModal(' + proj.id + ')" title="Generar nota de envío para este proyecto">🚚 Nota de envío</button>';
   h += '<button class="b" onclick="copyProject(' + proj.id + ')" title="Crea un proyecto nuevo con todos estos datos">📑 Duplicar proyecto</button>';
   h += '<button class="b b-p" onclick="showProjectStateModal(' + proj.id + ')">Cambiar estado</button>';
   h += '</div></div>';
@@ -12491,6 +12492,14 @@ function showClienteForm(clienteId) {
   h += '<div class="ef-help">Ej: 30712345678 (11 digitos exactos, sin guiones).</div>';
   h += '<div class="ef-err" id="err-cuit" style="display:none"></div></div>';
 
+  // v70 Fase 6: datos para la nota de envío. Ambos opcionales.
+  h += '<div class="ef"><div class="ef-l">Razón social</div>';
+  h += '<input type="text" class="ef-i" id="c-razon" value="' + escapeHtml(cliente && cliente.razon_social ? cliente.razon_social : '') + '" placeholder="Ej. América Pampa Agroindustrial S.A.">';
+  h += '<div class="ef-help" style="font-size:10px">Razón social legal. Se usa en la nota de envío.</div></div>';
+  h += '<div class="ef"><div class="ef-l">Dirección de entrega</div>';
+  h += '<input type="text" class="ef-i" id="c-direnvio" value="' + escapeHtml(cliente && cliente.direccion_entrega ? cliente.direccion_entrega : '') + '" placeholder="Ej. Pellegrini 77 – América – Buenos Aires">';
+  h += '<div class="ef-help" style="font-size:10px">A dónde se entrega la mercadería. Se usa en la nota de envío.</div></div>';
+
   // v70 Fase 4.5: logo del cliente. La galería opera directo sobre la DB.
   // Solo disponible si el cliente ya existe (al crear, se sube después).
   if (!isNew) {
@@ -12740,7 +12749,13 @@ async function saveCliente(clienteId) {
     }
   }
 
-  const payload = { nombre, cuit, codigo };
+  // v70 Fase 6: datos para nota de envío. Vacío -> null.
+  const razonEl = document.getElementById('c-razon');
+  const dirEl = document.getElementById('c-direnvio');
+  const razon_social = razonEl ? (razonEl.value.trim() || null) : null;
+  const direccion_entrega = dirEl ? (dirEl.value.trim() || null) : null;
+
+  const payload = { nombre, cuit, codigo, razon_social, direccion_entrega };
   let savedId = clienteId;
   if (clienteId) {
     const { error } = await sb.from('clientes').update(payload).eq('id', clienteId);
@@ -13463,6 +13478,349 @@ window.onload = function() {
   w.document.open();
   w.document.write(html);
   w.document.close();
+}
+
+// =====================================================================
+// v70 Fase 6 - NOTA DE ENVÍO
+// =====================================================================
+
+// Datos fijos del emisor (no cambian). Si algún día hay que emitir notas
+// desde otra razón social, se editan estas constantes.
+const _NE_EMISOR = {
+  nombre: 'HÉCTOR ALBERTO VELASCO',
+  cuit: '20-17734543-2',
+  condicion: 'Responsable Inscripto'
+};
+// Prefijo fijo de la numeración. Solo incrementan los 8 dígitos de la derecha.
+const _NE_PREFIJO = '0002';
+
+// Estado del modal de nota de envío (se rearma cada vez que se abre).
+let _neState = { projId: null, items: [] };
+
+const _NE_MESES = ['enero','febrero','marzo','abril','mayo','junio','julio',
+  'agosto','septiembre','octubre','noviembre','diciembre'];
+
+// Formatea una fecha ISO (YYYY-MM-DD) a "21 de mayo de 2026".
+function _neFmtFechaLarga(iso) {
+  if (!iso) return '';
+  const p = iso.split('-');
+  if (p.length !== 3) return iso;
+  const d = parseInt(p[2], 10), m = parseInt(p[1], 10) - 1, y = p[0];
+  if (m < 0 || m > 11) return iso;
+  return d + ' de ' + _NE_MESES[m] + ' de ' + y;
+}
+
+// Formatea un CUIT de 11 dígitos a XX-XXXXXXXX-X. Si no son 11 dígitos
+// limpios, lo devuelve tal cual.
+function _neFmtCuit(cuit) {
+  const c = (cuit || '').replace(/\D/g, '');
+  if (c.length !== 11) return cuit || '';
+  return c.slice(0, 2) + '-' + c.slice(2, 10) + '-' + c.slice(10);
+}
+
+// Abre el modal de edición de la nota de envío para un proyecto.
+function showNotaEnvioModal(projId) {
+  const proj = getProject(projId) || proyectos.find(p => p.id === projId);
+  if (!proj) { toast('Proyecto no encontrado', true); return; }
+  const cliente = clientes.find(c => c.id === proj.cliente_id);
+  if (!cliente) { toast('El proyecto no tiene cliente asignado', true); return; }
+
+  // Items del proyecto, precargados. Se editan solo para la nota.
+  const itemsProj = items.filter(i => i.proyecto_id === projId);
+  _neState = {
+    projId: projId,
+    items: itemsProj.map(it => ({ cantidad: it.cantidad || 1, descripcion: it.descripcion || '' }))
+  };
+
+  // Contacto del proyecto (si tiene).
+  const contacto = proj.contacto_id ? clienteContactos.find(c => c.id === proj.contacto_id) : null;
+  const contactoNombre = contacto ? [contacto.nombre, contacto.apellido].filter(Boolean).join(' ') : '';
+
+  const hoy = new Date();
+  const hoyIso = hoy.getFullYear() + '-' +
+    String(hoy.getMonth() + 1).padStart(2, '0') + '-' +
+    String(hoy.getDate()).padStart(2, '0');
+
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'ne-modal';
+  const m = document.createElement('div'); m.className = 'md';
+  m.style.maxWidth = '620px'; m.style.maxHeight = '92vh'; m.style.overflowY = 'auto';
+
+  let h = '<div class="md-t">Nota de envío — ' + escapeHtml(clN(proj.cliente_id)) + '</div>';
+  h += '<div style="font-size:11px;color:#5F5E5A;margin-bottom:10px">Revisá los datos y los ítems. Lo que edites acá <b>solo afecta a la nota</b>, no modifica el proyecto.</div>';
+
+  // --- Datos del cliente (editables solo para la nota) ---
+  h += '<div class="section-t" style="margin-top:4px"><span>Datos del cliente</span></div>';
+  h += '<div class="ef"><div class="ef-l">Señores (nombre del cliente)</div>';
+  h += '<input type="text" class="ef-i" id="ne-nombre" value="' + escapeHtml(cliente.nombre || '') + '"></div>';
+  h += '<div class="ef"><div class="ef-l">Razón social</div>';
+  h += '<input type="text" class="ef-i" id="ne-razon" value="' + escapeHtml(cliente.razon_social || '') + '" placeholder="Cargala en Recursos > Clientes para tenerla por defecto"></div>';
+  h += '<div class="row">';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">CUIT</div>';
+  h += '<input type="text" class="ef-i" id="ne-cuit" value="' + escapeHtml(cliente.cuit || '') + '"></div>';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Contacto</div>';
+  h += '<input type="text" class="ef-i" id="ne-contacto" value="' + escapeHtml(contactoNombre) + '"></div></div>';
+  h += '<div class="ef"><div class="ef-l">Dirección de entrega</div>';
+  h += '<input type="text" class="ef-i" id="ne-direccion" value="' + escapeHtml(cliente.direccion_entrega || '') + '" placeholder="Cargala en Recursos > Clientes para tenerla por defecto"></div>';
+
+  // --- Fecha ---
+  h += '<div class="ef"><div class="ef-l">Fecha</div>';
+  h += '<input type="date" class="ef-i" id="ne-fecha" value="' + hoyIso + '" style="max-width:200px"></div>';
+
+  // --- Items ---
+  h += '<div class="section-t" style="margin-top:14px"><span>Ítems de la nota</span>';
+  h += '<button class="b b-p" type="button" onclick="_neAddItem()" style="font-size:11px;padding:3px 10px">+ Agregar ítem</button></div>';
+  h += '<div id="ne-items">' + _neRenderItemsList() + '</div>';
+
+  // --- Observaciones ---
+  h += '<div class="ef" style="margin-top:12px"><div class="ef-l">Observaciones</div>';
+  h += '<textarea class="ef-i" id="ne-obs" rows="2" placeholder="Texto opcional. Aparece arriba de la línea \'Corresponde a:\'"></textarea></div>';
+
+  // --- Corresponde a ---
+  h += '<div class="ef"><div class="ef-l">Corresponde a: Pedido</div>';
+  h += '<input type="text" class="ef-i" id="ne-pedido" value="' + escapeHtml(proj.pedido_nro || '') + '" placeholder="Nº de pedido" style="max-width:200px"></div>';
+
+  h += '<div class="actions" style="margin-top:14px">';
+  h += '<button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button>';
+  h += '<button class="b b-p" onclick="generarNotaEnvio()">🚚 Generar nota de envío</button></div>';
+
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
+}
+
+// HTML de la lista editable de ítems de la nota.
+function _neRenderItemsList() {
+  if (!_neState.items.length) {
+    return '<div style="font-size:12px;color:#888;font-style:italic;padding:10px;text-align:center;background:#FAFAF7;border-radius:4px">Sin ítems. Apretá "+ Agregar ítem".</div>';
+  }
+  // Encabezado de columnas
+  let h = '<div style="display:flex;gap:8px;align-items:center;padding:2px 4px;font-size:10px;font-weight:700;color:#5F5E5A;text-transform:uppercase;letter-spacing:0.5px">';
+  h += '<div style="width:70px;text-align:center">Cantidad</div>';
+  h += '<div style="flex:1">Descripción</div><div style="width:30px"></div></div>';
+  _neState.items.forEach((it, idx) => {
+    h += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:5px">';
+    h += '<input type="number" class="ef-i" min="0" step="1" value="' + escapeHtml(String(it.cantidad)) + '" data-ne-cant="' + idx + '" style="width:70px;text-align:center">';
+    h += '<input type="text" class="ef-i" value="' + escapeHtml(it.descripcion) + '" data-ne-desc="' + idx + '" style="flex:1" placeholder="Descripción del ítem">';
+    h += '<button class="b b-icon b-d" type="button" onclick="_neRemoveItem(' + idx + ')" title="Quitar" style="width:30px;padding:2px 0">✕</button>';
+    h += '</div>';
+  });
+  return h;
+}
+
+// Vuelca los valores de los inputs de la lista al estado (para no perder
+// ediciones al agregar/quitar filas).
+function _neSyncItems() {
+  document.querySelectorAll('[data-ne-cant]').forEach(el => {
+    const idx = parseInt(el.dataset.neCant, 10);
+    if (_neState.items[idx]) {
+      const n = parseInt(el.value, 10);
+      _neState.items[idx].cantidad = isNaN(n) ? 0 : n;
+    }
+  });
+  document.querySelectorAll('[data-ne-desc]').forEach(el => {
+    const idx = parseInt(el.dataset.neDesc, 10);
+    if (_neState.items[idx]) _neState.items[idx].descripcion = el.value;
+  });
+}
+
+function _neAddItem() {
+  _neSyncItems();
+  _neState.items.push({ cantidad: 1, descripcion: '' });
+  document.getElementById('ne-items').innerHTML = _neRenderItemsList();
+}
+
+function _neRemoveItem(idx) {
+  _neSyncItems();
+  _neState.items.splice(idx, 1);
+  document.getElementById('ne-items').innerHTML = _neRenderItemsList();
+}
+
+// Reserva el siguiente número de nota de envío incrementando el contador
+// en la DB. Devuelve el número formateado (ej. "0002-00000001") o null si
+// hubo error.
+async function _neReservarNumero() {
+  const { data: row, error: e1 } = await sb.from('contadores')
+    .select('valor').eq('clave', 'nota_envio').single();
+  if (e1 || !row) {
+    toast('No se pudo leer el contador de notas. ¿Ejecutaste el SQL de la Fase 6?', true);
+    return null;
+  }
+  const actual = row.valor || 0;
+  const nuevo = actual + 1;
+  // Update condicionado al valor leído: si otro generó una nota en el medio,
+  // no afecta filas y reintentamos una vez.
+  const { data: upd, error: e2 } = await sb.from('contadores')
+    .update({ valor: nuevo }).eq('clave', 'nota_envio').eq('valor', actual).select();
+  if (e2) { toast('Error al actualizar el contador: ' + e2.message, true); return null; }
+  if (!upd || !upd.length) {
+    // Reintento simple
+    const { data: row2 } = await sb.from('contadores')
+      .select('valor').eq('clave', 'nota_envio').single();
+    const actual2 = row2 ? (row2.valor || 0) : actual;
+    const nuevo2 = actual2 + 1;
+    const { data: upd2, error: e3 } = await sb.from('contadores')
+      .update({ valor: nuevo2 }).eq('clave', 'nota_envio').eq('valor', actual2).select();
+    if (e3 || !upd2 || !upd2.length) {
+      toast('No se pudo reservar el número de nota. Reintentá.', true);
+      return null;
+    }
+    return _NE_PREFIJO + '-' + String(nuevo2).padStart(8, '0');
+  }
+  return _NE_PREFIJO + '-' + String(nuevo).padStart(8, '0');
+}
+
+// Genera la nota de envío: reserva número, arma el HTML y lo abre en una
+// ventana nueva (igual que "Generar carpeta").
+async function generarNotaEnvio() {
+  _neSyncItems();
+  const proj = getProject(_neState.projId) || proyectos.find(p => p.id === _neState.projId);
+  if (!proj) { toast('Proyecto no encontrado', true); return; }
+
+  const getV = id => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
+  const nombre = getV('ne-nombre');
+  const razon = getV('ne-razon');
+  const cuit = getV('ne-cuit');
+  const contacto = getV('ne-contacto');
+  const direccion = getV('ne-direccion');
+  const fecha = getV('ne-fecha');
+  const obs = getV('ne-obs');
+  const pedido = getV('ne-pedido');
+
+  const itemsNota = _neState.items.filter(it => (it.descripcion || '').trim() !== '');
+  if (!itemsNota.length) { toast('Agregá al menos un ítem con descripción', true); return; }
+
+  const numero = await _neReservarNumero();
+  if (!numero) return;  // el toast de error ya se mostró
+
+  const html = _neBuildHtml({ numero, nombre, razon, cuit, contacto, direccion, fecha, obs, pedido, items: itemsNota });
+
+  const w = window.open('', '_blank');
+  if (!w) { toast('Permitir pop-ups para generar la nota de envío', true); return; }
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+
+  const modal = document.getElementById('ne-modal');
+  if (modal) modal.remove();
+  toast('Nota de envío ' + numero + ' generada');
+}
+
+// Arma el documento HTML completo de la nota de envío.
+function _neBuildHtml(d) {
+  const esc = escapeHtml;
+  let filas = '';
+  d.items.forEach(it => {
+    filas += '<tr><td class="ne-c">' + esc(String(it.cantidad)) + '</td><td class="ne-d">' + esc(it.descripcion) + '</td></tr>';
+  });
+
+  const obsBloque = d.obs
+    ? '<div class="ne-obs"><span class="ne-bold">Observaciones:</span> ' + esc(d.obs) + '</div>'
+    : '';
+
+  return `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
+<title>Nota de envío ${esc(d.numero)}</title>
+<style>
+@page { size: A4; margin: 12mm; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: Arial, Helvetica, sans-serif; font-size: 11px; color: #000; position: relative; }
+.ne-bold { font-weight: 700; }
+
+/* Marca de agua: isotipo centrado, opacidad baja, detrás del contenido */
+.ne-wm {
+  position: fixed; top: 50%; left: 50%;
+  width: 360px; height: 360px;
+  transform: translate(-50%, -50%);
+  background-image: url('${LOGO_SOLO_DATA_URL}');
+  background-size: contain; background-repeat: no-repeat; background-position: center;
+  opacity: 0.07; z-index: 0;
+}
+.ne-content { position: relative; z-index: 1; }
+
+/* Encabezado */
+.ne-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.ne-logo img { height: 66px; width: auto; }
+.ne-emisor { margin-top: 8px; font-size: 11px; line-height: 1.45; }
+.ne-emisor .ne-bold { font-size: 12px; }
+.ne-headright { text-align: right; }
+.ne-nofactura {
+  display: inline-block; border: 1px solid #000; border-radius: 4px;
+  padding: 5px 10px; font-size: 10px; margin-bottom: 8px;
+}
+.ne-titulo { font-size: 21px; font-weight: 800; line-height: 1.15; }
+.ne-numero { font-size: 23px; font-weight: 800; line-height: 1.15; }
+.ne-fecha { font-size: 12px; font-weight: 700; margin-top: 3px; }
+
+/* Recuadro de datos del cliente */
+.ne-cliente {
+  border: 1.6px solid #C0392B; border-radius: 9px;
+  padding: 8px 12px; margin-top: 14px; line-height: 1.5; font-size: 11px;
+}
+.ne-cliente .ne-grande { font-size: 12px; }
+
+/* Tabla de ítems */
+.ne-tabla-wrap { margin-top: 14px; min-height: 360px; }
+table.ne-tabla { width: 100%; border-collapse: collapse; }
+table.ne-tabla thead th {
+  border: 1.6px solid #C0392B; border-radius: 0;
+  padding: 4px 8px; font-size: 11px; font-weight: 700; text-align: left;
+}
+table.ne-tabla thead th.ne-th-cant { width: 90px; }
+table.ne-tabla tbody td { padding: 5px 8px; font-size: 11px; vertical-align: top; }
+table.ne-tabla tbody td.ne-c { text-align: center; width: 90px; }
+table.ne-tabla tbody td.ne-d { text-align: left; }
+
+/* Pie */
+.ne-obs { margin-top: 6px; font-size: 11px; line-height: 1.4; }
+.ne-corresponde { margin-top: 14px; font-size: 11px; }
+.ne-recibi { margin-top: 8px; font-size: 11px; }
+.ne-firma { margin-top: 30px; text-align: right; font-size: 11px; }
+.ne-firma-linea { display: inline-block; border-top: 1px dotted #000; width: 230px; }
+.ne-firma-label { margin-top: 2px; }
+</style></head><body>
+<div class="ne-wm"></div>
+<div class="ne-content">
+
+  <div class="ne-header">
+    <div>
+      <div class="ne-logo"><img src="${LOGO_DATA_URL}" alt="Velasco Metalúrgica"></div>
+      <div class="ne-emisor">
+        <div class="ne-bold">${esc(_NE_EMISOR.nombre)}</div>
+        <div>CUIT: ${esc(_NE_EMISOR.cuit)}</div>
+        <div>Condición fiscal: ${esc(_NE_EMISOR.condicion)}</div>
+      </div>
+    </div>
+    <div class="ne-headright">
+      <div class="ne-nofactura">Documento No Válido como Factura</div>
+      <div class="ne-titulo">NOTA DE ENVÍO Nº:</div>
+      <div class="ne-numero">${esc(d.numero)}</div>
+      <div class="ne-fecha">Fecha: ${esc(_neFmtFechaLarga(d.fecha))}</div>
+    </div>
+  </div>
+
+  <div class="ne-cliente">
+    <div class="ne-grande">Señores: <span class="ne-bold">${esc((d.nombre || '').toUpperCase())}</span></div>
+    ${d.razon ? '<div>Razón Social: ' + esc(d.razon) + '</div>' : ''}
+    ${d.cuit ? '<div>CUIT: ' + esc(_neFmtCuit(d.cuit)) + '</div>' : ''}
+    ${d.contacto ? '<div>Contacto: ' + esc(d.contacto) + '</div>' : ''}
+    ${d.direccion ? '<div><span class="ne-bold">Dirección de entrega</span>: <span class="ne-bold">' + esc(d.direccion) + '</span></div>' : ''}
+  </div>
+
+  <div class="ne-tabla-wrap">
+    <table class="ne-tabla">
+      <thead><tr><th class="ne-th-cant">Cantidad</th><th>Descripción</th></tr></thead>
+      <tbody>${filas}</tbody>
+    </table>
+  </div>
+
+  ${obsBloque}
+  <div class="ne-corresponde"><span class="ne-bold">Corresponde a:</span> Pedido ${esc(d.pedido || '')}</div>
+  <div class="ne-recibi">"Recibí conforme las mercaderías en las cantidades indicadas"<br>Fecha:</div>
+  <div class="ne-firma">
+    <div class="ne-firma-linea"></div>
+    <div class="ne-firma-label">Firma, Aclaración y DNI</div>
+  </div>
+
+</div>
+<script>setTimeout(function(){ window.print(); }, 400);<\/script>
+</body></html>`;
 }
 
 // Hardcoded checklist for "Despacho/Cierre" processes
