@@ -14002,19 +14002,32 @@ function _neBuildHtml(d) {
 <style>
 @page { size: A4; margin: 12mm; }
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: Arial, Helvetica, sans-serif; font-size: 11px; color: #000; position: relative; }
+html, body { height: 100%; }
+body {
+  font-family: Arial, Helvetica, sans-serif; font-size: 11px; color: #000;
+  position: relative;
+  -webkit-print-color-adjust: exact; print-color-adjust: exact;
+}
 .ne-bold { font-weight: 700; }
 
-/* Marca de agua: isotipo centrado, opacidad baja, detrás del contenido */
+/* Marca de agua: isotipo centrado. Va como <img> (no como background)
+   para que se imprima sí o sí, sin depender de "imprimir gráficos de fondo". */
 .ne-wm {
   position: fixed; top: 50%; left: 50%;
-  width: 360px; height: 360px;
+  width: 360px; height: auto;
   transform: translate(-50%, -50%);
-  background-image: url('${LOGO_SOLO_DATA_URL}');
-  background-size: contain; background-repeat: no-repeat; background-position: center;
-  opacity: 0.07; z-index: 0;
+  opacity: 0.08; z-index: 0;
 }
-.ne-content { position: relative; z-index: 1; }
+
+/* Contenedor de altura de página completa: el cuerpo crece y empuja el
+   pie al fondo de la hoja. Todo el espacio sobre el pie es para los ítems. */
+.ne-content {
+  position: relative; z-index: 1;
+  min-height: 268mm;
+  display: flex; flex-direction: column;
+}
+.ne-body { flex: 1 1 auto; }
+.ne-footer { flex: 0 0 auto; }
 
 /* Encabezado */
 .ne-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
@@ -14030,74 +14043,79 @@ body { font-family: Arial, Helvetica, sans-serif; font-size: 11px; color: #000; 
 .ne-numero { font-size: 23px; font-weight: 800; line-height: 1.15; }
 .ne-fecha { font-size: 12px; font-weight: 700; margin-top: 3px; }
 
-/* Recuadro de datos del cliente */
+/* Recuadro de datos del cliente (borde rojo 80% más grueso: 1.6 -> 2.9px) */
 .ne-cliente {
-  border: 1.6px solid #C0392B; border-radius: 9px;
+  border: 2.9px solid #C0392B; border-radius: 9px;
   padding: 8px 12px; margin-top: 14px; line-height: 1.5; font-size: 11px;
 }
 .ne-cliente .ne-grande { font-size: 12px; }
 
-/* Tabla de ítems */
-.ne-tabla-wrap { margin-top: 14px; min-height: 360px; }
-table.ne-tabla { width: 100%; border-collapse: collapse; }
-table.ne-tabla thead th {
-  border: 1.6px solid #C0392B;
-  padding: 4px 8px; font-size: 11px; font-weight: 700; text-align: left;
+/* Encabezado de la tabla: recuadro redondeado, mismo estilo que el del
+   cliente. La tabla de ítems va debajo, sin bordes. */
+.ne-thead {
+  display: flex; margin-top: 14px;
+  border: 2.9px solid #C0392B; border-radius: 9px;
+  font-size: 11px; font-weight: 700;
 }
-table.ne-tabla thead th.ne-th-cant { width: 90px; }
-table.ne-tabla tbody td { padding: 5px 8px; font-size: 11px; vertical-align: top; }
-table.ne-tabla tbody td.ne-c { text-align: center; width: 90px; }
-table.ne-tabla tbody td.ne-d { text-align: left; }
+.ne-thead-cant { width: 90px; padding: 4px 8px; }
+.ne-thead-desc { flex: 1; padding: 4px 8px; border-left: 2.9px solid #C0392B; }
+table.ne-tabla { width: 100%; border-collapse: collapse; margin-top: 4px; }
+table.ne-tabla td { padding: 5px 8px; font-size: 11px; vertical-align: top; }
+table.ne-tabla td.ne-c { text-align: center; width: 90px; }
+table.ne-tabla td.ne-d { text-align: left; }
 
-/* Pie */
-.ne-obs { margin-top: 6px; font-size: 11px; line-height: 1.4; }
-.ne-corresponde { margin-top: 14px; font-size: 11px; }
+/* Pie (siempre al fondo de la hoja) */
+.ne-obs { margin-bottom: 6px; font-size: 11px; line-height: 1.4; }
+.ne-corresponde { font-size: 11px; }
 .ne-recibi { margin-top: 8px; font-size: 11px; }
-.ne-firma { margin-top: 30px; text-align: right; font-size: 11px; }
+.ne-firma { margin-top: 26px; text-align: right; font-size: 11px; }
 .ne-firma-linea { display: inline-block; border-top: 1px dotted #000; width: 230px; }
 .ne-firma-label { margin-top: 2px; }
 </style></head><body>
-<div class="ne-wm"></div>
+<img class="ne-wm" src="${LOGO_SOLO_DATA_URL}" alt="">
 <div class="ne-content">
 
-  <div class="ne-header">
-    <div>
-      <div class="ne-logo"><img src="${LOGO_DATA_URL}" alt="Velasco Metalúrgica"></div>
-      <div class="ne-emisor">
-        <div class="ne-bold">${esc(_NE_EMISOR.nombre)}</div>
-        <div>CUIT: ${esc(_NE_EMISOR.cuit)}</div>
-        <div>Condición fiscal: ${esc(_NE_EMISOR.condicion)}</div>
+  <div class="ne-body">
+    <div class="ne-header">
+      <div>
+        <div class="ne-logo"><img src="${LOGO_DATA_URL}" alt="Velasco Metalúrgica"></div>
+        <div class="ne-emisor">
+          <div class="ne-bold">${esc(_NE_EMISOR.nombre)}</div>
+          <div>CUIT: ${esc(_NE_EMISOR.cuit)}</div>
+          <div>Condición fiscal: ${esc(_NE_EMISOR.condicion)}</div>
+        </div>
+      </div>
+      <div class="ne-headright">
+        <div class="ne-nofactura">Documento No Válido como Factura</div>
+        <div class="ne-titulo">NOTA DE ENVÍO Nº:</div>
+        <div class="ne-numero">${esc(d.numero)}</div>
+        <div class="ne-fecha">Fecha: ${esc(_neFmtFechaLarga(d.fecha))}</div>
       </div>
     </div>
-    <div class="ne-headright">
-      <div class="ne-nofactura">Documento No Válido como Factura</div>
-      <div class="ne-titulo">NOTA DE ENVÍO Nº:</div>
-      <div class="ne-numero">${esc(d.numero)}</div>
-      <div class="ne-fecha">Fecha: ${esc(_neFmtFechaLarga(d.fecha))}</div>
+
+    <div class="ne-cliente">
+      <div class="ne-grande">Señores: <span class="ne-bold">${esc((d.nombre || '').toUpperCase())}</span></div>
+      ${d.razon ? '<div>Razón Social: ' + esc(d.razon) + '</div>' : ''}
+      ${d.cuit ? '<div>CUIT: ' + esc(_neFmtCuit(d.cuit)) + '</div>' : ''}
+      ${d.contacto ? '<div>Contacto: ' + esc(d.contacto) + '</div>' : ''}
+      ${d.direccion ? '<div><span class="ne-bold">Dirección de entrega</span>: <span class="ne-bold">' + esc(d.direccion) + '</span></div>' : ''}
     </div>
+
+    <div class="ne-thead">
+      <div class="ne-thead-cant">Cantidad</div>
+      <div class="ne-thead-desc">Descripción</div>
+    </div>
+    <table class="ne-tabla"><tbody>${filas}</tbody></table>
   </div>
 
-  <div class="ne-cliente">
-    <div class="ne-grande">Señores: <span class="ne-bold">${esc((d.nombre || '').toUpperCase())}</span></div>
-    ${d.razon ? '<div>Razón Social: ' + esc(d.razon) + '</div>' : ''}
-    ${d.cuit ? '<div>CUIT: ' + esc(_neFmtCuit(d.cuit)) + '</div>' : ''}
-    ${d.contacto ? '<div>Contacto: ' + esc(d.contacto) + '</div>' : ''}
-    ${d.direccion ? '<div><span class="ne-bold">Dirección de entrega</span>: <span class="ne-bold">' + esc(d.direccion) + '</span></div>' : ''}
-  </div>
-
-  <div class="ne-tabla-wrap">
-    <table class="ne-tabla">
-      <thead><tr><th class="ne-th-cant">Cantidad</th><th>Descripción</th></tr></thead>
-      <tbody>${filas}</tbody>
-    </table>
-  </div>
-
-  ${obsBloque}
-  <div class="ne-corresponde"><span class="ne-bold">Corresponde a:</span> Pedido ${esc(d.pedido || '')}</div>
-  <div class="ne-recibi">"Recibí conforme las mercaderías en las cantidades indicadas"<br>Fecha:</div>
-  <div class="ne-firma">
-    <div class="ne-firma-linea"></div>
-    <div class="ne-firma-label">Firma, Aclaración y DNI</div>
+  <div class="ne-footer">
+    ${obsBloque}
+    <div class="ne-corresponde"><span class="ne-bold">Corresponde a:</span> Pedido ${esc(d.pedido || '')}</div>
+    <div class="ne-recibi">"Recibí conforme las mercaderías en las cantidades indicadas"<br>Fecha:</div>
+    <div class="ne-firma">
+      <div class="ne-firma-linea"></div>
+      <div class="ne-firma-label">Firma, Aclaración y DNI</div>
+    </div>
   </div>
 
 </div>
