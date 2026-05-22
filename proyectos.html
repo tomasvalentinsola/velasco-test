@@ -2564,6 +2564,17 @@ async function _crearItemDesdeBuffer(item, proj, projDesc, urgencia, projFoto, f
   if (item.fromMatriz) {
     itemPayload.imported_from_matriz_id = item.fromMatriz.productoId;
   }
+  // v70 Fase 6: persistir la agrupación. Si el item vino como parte de un
+  // conjunto/subconjunto, guardamos las columnas de grupo para que la vista
+  // del proyecto lo muestre agrupado igual que en "Crear proyecto".
+  if (item.groupKey) {
+    itemPayload.grupo_uid = item.groupKey;
+    if (item.grupoMeta) {
+      itemPayload.grupo_etiqueta = item.grupoMeta.etiqueta || null;
+      itemPayload.grupo_cantidad = item.grupoMeta.cantidad || 1;
+      itemPayload.grupo_matriz_conjunto_id = item.grupoMeta.conjuntoId || null;
+    }
+  }
   const { data: newItem, error: itemErr } = await sb.from('items').insert(itemPayload).select().single();
   if (itemErr) { console.error('Error creando item:', itemErr); return { error: itemErr.message }; }
 
@@ -4846,7 +4857,7 @@ function _afmNextGroupKey() { _afmGroupKeyCounter++; return 'g' + Date.now() + '
 
 // Helper: crea el objeto de item para el buffer a partir de un producto matriz.
 // Aplica ignorarValidaciones a procesos (blanquea operario/maquina inactivos).
-function _crearItemBufferDesdeProducto(prodId, cant, fechaFin, estado, force, fromGrupoLabel, fromSubconjuntoLabel, groupKey) {
+function _crearItemBufferDesdeProducto(prodId, cant, fechaFin, estado, force, fromGrupoLabel, fromSubconjuntoLabel, groupKey, grupoMeta) {
   const prod = productosMatriz.find(p => p.id === prodId);
   if (!prod) return null;
   const ubics = productosMatrizUbicaciones.filter(u => u.producto_id === prodId);
@@ -4890,8 +4901,12 @@ function _crearItemBufferDesdeProducto(prodId, cant, fechaFin, estado, force, fr
       ignorarValidaciones: !!force
     },
     fromGrupo: fromGrupoLabel,
+    fromSubconjuntoLabel: fromSubconjuntoLabel,
     fromSubconjunto: fromSubconjuntoLabel,
-    groupKey: groupKey
+    groupKey: groupKey,
+    // v70 Fase 6: datos del grupo para persistir la agrupación al crear
+    // el proyecto (conjunto de la matriz, su etiqueta y cantidad).
+    grupoMeta: grupoMeta || null
   };
 }
 
@@ -4902,35 +4917,30 @@ function _seleccionarGrupoParaNewProject(opts, expansion, fechaFin, estado, forc
   const labelTipo = opts.tipo === 'conjunto' ? 'Conjunto' : 'Subconjunto';
   const groupKey = _afmNextGroupKey();
   const fromGrupoLabel = labelTipo + ': ' + opts.nombreGrupo;
+  // v70 Fase 6: datos del grupo que se persistirán en cada item al crear el
+  // proyecto, para que la vista del proyecto lo muestre agrupado igual que acá.
+  const grupoMeta = {
+    conjuntoId: opts.grupoId || null,
+    etiqueta: opts.nombreGrupo || labelTipo,
+    cantidad: opts.multiplicador || 1
+  };
   let cantItems = 0;
 
   if (opts.tipo === 'subconjunto') {
-    // Subconjunto: todos sus productos son hojas, sin nivel intermedio.
-    // _expandirSubconjunto sigue siendo aplanado (no necesita jerarquía interna).
     const subExp = _expandirSubconjunto(opts.grupoId, 1);  // cantidad ya multiplicada en el modal
-    // En realidad, expansion ya viene multiplicada (de _confirmarImportGrupal con la cantidad).
-    // Pero como ese flujo va a opts.multiplicador * cant_base, usamos expansion.productos.
     expansion.productos.forEach(({ prodId, cant }) => {
-      const it = _crearItemBufferDesdeProducto(prodId, cant, fechaFin, estado, force, fromGrupoLabel, null, groupKey);
+      const it = _crearItemBufferDesdeProducto(prodId, cant, fechaFin, estado, force, fromGrupoLabel, null, groupKey, grupoMeta);
       if (it) {
         newProjectItemsBuffer.push(it);
         cantItems++;
       }
     });
   } else {
-    // Conjunto: usar versión JERÁRQUICA para preservar subconjuntos.
-    // El multiplicador externo es la cantidad de conjuntos elegida por el usuario.
-    // expansion ya viene calculada con ese multiplicador. Replico el cálculo aquí.
-    // El multiplicador efectivo es expansion.productos[0].cant / cant_base_producto;
-    // pero más simple: recalculamos llamando _expandirConjuntoJerarquico con
-    // el mismo multiplicador que usó _confirmarImportGrupal.
-    // Como _confirmarImportGrupal pasa `cant` como el number del input, lo
-    // recuperamos del valor original; o, mejor, lo pasamos como opts.multiplicador.
     const mult = opts.multiplicador || 1;
     const exp = _expandirConjuntoJerarquico(opts.grupoId, mult);
     // Productos directos del conjunto (sin subconjunto)
     exp.productosDirectos.forEach(({ prodId, cant }) => {
-      const it = _crearItemBufferDesdeProducto(prodId, cant, fechaFin, estado, force, fromGrupoLabel, null, groupKey);
+      const it = _crearItemBufferDesdeProducto(prodId, cant, fechaFin, estado, force, fromGrupoLabel, null, groupKey, grupoMeta);
       if (it) {
         newProjectItemsBuffer.push(it);
         cantItems++;
@@ -4940,7 +4950,7 @@ function _seleccionarGrupoParaNewProject(opts, expansion, fechaFin, estado, forc
     exp.subconjuntos.forEach(s => {
       const fromSubLabel = 'Subconjunto: ' + s.subNombre;
       s.productos.forEach(({ prodId, cant }) => {
-        const it = _crearItemBufferDesdeProducto(prodId, cant, fechaFin, estado, force, fromGrupoLabel, fromSubLabel, groupKey);
+        const it = _crearItemBufferDesdeProducto(prodId, cant, fechaFin, estado, force, fromGrupoLabel, fromSubLabel, groupKey, grupoMeta);
         if (it) {
           newProjectItemsBuffer.push(it);
           cantItems++;
@@ -13561,7 +13571,25 @@ function showNotaEnvioModal(projId) {
   const cliente = clientes.find(c => c.id === proj.cliente_id);
   if (!cliente) { toast('El proyecto no tiene cliente asignado', true); return; }
 
+  // Items del proyecto, precargados. Se editan solo para la nota.
+  // v70 Fase 6: respetamos la agrupación — un conjunto/subconjunto entra como
+  // UNA línea (su etiqueta y cantidad), no como sus productos desglosados.
   const itemsProj = items.filter(i => i.proyecto_id === projId);
+  const lineasNota = [];
+  const gruposVistos = new Set();
+  itemsProj.forEach(it => {
+    if (it.grupo_uid) {
+      if (!gruposVistos.has(it.grupo_uid)) {
+        gruposVistos.add(it.grupo_uid);
+        lineasNota.push({
+          cantidad: it.grupo_cantidad || 1,
+          descripcion: it.grupo_etiqueta || 'Conjunto'
+        });
+      }
+    } else {
+      lineasNota.push({ cantidad: it.cantidad || 1, descripcion: it.descripcion || '' });
+    }
+  });
   const contacto = proj.contacto_id ? clienteContactos.find(c => c.id === proj.contacto_id) : null;
   const contactoNombre = contacto ? [contacto.nombre, contacto.apellido].filter(Boolean).join(' ') : '';
 
@@ -13578,7 +13606,7 @@ function showNotaEnvioModal(projId) {
       contacto: contactoNombre, direccion: cliente.direccion_entrega || '',
       fecha: hoyIso, observaciones: '', pedido: proj.pedido_nro || ''
     },
-    items: itemsProj.map(it => ({ cantidad: it.cantidad || 1, descripcion: it.descripcion || '' }))
+    items: lineasNota
   });
 }
 
@@ -14077,45 +14105,45 @@ body {
 
 /* Encabezado */
 .ne-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-.ne-logo img { height: 66px; width: auto; }
-.ne-emisor { margin-top: 8px; font-size: 11px; line-height: 1.45; }
-.ne-emisor .ne-bold { font-size: 12px; }
+.ne-logo img { height: 72px; width: auto; }
+.ne-emisor { margin-top: 8px; font-size: 14px; line-height: 1.45; }
+.ne-emisor .ne-bold { font-size: 16px; }
 .ne-headright { text-align: right; }
 .ne-nofactura {
   display: inline-block; border: 1px solid #000; border-radius: 4px;
-  padding: 5px 10px; font-size: 10px; margin-bottom: 8px;
+  padding: 5px 10px; font-size: 13px; margin-bottom: 8px;
 }
-.ne-titulo { font-size: 21px; font-weight: 800; line-height: 1.15; }
-.ne-numero { font-size: 23px; font-weight: 800; line-height: 1.15; }
-.ne-fecha { font-size: 12px; font-weight: 700; margin-top: 3px; }
+.ne-titulo { font-size: 27px; font-weight: 800; line-height: 1.15; }
+.ne-numero { font-size: 30px; font-weight: 800; line-height: 1.15; }
+.ne-fecha { font-size: 16px; font-weight: 700; margin-top: 3px; }
 
 /* Recuadro de datos del cliente (borde rojo 80% más grueso: 1.6 -> 2.9px) */
 .ne-cliente {
   border: 2.9px solid #C0392B; border-radius: 9px;
-  padding: 8px 12px; margin-top: 14px; line-height: 1.5; font-size: 11px;
+  padding: 8px 12px; margin-top: 14px; line-height: 1.5; font-size: 14px;
 }
-.ne-cliente .ne-grande { font-size: 12px; }
+.ne-cliente .ne-grande { font-size: 16px; }
 
 /* Encabezado de la tabla: recuadro redondeado, mismo estilo que el del
    cliente. La tabla de ítems va debajo, sin bordes. */
 .ne-thead {
   display: flex; margin-top: 14px;
   border: 2.9px solid #C0392B; border-radius: 9px;
-  font-size: 11px; font-weight: 700;
+  font-size: 14px; font-weight: 700;
 }
-.ne-thead-cant { width: 90px; padding: 4px 8px; }
-.ne-thead-desc { flex: 1; padding: 4px 8px; border-left: 2.9px solid #C0392B; }
+.ne-thead-cant { width: 100px; padding: 5px 9px; }
+.ne-thead-desc { flex: 1; padding: 5px 9px; border-left: 2.9px solid #C0392B; }
 table.ne-tabla { width: 100%; border-collapse: collapse; margin-top: 4px; }
-table.ne-tabla td { padding: 5px 8px; font-size: 11px; vertical-align: top; }
-table.ne-tabla td.ne-c { text-align: center; width: 90px; }
+table.ne-tabla td { padding: 6px 9px; font-size: 14px; vertical-align: top; }
+table.ne-tabla td.ne-c { text-align: center; width: 100px; }
 table.ne-tabla td.ne-d { text-align: left; }
 
 /* Pie (siempre al fondo de la hoja) */
-.ne-obs { margin-bottom: 6px; font-size: 11px; line-height: 1.4; }
-.ne-corresponde { font-size: 11px; }
-.ne-recibi { margin-top: 8px; font-size: 11px; }
-.ne-firma { margin-top: 26px; text-align: right; font-size: 11px; }
-.ne-firma-box { display: inline-block; width: 230px; }
+.ne-obs { margin-bottom: 6px; font-size: 14px; line-height: 1.4; }
+.ne-corresponde { font-size: 14px; }
+.ne-recibi { margin-top: 8px; font-size: 14px; }
+.ne-firma { margin-top: 26px; text-align: right; font-size: 14px; }
+.ne-firma-box { display: inline-block; width: 250px; }
 .ne-firma-linea { border-top: 1px dotted #000; width: 100%; }
 .ne-firma-label { margin-top: 2px; text-align: center; }
 </style></head><body>
@@ -14182,16 +14210,32 @@ const _DOCX_CDN = 'https://cdn.jsdelivr.net/npm/docx@9.6.1/dist/index.umd.cjs';
 let _docxLibPromise = null;
 
 // Carga la librería docx bajo demanda (solo la primera vez que se usa).
+// El CDN sirve el archivo .cjs con un MIME que el navegador rechaza para
+// <script src>, así que lo bajamos con fetch (que no valida MIME) y lo
+// reinyectamos como un Blob con el MIME correcto.
 function _cargarDocxLib() {
   if (window.docx) return Promise.resolve(window.docx);
   if (_docxLibPromise) return _docxLibPromise;
-  _docxLibPromise = new Promise((resolve, reject) => {
-    const s = document.createElement('script');
-    s.src = _DOCX_CDN;
-    s.onload = () => { window.docx ? resolve(window.docx) : reject(new Error('La librería docx no se inicializó')); };
-    s.onerror = () => { _docxLibPromise = null; reject(new Error('No se pudo descargar la librería para Word. Revisá la conexión.')); };
-    document.head.appendChild(s);
-  });
+  _docxLibPromise = fetch(_DOCX_CDN)
+    .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+    .then(code => new Promise((resolve, reject) => {
+      try {
+        const blob = new Blob([code], { type: 'text/javascript' });
+        const url = URL.createObjectURL(blob);
+        const s = document.createElement('script');
+        s.src = url;
+        s.onload = () => {
+          URL.revokeObjectURL(url);
+          window.docx ? resolve(window.docx) : reject(new Error('la librería no se inicializó'));
+        };
+        s.onerror = () => { URL.revokeObjectURL(url); reject(new Error('la librería no se pudo ejecutar')); };
+        document.head.appendChild(s);
+      } catch (e) { reject(e); }
+    }))
+    .catch(e => {
+      _docxLibPromise = null;
+      throw new Error('No se pudo cargar la librería para Word: ' + (e.message || e));
+    });
   return _docxLibPromise;
 }
 
@@ -14262,25 +14306,25 @@ function _neBuildDocx(docx, d) {
     rows: [ new TableRow({ children: [
       new TableCell({ width: { size: 55, type: WidthType.PERCENTAGE }, borders: sinBordes, children: [
         par(logoImg),
-        par(txt(_NE_EMISOR.nombre, { bold: true, size: 22 })),
-        par(txt('CUIT: ' + _NE_EMISOR.cuit, { size: 20 })),
-        par(txt('Condición fiscal: ' + _NE_EMISOR.condicion, { size: 20 }))
+        par(txt(_NE_EMISOR.nombre, { bold: true, size: 29 })),
+        par(txt('CUIT: ' + _NE_EMISOR.cuit, { size: 26 })),
+        par(txt('Condición fiscal: ' + _NE_EMISOR.condicion, { size: 26 }))
       ]}),
       new TableCell({ width: { size: 45, type: WidthType.PERCENTAGE }, borders: sinBordes, children: [
-        par(txt('Documento No Válido como Factura', { size: 16 }), { alignment: AlignmentType.RIGHT }),
-        par(txt('NOTA DE ENVÍO Nº:', { bold: true, size: 30 }), { alignment: AlignmentType.RIGHT }),
-        par(txt(esc(d.numero), { bold: true, size: 34 }), { alignment: AlignmentType.RIGHT }),
-        par(txt('Fecha: ' + esc(d.fecha), { bold: true, size: 22 }), { alignment: AlignmentType.RIGHT })
+        par(txt('Documento No Válido como Factura', { size: 21 }), { alignment: AlignmentType.RIGHT }),
+        par(txt('NOTA DE ENVÍO Nº:', { bold: true, size: 39 }), { alignment: AlignmentType.RIGHT }),
+        par(txt(esc(d.numero), { bold: true, size: 44 }), { alignment: AlignmentType.RIGHT }),
+        par(txt('Fecha: ' + esc(d.fecha), { bold: true, size: 29 }), { alignment: AlignmentType.RIGHT })
       ]})
     ]})]
   });
 
   // Recuadro de datos del cliente
-  const cl = [ par([txt('Señores: ', { size: 22 }), txt(esc(d.nombre).toUpperCase(), { bold: true, size: 22 })]) ];
-  if (d.razon) cl.push(par(txt('Razón Social: ' + esc(d.razon), { size: 22 })));
-  if (d.cuit) cl.push(par(txt('CUIT: ' + esc(_neFmtCuit(d.cuit)), { size: 22 })));
-  if (d.contacto) cl.push(par(txt('Contacto: ' + esc(d.contacto), { size: 22 })));
-  if (d.direccion) cl.push(par([txt('Dirección de entrega: ', { bold: true, size: 22 }), txt(esc(d.direccion), { bold: true, size: 22 })]));
+  const cl = [ par([txt('Señores: ', { size: 29 }), txt(esc(d.nombre).toUpperCase(), { bold: true, size: 29 })]) ];
+  if (d.razon) cl.push(par(txt('Razón Social: ' + esc(d.razon), { size: 29 })));
+  if (d.cuit) cl.push(par(txt('CUIT: ' + esc(_neFmtCuit(d.cuit)), { size: 29 })));
+  if (d.contacto) cl.push(par(txt('Contacto: ' + esc(d.contacto), { size: 29 })));
+  if (d.direccion) cl.push(par([txt('Dirección de entrega: ', { bold: true, size: 29 }), txt(esc(d.direccion), { bold: true, size: 29 })]));
   const clienteTable = new Table({
     width: { size: 100, type: WidthType.PERCENTAGE },
     rows: [ new TableRow({ children: [ new TableCell({
@@ -14292,17 +14336,17 @@ function _neBuildDocx(docx, d) {
   const itemRows = [ new TableRow({ tableHeader: true, children: [
     new TableCell({ width: { size: 20, type: WidthType.PERCENTAGE }, borders: cuatroRojo(18),
       margins: { top: 50, bottom: 50, left: 100, right: 100 },
-      children: [par(txt('Cantidad', { bold: true, size: 22 }))] }),
+      children: [par(txt('Cantidad', { bold: true, size: 29 }))] }),
     new TableCell({ width: { size: 80, type: WidthType.PERCENTAGE }, borders: cuatroRojo(18),
       margins: { top: 50, bottom: 50, left: 100, right: 100 },
-      children: [par(txt('Descripción', { bold: true, size: 22 }))] })
+      children: [par(txt('Descripción', { bold: true, size: 29 }))] })
   ]})];
   (d.items || []).forEach(it => {
     itemRows.push(new TableRow({ children: [
       new TableCell({ borders: sinBordes, margins: { top: 40, bottom: 40, left: 100, right: 100 },
-        children: [par(txt(String(it.cantidad), { size: 22 }), { alignment: AlignmentType.CENTER })] }),
+        children: [par(txt(String(it.cantidad), { size: 29 }), { alignment: AlignmentType.CENTER })] }),
       new TableCell({ borders: sinBordes, margins: { top: 40, bottom: 40, left: 100, right: 100 },
-        children: [par(txt(esc(it.descripcion), { size: 22 }))] })
+        children: [par(txt(esc(it.descripcion), { size: 29 }))] })
     ]}));
   });
   const itemsTable = new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, borders: sinBordes, rows: itemRows });
@@ -14315,12 +14359,12 @@ function _neBuildDocx(docx, d) {
     itemsTable,
     par(txt(''), { spacing: { after: 240 } })
   ];
-  if (d.obs) cuerpo.push(par([txt('Observaciones: ', { bold: true, size: 22 }), txt(esc(d.obs), { size: 22 })]));
-  cuerpo.push(par([txt('Corresponde a: ', { bold: true, size: 22 }), txt('Pedido ' + esc(d.pedido), { size: 22 })]));
-  cuerpo.push(par(txt('"Recibí conforme las mercaderías en las cantidades indicadas"', { size: 22 })));
-  cuerpo.push(par(txt('Fecha:', { size: 22 })));
-  cuerpo.push(par(txt('.......................................', { size: 22 }), { alignment: AlignmentType.RIGHT, spacing: { before: 700 } }));
-  cuerpo.push(par(txt('Firma, Aclaración y DNI', { size: 22 }), { alignment: AlignmentType.RIGHT }));
+  if (d.obs) cuerpo.push(par([txt('Observaciones: ', { bold: true, size: 29 }), txt(esc(d.obs), { size: 29 })]));
+  cuerpo.push(par([txt('Corresponde a: ', { bold: true, size: 29 }), txt('Pedido ' + esc(d.pedido), { size: 29 })]));
+  cuerpo.push(par(txt('"Recibí conforme las mercaderías en las cantidades indicadas"', { size: 29 })));
+  cuerpo.push(par(txt('Fecha:', { size: 29 })));
+  cuerpo.push(par(txt('.......................................', { size: 29 }), { alignment: AlignmentType.RIGHT, spacing: { before: 700 } }));
+  cuerpo.push(par(txt('Firma, Aclaración y DNI', { size: 29 }), { alignment: AlignmentType.RIGHT }));
 
   return new Document({ sections: [{ properties: {}, children: cuerpo }] });
 }
@@ -14490,45 +14534,58 @@ function _etqBuildHtml(d) {
   return `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
 <title>Etiqueta de envío</title>
 <style>
-@page { size: A4; margin: 14mm; }
+@page { size: A4; margin: 0; }
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body {
+html, body {
   font-family: Arial, Helvetica, sans-serif; color: #000;
   -webkit-print-color-adjust: exact; print-color-adjust: exact;
 }
-.etq-logo { text-align: center; margin-bottom: 6px; }
-.etq-logo img { height: 70px; width: auto; }
+/* La etiqueta ocupa la mitad superior de una hoja A4 (297mm / 2). */
+.etq-hoja {
+  width: 210mm; height: 148.5mm;
+  padding: 13mm 14mm;
+  display: flex; flex-direction: column;
+}
+.etq-logo { text-align: center; margin-bottom: 8px; flex: 0 0 auto; }
+.etq-logo img { height: 78px; width: auto; }
 
+/* Caja de datos: crece para llenar la media hoja. */
 .etq-caja {
   border: 2.6px solid #000;
-  padding: 16px 20px;
+  padding: 14px 22px;
+  flex: 1 1 auto;
+  display: flex; flex-direction: column; justify-content: space-around;
 }
-.etq-linea { font-size: 19px; margin: 9px 0; line-height: 1.3; }
+.etq-linea { font-size: 20px; line-height: 1.3; }
 .etq-linea .etq-lbl { font-weight: 700; }
 
+/* Caja de documentos: altura natural, al pie de la etiqueta. */
 .etq-caja-doc {
   border: 2.6px solid #000; border-top: none;
-  padding: 9px 20px;
+  padding: 10px 22px;
+  flex: 0 0 auto;
 }
 .etq-doc { font-size: 13px; margin: 4px 0; line-height: 1.35; }
 .etq-doc .etq-lbl { font-weight: 700; }
-.etq-doc-row { display: flex; gap: 24px; flex-wrap: wrap; }
+.etq-doc-row { display: flex; gap: 28px; flex-wrap: wrap; }
 </style></head><body>
 
-<div class="etq-logo"><img src="${LOGO_DATA_URL}" alt="Velasco Metalúrgica"></div>
+<div class="etq-hoja">
+  <div class="etq-logo"><img src="${LOGO_DATA_URL}" alt="Velasco Metalúrgica"></div>
 
-<div class="etq-caja">
-  <div class="etq-linea"><span class="etq-lbl">DESTINATARIO</span>: ${esc(d.destinatario)}</div>
-  <div class="etq-linea"><span class="etq-lbl">DIRECCIÓN</span>: ${esc(d.direccion)}</div>
-  <div class="etq-linea"><span class="etq-lbl">CÓDIGO POSTAL</span>: ${esc(d.cp)}</div>
-  <div class="etq-linea"><span class="etq-lbl">TELÉFONO</span>: ${esc(d.telefono)}</div>
-</div>
+  <div class="etq-caja">
+    <div class="etq-linea"><span class="etq-lbl">DESTINATARIO</span>: ${esc(d.destinatario)}</div>
+    <div class="etq-linea"><span class="etq-lbl">DIRECCIÓN</span>: ${esc(d.direccion)}</div>
+    <div class="etq-linea"><span class="etq-lbl">CÓDIGO POSTAL</span>: ${esc(d.cp)}</div>
+    <div class="etq-linea"><span class="etq-lbl">TELÉFONO</span>: ${esc(d.telefono)}</div>
+  </div>
 
-<div class="etq-caja-doc">
-  <div class="etq-doc"><span class="etq-lbl">ORDEN DE COMPRA</span>: ${lista(d.ordenes)}</div>
-  <div class="etq-doc-row">
-    <div class="etq-doc"><span class="etq-lbl">REMITO</span>: ${lista(d.remitos)}</div>
-    <div class="etq-doc"><span class="etq-lbl">NOTA DE ENVÍO</span>: ${lista(d.notas)}</div>
+  <div class="etq-caja-doc">
+    <div class="etq-doc"><span class="etq-lbl">ORDEN DE COMPRA</span>: ${lista(d.ordenes)}</div>
+    <div class="etq-doc-row">
+      <div class="etq-doc"><span class="etq-lbl">REMITO</span>: ${lista(d.remitos)}</div>
+      <div class="etq-doc"><span class="etq-lbl">NOTA DE ENVÍO</span>: ${lista(d.notas)}</div>
+    </div>
   </div>
 </div>
 
