@@ -2772,6 +2772,7 @@ function renderProjectDetail() {
     h += '<div style="display:flex;gap:10px;align-items:center;padding:4px 12px;font-size:10px;font-weight:700;color:#5F5E5A;text-transform:uppercase;letter-spacing:0.5px">';
     h += '<div style="width:32px;text-align:center">Nº</div>';
     h += '<div style="width:48px;text-align:center">Cant.</div>';
+    h += '<div style="width:56px;text-align:center">Remitida</div>';
     h += '<div style="width:42px"></div>';  // photo column spacer
     h += '<div style="flex:1">Item</div>';
     h += '</div>';
@@ -2779,10 +2780,21 @@ function renderProjectDetail() {
   if (proj.items.length === 0) {
     h += '<div class="list-empty" style="padding:20px">Aun no hay items cargados.</div>';
   } else {
+    // v70 Fase 6: cuánto se remitió de cada item/conjunto (todas las notas).
+    const _remitidoProj = _neRemitidoPorProyecto(proj.id, null);
+    // Helper para la celda "Cantidad remitida": verde si completo, rojo si falta.
+    const celdaRemitida = (refKey, total) => {
+      const rem = _remitidoProj[refKey] || 0;
+      let color = '#5F5E5A';
+      if (rem > 0 && rem >= total) color = '#1E7A34';
+      else if (rem > 0) color = '#A35A00';
+      return '<div style="width:56px;text-align:center;font-size:13px;font-weight:700;color:' + color + '">' + rem + '</div>';
+    };
+
     // v70: agrupación visual. Los items con grupo_uid se muestran bajo un
     // encabezado desplegable del conjunto. Los items sin grupo van sueltos.
     // Helper para renderizar una card de item individual.
-    const renderItemCard = (it, numero) => {
+    const renderItemCard = (it, numero, sinRemitida) => {
       const procCount = actividades.filter(a => a.item_id === it.id && !a.proceso_eliminado).length;
       const itColors = itemStateColor(it.estado);
       const itBadge = '<span style="display:inline-block;padding:1px 7px;border-radius:3px;font-size:10px;font-weight:700;background:' + itColors.bg + ';color:' + itColors.fg + ';margin-left:6px">' + (it.estado || 'Espera MP') + '</span>';
@@ -2794,6 +2806,7 @@ function renderProjectDetail() {
       let c = '<div class="card-item card-clickable" style="background:' + cardBg + '" onclick="navigate({view:\'item\',projectId:' + nav.projectId + ',itemId:' + it.id + '})">';
       c += '<div style="width:32px;text-align:center;color:#2C2C2A;font-size:14px">' + numero + '</div>';
       c += '<div style="width:48px;text-align:center;font-size:16px;font-weight:700;color:#2C2C2A">' + it.cantidad + '</div>';
+      c += sinRemitida ? '<div style="width:56px"></div>' : celdaRemitida('item:' + it.id, it.cantidad || 1);
       c += img;
       c += '<div style="flex:1;min-width:0">';
       c += '<div style="font-size:13px;font-weight:600">' + escapeHtml(it.descripcion) + itBadge + '</div>';
@@ -2840,12 +2853,18 @@ function renderProjectDetail() {
       const expanded = matrizExpanded.has(key);
       const procTotal = g.items.reduce((acc, it) => acc + actividades.filter(a => a.item_id === it.id && !a.proceso_eliminado).length, 0);
       h += '<div style="background:#EEF4FB;border:1px solid #A8C8E8;border-radius:6px;margin-bottom:6px;overflow:hidden">';
-      h += '<div style="display:flex;align-items:center;padding:8px 12px;gap:8px;cursor:pointer" onclick="matrizToggleExpand(\'' + key + '\')">';
+      h += '<div style="display:flex;align-items:center;padding:8px 12px;gap:8px;cursor:pointer" onclick="toggleGrupoProyecto(\'' + key + '\',' + proj.id + ')">';
       h += '<span style="font-size:13px;color:#5F5E5A;flex:0 0 auto;width:14px">' + (expanded ? '▼' : '▶') + '</span>';
       h += '<div style="width:32px;text-align:center;color:#2C2C2A;font-size:14px">' + numero + '</div>';
       h += '<span style="font-size:18px;flex:0 0 auto">📦</span>';
       h += '<div style="flex:1;min-width:0">';
-      h += '<div style="font-size:13px;font-weight:700;color:#0C447C">' + escapeHtml(g.etiqueta) + ' <span style="font-size:11px;color:#5F5E5A;font-weight:400">×' + g.cantidad + '</span></div>';
+      // v70 Fase 6: remitido del conjunto entero.
+      const _remG = _remitidoProj['grupo:' + g.uid] || 0;
+      let _remGColor = '#5F5E5A';
+      if (_remG > 0 && _remG >= g.cantidad) _remGColor = '#1E7A34';
+      else if (_remG > 0) _remGColor = '#A35A00';
+      h += '<div style="font-size:13px;font-weight:700;color:#0C447C">' + escapeHtml(g.etiqueta) + ' <span style="font-size:11px;color:#5F5E5A;font-weight:400">×' + g.cantidad + '</span>';
+      h += ' <span style="font-size:11px;font-weight:700;color:' + _remGColor + '">· remitido ' + _remG + '/' + g.cantidad + '</span></div>';
       h += '<div style="font-size:11px;color:#5F5E5A">' + g.items.length + ' producto(s) · ' + procTotal + ' proceso(s)' + (g.notas ? ' · 📝 con notas' : '') + '</div>';
       h += '</div>';
       h += '<button class="b b-icon" onclick="event.stopPropagation();showEditarGrupoModal(\'' + g.uid + '\')" title="Editar conjunto (cantidad y notas)" style="flex:0 0 auto">✎</button>';
@@ -2853,7 +2872,7 @@ function renderProjectDetail() {
       if (expanded) {
         h += '<div style="border-top:1px solid #C8DBF0;background:#FAFCFE;padding:6px 6px 6px 28px">';
         g.items.forEach(it => {
-          h += renderItemCard(it, '·');
+          h += renderItemCard(it, '·', true);
         });
         h += '</div>';
       }
@@ -8646,6 +8665,14 @@ function matrizToggleExpand(key) {
   _matrizRerenderList();
 }
 
+// v70 Fase 6: toggle de grupos en el detalle del proyecto. Usa el mismo Set
+// matrizExpanded pero re-renderiza el detalle del proyecto, no la matriz.
+function toggleGrupoProyecto(key, projId) {
+  if (matrizExpanded.has(key)) matrizExpanded.delete(key);
+  else matrizExpanded.add(key);
+  renderProjectDetail();
+}
+
 // Wrappers retrocompatibles
 function matrizToggleExpandProd(id) { matrizToggleExpand('prod:' + id); }
 function matrizToggleExpandCliente(idOrGen) { matrizToggleExpand('cli:' + idOrGen); }
@@ -13575,6 +13602,24 @@ function _neFmtCuit(cuit) {
 // Apertura del modal
 // ---------------------------------------------------------------------
 
+// Calcula, para un proyecto, cuánto se remitió ya de cada item/conjunto,
+// sumando los ítems vinculados (refKey) de todas las notas existentes.
+// Si excluirNotaId está dado, esa nota no se cuenta (modo editar).
+// Devuelve un objeto { refKey: cantidadRemitida }.
+function _neRemitidoPorProyecto(projId, excluirNotaId) {
+  const acc = {};
+  notasEnvio.forEach(n => {
+    if (n.proyecto_id !== projId) return;
+    if (excluirNotaId && n.id === excluirNotaId) return;
+    if (!Array.isArray(n.items)) return;
+    n.items.forEach(it => {
+      if (!it.refKey) return;  // ítem suelto agregado a mano: no cuenta
+      acc[it.refKey] = (acc[it.refKey] || 0) + (Number(it.cantidad) || 0);
+    });
+  });
+  return acc;
+}
+
 // Abre el modal en modo "nuevo" con los datos del proyecto precargados.
 function showNotaEnvioModal(projId) {
   const proj = getProject(projId) || proyectos.find(p => p.id === projId);
@@ -13582,25 +13627,41 @@ function showNotaEnvioModal(projId) {
   const cliente = clientes.find(c => c.id === proj.cliente_id);
   if (!cliente) { toast('El proyecto no tiene cliente asignado', true); return; }
 
-  // Items del proyecto, precargados. Se editan solo para la nota.
-  // v70 Fase 6: respetamos la agrupación — un conjunto/subconjunto entra como
-  // UNA línea (su etiqueta y cantidad), no como sus productos desglosados.
+  // Items del proyecto. Un conjunto entra como UNA línea (su etiqueta y
+  // cantidad); los sueltos, uno por uno. Cada línea lleva refKey (vínculo),
+  // total (cantidad en el proyecto) y la cantidad ya remitida.
   const itemsProj = items.filter(i => i.proyecto_id === projId);
-  const lineasNota = [];
+  const remitido = _neRemitidoPorProyecto(projId, null);
+  const lineas = [];
   const gruposVistos = new Set();
   itemsProj.forEach(it => {
     if (it.grupo_uid) {
       if (!gruposVistos.has(it.grupo_uid)) {
         gruposVistos.add(it.grupo_uid);
-        lineasNota.push({
-          cantidad: it.grupo_cantidad || 1,
+        const refKey = 'grupo:' + it.grupo_uid;
+        lineas.push({
+          refKey: refKey,
+          total: it.grupo_cantidad || 1,
+          yaRemitido: remitido[refKey] || 0,
           descripcion: it.grupo_etiqueta || 'Conjunto'
         });
       }
     } else {
-      lineasNota.push({ cantidad: it.cantidad || 1, descripcion: it.descripcion || '' });
+      const refKey = 'item:' + it.id;
+      lineas.push({
+        refKey: refKey,
+        total: it.cantidad || 1,
+        yaRemitido: remitido[refKey] || 0,
+        descripcion: it.descripcion || ''
+      });
     }
   });
+
+  // Cantidad pendiente por línea (total - remitido, nunca negativo).
+  lineas.forEach(l => { l.pendiente = Math.max(0, l.total - l.yaRemitido); });
+  const totalPend = lineas.reduce((a, l) => a + l.pendiente, 0);
+  const hayRemitido = lineas.some(l => l.yaRemitido > 0);
+
   const contacto = proj.contacto_id ? clienteContactos.find(c => c.id === proj.contacto_id) : null;
   const contactoNombre = contacto ? [contacto.nombre, contacto.apellido].filter(Boolean).join(' ') : '';
 
@@ -13609,16 +13670,45 @@ function showNotaEnvioModal(projId) {
     String(hoy.getMonth() + 1).padStart(2, '0') + '-' +
     String(hoy.getDate()).padStart(2, '0');
 
-  _neRenderModal({
-    mode: 'nuevo', projId: projId, notaId: null, numero: null, clienteId: proj.cliente_id,
-    tituloCliente: clN(proj.cliente_id),
-    datos: {
-      nombre: cliente.nombre || '', razon: cliente.razon_social || '', cuit: cliente.cuit || '',
-      contacto: contactoNombre, direccion: cliente.direccion_entrega || '',
-      fecha: hoyIso, observaciones: '', pedido: proj.pedido_nro || ''
-    },
-    items: lineasNota
+  // Función que finalmente abre el modal con la lista ya resuelta.
+  const abrir = (itemsParaModal, aviso) => {
+    _neRenderModal({
+      mode: 'nuevo', projId: projId, notaId: null, numero: null, clienteId: proj.cliente_id,
+      tituloCliente: clN(proj.cliente_id),
+      aviso: aviso || '',
+      datos: {
+        nombre: cliente.nombre || '', razon: cliente.razon_social || '', cuit: cliente.cuit || '',
+        contacto: contactoNombre, direccion: cliente.direccion_entrega || '',
+        fecha: hoyIso, observaciones: '', pedido: proj.pedido_nro || ''
+      },
+      items: itemsParaModal
+    });
+  };
+
+  // Línea de datos del modal (descripción bloqueada, vínculo preservado).
+  const aLinea = (l, cant) => ({
+    refKey: l.refKey, descBloqueada: true,
+    cantidad: cant, descripcion: l.descripcion
   });
+
+  if (totalPend === 0 && lineas.length > 0) {
+    // Todo remitido: advertencia antes de abrir.
+    confirmModal({
+      titulo: 'Productos ya remitidos',
+      mensaje: 'YA SE INCLUYERON TODOS LOS PRODUCTOS EN OTRAS NOTAS DE ENVÍO. ¿Desea continuar igualmente?',
+      textoConfirmar: 'Continuar',
+      peligroso: false,
+      onConfirm: () => abrir(lineas.map(l => aLinea(l, l.total)), '')
+    });
+  } else if (hayRemitido) {
+    // Parcial: precargo las cantidades pendientes y dejo un aviso.
+    const conPend = lineas.filter(l => l.pendiente > 0);
+    abrir(conPend.map(l => aLinea(l, l.pendiente)),
+      'El resto de los ítems ya se remitieron en otras notas de envío.');
+  } else {
+    // Nada remitido: comportamiento normal.
+    abrir(lineas.map(l => aLinea(l, l.total)), '');
+  }
 }
 
 // Abre el modal en modo "editar" con los datos de una nota guardada.
@@ -13628,12 +13718,18 @@ function editarNotaEnvio(notaId) {
   _neRenderModal({
     mode: 'editar', projId: n.proyecto_id, notaId: n.id, numero: n.numero, clienteId: n.cliente_id,
     tituloCliente: n.cliente_nombre || clN(n.cliente_id) || '',
+    aviso: '',
     datos: {
       nombre: n.cliente_nombre || '', razon: n.cliente_razon_social || '', cuit: n.cliente_cuit || '',
       contacto: n.cliente_contacto || '', direccion: n.cliente_direccion || '',
       fecha: n.fecha || '', observaciones: n.observaciones || '', pedido: n.pedido_nro || ''
     },
-    items: Array.isArray(n.items) ? n.items.map(it => ({ cantidad: it.cantidad || 1, descripcion: it.descripcion || '' })) : []
+    items: Array.isArray(n.items) ? n.items.map(it => ({
+      refKey: it.refKey || null,
+      descBloqueada: !!it.refKey,
+      cantidad: it.cantidad || 1,
+      descripcion: it.descripcion || ''
+    })) : []
   });
 }
 
@@ -13659,6 +13755,11 @@ function _neRenderModal(cfg) {
   h += '<div style="font-size:11px;color:#5F5E5A;margin-bottom:10px">' + (esEditar
     ? 'Editás el contenido de la nota. El número <b>' + escapeHtml(cfg.numero) + '</b> se mantiene.'
     : 'Revisá los datos y los ítems. Lo que edites acá <b>solo afecta a la nota</b>, no modifica el proyecto.') + '</div>';
+
+  // v70 Fase 6: aviso de productos ya remitidos en otras notas.
+  if (cfg.aviso) {
+    h += '<div style="background:#FFF3CD;border:1px solid #E0C97A;color:#7A5C00;padding:8px 12px;border-radius:6px;margin-bottom:10px;font-size:12px;font-weight:600">⚠ ' + escapeHtml(cfg.aviso) + '</div>';
+  }
 
   // --- Datos del cliente ---
   h += '<div class="section-t" style="margin-top:4px"><span>Datos del cliente</span></div>';
@@ -13729,10 +13830,22 @@ function _neRenderItemsList() {
   h += '<div style="width:70px;text-align:center">Cantidad</div>';
   h += '<div style="flex:1">Descripción</div><div style="width:30px"></div></div>';
   _neState.items.forEach((it, idx) => {
-    h += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:5px">';
+    // Una línea vinculada (refKey) trae la descripción bloqueada por defecto,
+    // para no perder el vínculo que permite contar lo remitido. El checkbox
+    // "Editar descripción" la desbloquea sin romper el vínculo.
+    const vinculada = !!it.refKey;
+    const bloqueada = vinculada && it.descBloqueada !== false;
+    h += '<div style="margin-bottom:7px">';
+    h += '<div style="display:flex;gap:8px;align-items:center">';
     h += '<input type="number" class="ef-i" min="0" step="1" value="' + escapeHtml(String(it.cantidad)) + '" data-ne-cant="' + idx + '" style="width:70px;text-align:center">';
-    h += '<input type="text" class="ef-i" value="' + escapeHtml(it.descripcion) + '" data-ne-desc="' + idx + '" style="flex:1" placeholder="Descripción del ítem">';
+    h += '<input type="text" class="ef-i" value="' + escapeHtml(it.descripcion) + '" data-ne-desc="' + idx + '" style="flex:1" placeholder="Descripción del ítem"' + (bloqueada ? ' readonly style="flex:1;background:#F0EFEA;color:#5F5E5A"' : '') + '>';
     h += '<button class="b b-icon b-d" type="button" onclick="_neRemoveItem(' + idx + ')" title="Quitar" style="width:30px;padding:2px 0">✕</button>';
+    h += '</div>';
+    if (vinculada) {
+      h += '<label style="display:flex;align-items:center;gap:5px;margin:3px 0 0 78px;font-size:10px;color:#5F5E5A;cursor:pointer">';
+      h += '<input type="checkbox" data-ne-editdesc="' + idx + '" onchange="_neToggleEditDesc(' + idx + ')"' + (!bloqueada ? ' checked' : '') + '>';
+      h += 'Editar descripción (el ítem sigue contando como remitido)</label>';
+    }
     h += '</div>';
   });
   return h;
@@ -13753,9 +13866,19 @@ function _neSyncItems() {
   });
 }
 
+// Toggle del checkbox "Editar descripción": desbloquea/rebloquea el campo.
+function _neToggleEditDesc(idx) {
+  _neSyncItems();
+  const it = _neState.items[idx];
+  if (!it) return;
+  it.descBloqueada = !it.descBloqueada;
+  document.getElementById('ne-items').innerHTML = _neRenderItemsList();
+}
+
 function _neAddItem() {
   _neSyncItems();
-  _neState.items.push({ cantidad: 1, descripcion: '' });
+  // Ítem nuevo a mano: sin vínculo, no cuenta para el control de remitidos.
+  _neState.items.push({ refKey: null, descBloqueada: false, cantidad: 1, descripcion: '' });
   document.getElementById('ne-items').innerHTML = _neRenderItemsList();
 }
 
@@ -13832,7 +13955,12 @@ async function generarNotaEnvio() {
 
   const itemsClean = _neState.items
     .filter(it => (it.descripcion || '').trim() !== '')
-    .map(it => ({ cantidad: it.cantidad || 0, descripcion: (it.descripcion || '').trim() }));
+    .map(it => {
+      const o = { cantidad: it.cantidad || 0, descripcion: (it.descripcion || '').trim() };
+      // refKey: vínculo con el item/conjunto del proyecto (para contar remitidos).
+      if (it.refKey) o.refKey = it.refKey;
+      return o;
+    });
   if (!itemsClean.length) { toast('Agregá al menos un ítem con descripción', true); return; }
 
   let numero;
@@ -13937,6 +14065,7 @@ function _neSeccionProyectoHtml(projId) {
     h += '<button class="b b-icon" onclick="_neVerPdf(' + n.id + ')" title="Abrir el PDF en otra pestaña">Ver PDF</button>';
     h += '<button class="b b-icon" onclick="descargarNotaEnvioWord(' + n.id + ')" title="Descargar la nota en formato Word">Word</button>';
     h += '<button class="b b-icon" onclick="showEtiquetaModalNota(' + n.id + ')" title="Generar etiqueta de envío con esta nota">🏷 Etiqueta</button>';
+    h += '<button class="b b-icon" onclick="editarNotaEnvio(' + n.id + ')" title="Editar esta nota">Editar</button>';
     h += '<button class="b b-icon" onclick="_neIrANota(' + n.id + ')" title="Ir a la pestaña Notas de envío filtrada por esta nota">Ir →</button>';
     h += '</div>';
   });
