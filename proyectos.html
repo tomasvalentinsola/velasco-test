@@ -2695,11 +2695,12 @@ function renderProjectDetail() {
   h += '</div>';
   // Botones en un renglón aparte, debajo del título.
   h += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 4px">';
+  h += '<button class="b b-p" onclick="showProjectStateModal(' + proj.id + ')">Cambiar estado</button>';
   h += '<button class="b" onclick="copyProjectForMail(' + proj.id + ')" title="Copia el proyecto formateado para pegar en el mail estandarizado">✉ Copiar mail</button>';
+  h += '<button class="b" onclick="showRemitoModal(' + proj.id + ')" title="Cargar un remito para este proyecto">📋 Cargar remito</button>';
   h += '<button class="b" onclick="showNotaEnvioModal(' + proj.id + ')" title="Generar nota de envío para este proyecto">🚚 Nota de envío</button>';
   h += '<button class="b" onclick="showEtiquetaModalProyecto(' + proj.id + ')" title="Generar etiqueta de envío para imprimir">🏷 Etiqueta de envío</button>';
   h += '<button class="b" onclick="copyProject(' + proj.id + ')" title="Crea un proyecto nuevo con todos estos datos">📑 Duplicar proyecto</button>';
-  h += '<button class="b b-p" onclick="showProjectStateModal(' + proj.id + ')">Cambiar estado</button>';
   h += '</div>';
 
   if (needsPedidoWarn) {
@@ -2778,7 +2779,7 @@ function renderProjectDetail() {
     h += '<div style="display:flex;gap:10px;align-items:center;padding:4px 12px;font-size:10px;font-weight:700;color:#5F5E5A;text-transform:uppercase;letter-spacing:0.5px">';
     h += '<div style="width:32px;text-align:center">Nº</div>';
     h += '<div style="width:48px;text-align:center">Cant.</div>';
-    h += '<div style="width:56px;text-align:center">Remitida</div>';
+    h += '<div style="width:56px;text-align:center">Remitidos</div>';
     h += '<div style="width:42px"></div>';  // photo column spacer
     h += '<div style="flex:1">Item</div>';
     h += '</div>';
@@ -2810,14 +2811,15 @@ function renderProjectDetail() {
         ? '<img src="' + escapeHtml(it.foto_url) + '" style="width:42px;height:42px;border-radius:5px;object-fit:cover;flex-shrink:0">'
         : '<div style="width:42px;height:42px;border-radius:5px;background:#E8E6DF;display:flex;align-items:center;justify-content:center;color:#888780;font-size:8px;flex-shrink:0">sin foto</div>';
       let c = '<div class="card-item card-clickable" style="background:' + cardBg + '" onclick="navigate({view:\'item\',projectId:' + nav.projectId + ',itemId:' + it.id + '})">';
-      c += '<div style="width:32px;text-align:center;color:#2C2C2A;font-size:14px">' + numero + '</div>';
+      // El Nº: vacío para productos dentro de un conjunto (sinRemitida),
+      // numerado para los items sueltos.
+      c += '<div style="width:32px;text-align:center;color:#2C2C2A;font-size:14px">' + (sinRemitida ? '' : numero) + '</div>';
+      c += '<div style="width:48px;text-align:center;font-size:16px;font-weight:700;color:#2C2C2A">' + it.cantidad + '</div>';
       if (sinRemitida) {
-        // Producto dentro de un conjunto: la cantidad lleva mini-rótulo, ya
-        // que el encabezado de columnas no aplica acá adentro.
-        c += '<div style="width:48px;text-align:center"><div style="font-size:8px;font-weight:700;color:#888780;text-transform:uppercase">Cant.</div><div style="font-size:16px;font-weight:700;color:#2C2C2A">' + it.cantidad + '</div></div>';
+        // Producto dentro de un conjunto: no lleva conteo de remitidos propio
+        // (el conjunto se cuenta entero).
         c += '<div style="width:56px"></div>';
       } else {
-        c += '<div style="width:48px;text-align:center;font-size:16px;font-weight:700;color:#2C2C2A">' + it.cantidad + '</div>';
         c += celdaRemitida('item:' + it.id, it.cantidad || 1);
       }
       c += img;
@@ -2885,7 +2887,7 @@ function renderProjectDetail() {
       h += '<button class="b b-icon" onclick="event.stopPropagation();showEditarGrupoModal(\'' + g.uid + '\')" title="Editar conjunto (cantidad y notas)" style="flex:0 0 auto">✎</button>';
       h += '</div>';
       if (expanded) {
-        h += '<div style="border-top:1px solid #C8DBF0;background:#FAFCFE;padding:6px 6px 6px 28px">';
+        h += '<div style="border-top:1px solid #C8DBF0;background:#FAFCFE;padding:6px">';
         g.items.forEach(it => {
           h += renderItemCard(it, '·', true);
         });
@@ -14950,7 +14952,7 @@ function _rmRenderItemsList() {
     const pend = it.pendiente != null ? it.pendiente : Math.max(0, it.total - it.yaRemitido);
     h += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:5px">';
     h += '<div style="width:46px;text-align:center"><input type="checkbox" data-rm-inc="' + idx + '" onchange="_rmToggleInc(' + idx + ')"' + (it.incluir ? ' checked' : '') + '></div>';
-    h += '<input type="number" class="ef-i" min="0" step="1" value="' + escapeHtml(String(it.cantidad)) + '" data-rm-cant="' + idx + '" style="width:64px;text-align:center"' + (it.incluir ? '' : ' disabled') + '>';
+    h += '<input type="number" class="ef-i" min="0" step="1" max="' + it.total + '" value="' + escapeHtml(String(it.cantidad)) + '" data-rm-cant="' + idx + '" data-rm-max="' + it.total + '" oninput="_rmCantInput(this)" style="width:64px;text-align:center"' + (it.incluir ? '' : ' disabled') + '>';
     h += '<div style="flex:1;min-width:0">';
     h += '<div style="font-size:12px;font-weight:600">' + escapeHtml(it.descripcion) + '</div>';
     let sub = 'En el proyecto: ' + it.total + ' · pendiente: ' + pend;
@@ -14965,10 +14967,22 @@ function _rmSyncItems() {
   document.querySelectorAll('[data-rm-cant]').forEach(el => {
     const idx = parseInt(el.dataset.rmCant, 10);
     if (_rmState.items[idx]) {
-      const n = parseInt(el.value, 10);
-      _rmState.items[idx].cantidad = isNaN(n) ? 0 : n;
+      let n = parseInt(el.value, 10);
+      if (isNaN(n)) n = 0;
+      // La cantidad del remito no puede superar la del proyecto.
+      const max = parseInt(el.dataset.rmMax, 10);
+      if (!isNaN(max) && n > max) { n = max; el.value = max; }
+      if (n < 0) { n = 0; el.value = 0; }
+      _rmState.items[idx].cantidad = n;
     }
   });
+}
+
+// Topea el valor de cantidad al máximo del proyecto mientras se escribe.
+function _rmCantInput(el) {
+  const max = parseInt(el.dataset.rmMax, 10);
+  const n = parseInt(el.value, 10);
+  if (!isNaN(max) && !isNaN(n) && n > max) el.value = max;
 }
 
 function _rmToggleInc(idx) {
