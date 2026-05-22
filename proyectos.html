@@ -2683,15 +2683,18 @@ function renderProjectDetail() {
   let h = '<button class="b" style="margin-bottom:10px" onclick="navigate({view:\'projects\'})">← Volver a Proyectos</button>';
   // Use the new blue background color for the project recuadro
   h += '<div class="form" style="background:#f0f6fc">';
-  h += '<div class="form-t" style="display:flex;align-items:center;justify-content:space-between;gap:8px">';
-  h += '<span style="display:flex;align-items:center;gap:10px"><span>' + escapeHtml(proj.descripcion || '(sin descripcion)') + '</span>' + stBadge + '</span>';
-  h += '<div style="display:flex;gap:6px;flex-wrap:wrap">';
+  // Título a todo el ancho del recuadro, en su propio renglón.
+  h += '<div class="form-t" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">';
+  h += '<span>' + escapeHtml(proj.descripcion || '(sin descripcion)') + '</span>' + stBadge;
+  h += '</div>';
+  // Botones en un renglón aparte, debajo del título.
+  h += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 4px">';
   h += '<button class="b" onclick="copyProjectForMail(' + proj.id + ')" title="Copia el proyecto formateado para pegar en el mail estandarizado">✉ Copiar mail</button>';
   h += '<button class="b" onclick="showNotaEnvioModal(' + proj.id + ')" title="Generar nota de envío para este proyecto">🚚 Nota de envío</button>';
   h += '<button class="b" onclick="showEtiquetaModalProyecto(' + proj.id + ')" title="Generar etiqueta de envío para imprimir">🏷 Etiqueta de envío</button>';
   h += '<button class="b" onclick="copyProject(' + proj.id + ')" title="Crea un proyecto nuevo con todos estos datos">📑 Duplicar proyecto</button>';
   h += '<button class="b b-p" onclick="showProjectStateModal(' + proj.id + ')">Cambiar estado</button>';
-  h += '</div></div>';
+  h += '</div>';
 
   if (needsPedidoWarn) {
     h += '<div style="background:#FEDADA;color:#A32D2D;padding:10px 14px;border-radius:6px;margin-bottom:14px;font-size:12px;font-weight:600;border:1px solid #E24B4A">⚠ El proyecto esta en estado <b>' + proj.estado + '</b> pero le falta el numero de pedido. Asegurate de cargarlo en TacticaSoft y completarlo aqui.</div>';
@@ -12921,10 +12924,16 @@ async function copyProjectForMail(projectId) {
     html += '<li style="margin-bottom:2px"><b>' + escapeHtml((it.descripcion || '').toUpperCase()) + '</b>' + escapeHtml(cant + verFoto);
     if (procs.length > 0) {
       html += '<ul style="margin:2px 0 4px 0;padding-left:24px">';
+      // Si un proceso aparece más de una vez en el item, lo numeramos
+      // (Fresado 1, Fresado 2). Si aparece una sola vez, queda sin número.
+      const _procTotales = {};
+      procs.forEach(p => { const n = p.proceso || ''; _procTotales[n] = (_procTotales[n] || 0) + 1; });
+      const _procCount = {};
       procs.forEach(p => {
-        // La descripción de la actividad es "<item> - <proceso>", redundante
-        // acá (el item ya está en el encabezado). Mostramos solo el proceso.
-        html += '<li>' + escapeHtml(p.proceso || '') + '</li>';
+        const n = p.proceso || '';
+        _procCount[n] = (_procCount[n] || 0) + 1;
+        const etiqueta = _procTotales[n] > 1 ? n + ' ' + _procCount[n] : n;
+        html += '<li>' + escapeHtml(etiqueta) + '</li>';
       });
       html += '</ul>';
     }
@@ -12967,8 +12976,13 @@ async function copyProjectForMail(projectId) {
   projItems.forEach((it) => {
     const procs = actividades.filter(a => a.item_id === it.id && !a.proceso_eliminado).sort((a, b) => (a.orden || 999999) - (b.orden || 999999));
     plain += '* ' + (it.descripcion || '').toUpperCase() + (it.cantidad ? ' (Cant.: ' + it.cantidad + ')' : '') + '\n';
+    const _ptTot = {};
+    procs.forEach(p => { const n = p.proceso || ''; _ptTot[n] = (_ptTot[n] || 0) + 1; });
+    const _ptCnt = {};
     procs.forEach(p => {
-      plain += '   * ' + (p.proceso || '') + '\n';
+      const n = p.proceso || '';
+      _ptCnt[n] = (_ptCnt[n] || 0) + 1;
+      plain += '   * ' + (_ptTot[n] > 1 ? n + ' ' + _ptCnt[n] : n) + '\n';
     });
   });
 
