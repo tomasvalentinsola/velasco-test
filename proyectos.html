@@ -2677,6 +2677,7 @@ function renderProjectDetail() {
   h += '<div style="display:flex;gap:6px;flex-wrap:wrap">';
   h += '<button class="b" onclick="copyProjectForMail(' + proj.id + ')" title="Copia el proyecto formateado para pegar en el mail estandarizado">✉ Copiar mail</button>';
   h += '<button class="b" onclick="showNotaEnvioModal(' + proj.id + ')" title="Generar nota de envío para este proyecto">🚚 Nota de envío</button>';
+  h += '<button class="b" onclick="showEtiquetaModalProyecto(' + proj.id + ')" title="Generar etiqueta de envío para imprimir">🏷 Etiqueta de envío</button>';
   h += '<button class="b" onclick="copyProject(' + proj.id + ')" title="Crea un proyecto nuevo con todos estos datos">📑 Duplicar proyecto</button>';
   h += '<button class="b b-p" onclick="showProjectStateModal(' + proj.id + ')">Cambiar estado</button>';
   h += '</div></div>';
@@ -12511,7 +12512,10 @@ function showClienteForm(clienteId) {
   h += '<div class="ef-help" style="font-size:10px">Razón social legal. Se usa en la nota de envío.</div></div>';
   h += '<div class="ef"><div class="ef-l">Dirección de entrega</div>';
   h += '<input type="text" class="ef-i" id="c-direnvio" value="' + escapeHtml(cliente && cliente.direccion_entrega ? cliente.direccion_entrega : '') + '" placeholder="Ej. Pellegrini 77 – América – Buenos Aires">';
-  h += '<div class="ef-help" style="font-size:10px">A dónde se entrega la mercadería. Se usa en la nota de envío.</div></div>';
+  h += '<div class="ef-help" style="font-size:10px">A dónde se entrega la mercadería. Se usa en la nota de envío y la etiqueta.</div></div>';
+  h += '<div class="ef"><div class="ef-l">Código postal</div>';
+  h += '<input type="text" class="ef-i" id="c-cp" value="' + escapeHtml(cliente && cliente.codigo_postal ? cliente.codigo_postal : '') + '" placeholder="Ej. 6330" style="max-width:160px">';
+  h += '<div class="ef-help" style="font-size:10px">Se usa en la etiqueta de envío.</div></div>';
 
   // v70 Fase 4.5: logo del cliente. La galería opera directo sobre la DB.
   // Solo disponible si el cliente ya existe (al crear, se sube después).
@@ -12765,10 +12769,12 @@ async function saveCliente(clienteId) {
   // v70 Fase 6: datos para nota de envío. Vacío -> null.
   const razonEl = document.getElementById('c-razon');
   const dirEl = document.getElementById('c-direnvio');
+  const cpEl = document.getElementById('c-cp');
   const razon_social = razonEl ? (razonEl.value.trim() || null) : null;
   const direccion_entrega = dirEl ? (dirEl.value.trim() || null) : null;
+  const codigo_postal = cpEl ? (cpEl.value.trim() || null) : null;
 
-  const payload = { nombre, cuit, codigo, razon_social, direccion_entrega };
+  const payload = { nombre, cuit, codigo, razon_social, direccion_entrega, codigo_postal };
   let savedId = clienteId;
   if (clienteId) {
     const { error } = await sb.from('clientes').update(payload).eq('id', clienteId);
@@ -13500,7 +13506,7 @@ window.onload = function() {
 // Datos fijos del emisor (no cambian). Si algún día hay que emitir notas
 // desde otra razón social, se editan estas constantes.
 const _NE_EMISOR = {
-  nombre: 'HÉCTOR ALBERTO VELASCO',
+  nombre: 'HECTOR ALBERTO VELASCO',
   cuit: '20-17734543-2',
   condicion: 'Responsable Inscripto'
 };
@@ -13664,6 +13670,9 @@ function _neRenderModal(cfg) {
 
   h += '<div class="actions" style="margin-top:14px">';
   h += '<button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button>';
+  if (esEditar) {
+    h += '<button class="b" onclick="descargarNotaEnvioWord(' + cfg.notaId + ')" title="Descargar la nota en formato Word">📄 Descargar Word</button>';
+  }
   h += '<button class="b b-p" onclick="generarNotaEnvio()">' + (esEditar ? '💾 Guardar y ver PDF' : '🚚 Generar nota de envío') + '</button></div>';
 
   m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
@@ -13887,6 +13896,8 @@ function _neSeccionProyectoHtml(projId) {
     h += '<div style="font-size:11px;color:#5F5E5A">' + escapeHtml(_neFmtFechaCorta(n.fecha)) + ' · ' + cant + ' ítem(s)</div>';
     h += '</div>';
     h += '<button class="b b-icon" onclick="_neVerPdf(' + n.id + ')" title="Abrir el PDF en otra pestaña">Ver PDF</button>';
+    h += '<button class="b b-icon" onclick="descargarNotaEnvioWord(' + n.id + ')" title="Descargar la nota en formato Word">Word</button>';
+    h += '<button class="b b-icon" onclick="showEtiquetaModalNota(' + n.id + ')" title="Generar etiqueta de envío con esta nota">🏷 Etiqueta</button>';
     h += '<button class="b b-icon" onclick="_neIrANota(' + n.id + ')" title="Ir a la pestaña Notas de envío filtrada por esta nota">Ir →</button>';
     h += '</div>';
   });
@@ -13986,7 +13997,7 @@ function _neListaHtml() {
   let h = '<div style="font-size:11px;color:#5F5E5A;margin-bottom:6px">' + rows.length + ' nota(s)</div>';
   h += '<div style="display:flex;gap:10px;align-items:center;padding:4px 12px;font-size:10px;font-weight:700;color:#5F5E5A;text-transform:uppercase;letter-spacing:0.5px">';
   h += '<div style="width:130px">Nº de nota</div><div style="width:96px">Fecha</div><div style="flex:1">Cliente</div>';
-  h += '<div style="width:90px">Pedido</div><div style="width:54px;text-align:center">Ítems</div><div style="width:210px"></div></div>';
+  h += '<div style="width:90px">Pedido</div><div style="width:54px;text-align:center">Ítems</div><div style="width:330px"></div></div>';
   rows.forEach(n => {
     const cant = Array.isArray(n.items) ? n.items.length : 0;
     h += '<div style="display:flex;gap:10px;align-items:center;padding:7px 12px;background:#fff;border:1px solid #E8E6DF;border-radius:4px;margin-bottom:5px">';
@@ -13995,8 +14006,10 @@ function _neListaHtml() {
     h += '<div style="flex:1;min-width:0;font-size:12px">' + escapeHtml(n.cliente_nombre || clN(n.cliente_id) || '—') + '</div>';
     h += '<div style="width:90px;font-size:12px">' + escapeHtml(n.pedido_nro || '—') + '</div>';
     h += '<div style="width:54px;text-align:center;font-size:12px">' + cant + '</div>';
-    h += '<div style="width:210px;display:flex;gap:3px;justify-content:flex-end">';
+    h += '<div style="width:330px;display:flex;gap:3px;justify-content:flex-end">';
     h += '<button class="b b-icon" onclick="_neVerPdf(' + n.id + ')" title="Abrir el PDF">Ver PDF</button>';
+    h += '<button class="b b-icon" onclick="descargarNotaEnvioWord(' + n.id + ')" title="Descargar en formato Word">Word</button>';
+    h += '<button class="b b-icon" onclick="showEtiquetaModalNota(' + n.id + ')" title="Generar etiqueta de envío con esta nota">🏷</button>';
     h += '<button class="b b-icon" onclick="editarNotaEnvio(' + n.id + ')" title="Editar">Editar</button>';
     h += '<button class="b b-icon b-d" onclick="_neEliminar(' + n.id + ')" title="Eliminar">🗑</button>';
     h += '</div></div>';
@@ -14155,6 +14168,370 @@ table.ne-tabla td.ne-d { text-align: left; }
   </div>
 
 </div>
+<script>setTimeout(function(){ window.print(); }, 400);<\/script>
+</body></html>`;
+}
+
+
+// =====================================================================
+// v70 Fase 6 - NOTA DE ENVÍO EN WORD (.docx)
+// =====================================================================
+
+// Versión de la librería docx usada (debe coincidir con la del CDN).
+const _DOCX_CDN = 'https://cdn.jsdelivr.net/npm/docx@9.6.1/dist/index.umd.cjs';
+let _docxLibPromise = null;
+
+// Carga la librería docx bajo demanda (solo la primera vez que se usa).
+function _cargarDocxLib() {
+  if (window.docx) return Promise.resolve(window.docx);
+  if (_docxLibPromise) return _docxLibPromise;
+  _docxLibPromise = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = _DOCX_CDN;
+    s.onload = () => { window.docx ? resolve(window.docx) : reject(new Error('La librería docx no se inicializó')); };
+    s.onerror = () => { _docxLibPromise = null; reject(new Error('No se pudo descargar la librería para Word. Revisá la conexión.')); };
+    document.head.appendChild(s);
+  });
+  return _docxLibPromise;
+}
+
+// Convierte un data URL base64 a Uint8Array (para insertar imágenes en el docx).
+function _dataUrlAUint8(dataUrl) {
+  const b64 = (dataUrl || '').split(',')[1] || '';
+  const bin = atob(b64);
+  const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  return arr;
+}
+
+// Descarga un Blob con el nombre indicado.
+function _descargarBlob(blob, nombreArchivo) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = nombreArchivo;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// Genera y descarga el .docx de una nota de envío guardada.
+async function descargarNotaEnvioWord(notaId) {
+  const n = notasEnvio.find(x => x.id === notaId);
+  if (!n) { toast('Nota no encontrada', true); return; }
+  toast('Generando Word...');
+  let docx;
+  try { docx = await _cargarDocxLib(); }
+  catch (e) { toast(e.message, true); return; }
+
+  try {
+    const doc = _neBuildDocx(docx, {
+      numero: n.numero, fecha: _neFmtFechaLarga(n.fecha),
+      nombre: n.cliente_nombre, razon: n.cliente_razon_social, cuit: n.cliente_cuit,
+      contacto: n.cliente_contacto, direccion: n.cliente_direccion,
+      obs: n.observaciones, pedido: n.pedido_nro,
+      items: Array.isArray(n.items) ? n.items : []
+    });
+    const blob = await docx.Packer.toBlob(doc);
+    _descargarBlob(blob, 'Nota de envío ' + (n.numero || '') + '.docx');
+    toast('Word descargado');
+  } catch (e) {
+    toast('Error al generar el Word: ' + e.message, true);
+  }
+}
+
+// Construye el Document de docx para una nota de envío.
+// Tamaños de fuente en "half-points" (22 = 11pt).
+function _neBuildDocx(docx, d) {
+  const { Document, Paragraph, TextRun, Table, TableRow, TableCell,
+          WidthType, BorderStyle, AlignmentType, ImageRun } = docx;
+  const esc = s => (s == null ? '' : String(s));
+  const ROJO = 'C0392B';
+  const noB = { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' };
+  const sinBordes = { top: noB, bottom: noB, left: noB, right: noB, insideHorizontal: noB, insideVertical: noB };
+  const bR = sz => ({ style: BorderStyle.SINGLE, size: sz, color: ROJO });
+  const cuatroRojo = sz => ({ top: bR(sz), bottom: bR(sz), left: bR(sz), right: bR(sz) });
+  const txt = (t, o) => new TextRun({ text: t || '', ...(o || {}) });
+  const par = (ch, o) => new Paragraph({ children: Array.isArray(ch) ? ch : [ch], ...(o || {}) });
+
+  // Encabezado
+  const logoImg = new ImageRun({
+    type: 'png', data: _dataUrlAUint8(LOGO_DATA_URL),
+    transformation: { width: 196, height: 62 }
+  });
+  const headerTable = new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE }, borders: sinBordes,
+    rows: [ new TableRow({ children: [
+      new TableCell({ width: { size: 55, type: WidthType.PERCENTAGE }, borders: sinBordes, children: [
+        par(logoImg),
+        par(txt(_NE_EMISOR.nombre, { bold: true, size: 22 })),
+        par(txt('CUIT: ' + _NE_EMISOR.cuit, { size: 20 })),
+        par(txt('Condición fiscal: ' + _NE_EMISOR.condicion, { size: 20 }))
+      ]}),
+      new TableCell({ width: { size: 45, type: WidthType.PERCENTAGE }, borders: sinBordes, children: [
+        par(txt('Documento No Válido como Factura', { size: 16 }), { alignment: AlignmentType.RIGHT }),
+        par(txt('NOTA DE ENVÍO Nº:', { bold: true, size: 30 }), { alignment: AlignmentType.RIGHT }),
+        par(txt(esc(d.numero), { bold: true, size: 34 }), { alignment: AlignmentType.RIGHT }),
+        par(txt('Fecha: ' + esc(d.fecha), { bold: true, size: 22 }), { alignment: AlignmentType.RIGHT })
+      ]})
+    ]})]
+  });
+
+  // Recuadro de datos del cliente
+  const cl = [ par([txt('Señores: ', { size: 22 }), txt(esc(d.nombre).toUpperCase(), { bold: true, size: 22 })]) ];
+  if (d.razon) cl.push(par(txt('Razón Social: ' + esc(d.razon), { size: 22 })));
+  if (d.cuit) cl.push(par(txt('CUIT: ' + esc(_neFmtCuit(d.cuit)), { size: 22 })));
+  if (d.contacto) cl.push(par(txt('Contacto: ' + esc(d.contacto), { size: 22 })));
+  if (d.direccion) cl.push(par([txt('Dirección de entrega: ', { bold: true, size: 22 }), txt(esc(d.direccion), { bold: true, size: 22 })]));
+  const clienteTable = new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows: [ new TableRow({ children: [ new TableCell({
+      borders: cuatroRojo(18), margins: { top: 90, bottom: 90, left: 130, right: 130 }, children: cl
+    })]})]
+  });
+
+  // Tabla de ítems
+  const itemRows = [ new TableRow({ tableHeader: true, children: [
+    new TableCell({ width: { size: 20, type: WidthType.PERCENTAGE }, borders: cuatroRojo(18),
+      margins: { top: 50, bottom: 50, left: 100, right: 100 },
+      children: [par(txt('Cantidad', { bold: true, size: 22 }))] }),
+    new TableCell({ width: { size: 80, type: WidthType.PERCENTAGE }, borders: cuatroRojo(18),
+      margins: { top: 50, bottom: 50, left: 100, right: 100 },
+      children: [par(txt('Descripción', { bold: true, size: 22 }))] })
+  ]})];
+  (d.items || []).forEach(it => {
+    itemRows.push(new TableRow({ children: [
+      new TableCell({ borders: sinBordes, margins: { top: 40, bottom: 40, left: 100, right: 100 },
+        children: [par(txt(String(it.cantidad), { size: 22 }), { alignment: AlignmentType.CENTER })] }),
+      new TableCell({ borders: sinBordes, margins: { top: 40, bottom: 40, left: 100, right: 100 },
+        children: [par(txt(esc(it.descripcion), { size: 22 }))] })
+    ]}));
+  });
+  const itemsTable = new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, borders: sinBordes, rows: itemRows });
+
+  const cuerpo = [
+    headerTable,
+    par(txt(''), { spacing: { after: 140 } }),
+    clienteTable,
+    par(txt(''), { spacing: { after: 180 } }),
+    itemsTable,
+    par(txt(''), { spacing: { after: 240 } })
+  ];
+  if (d.obs) cuerpo.push(par([txt('Observaciones: ', { bold: true, size: 22 }), txt(esc(d.obs), { size: 22 })]));
+  cuerpo.push(par([txt('Corresponde a: ', { bold: true, size: 22 }), txt('Pedido ' + esc(d.pedido), { size: 22 })]));
+  cuerpo.push(par(txt('"Recibí conforme las mercaderías en las cantidades indicadas"', { size: 22 })));
+  cuerpo.push(par(txt('Fecha:', { size: 22 })));
+  cuerpo.push(par(txt('.......................................', { size: 22 }), { alignment: AlignmentType.RIGHT, spacing: { before: 700 } }));
+  cuerpo.push(par(txt('Firma, Aclaración y DNI', { size: 22 }), { alignment: AlignmentType.RIGHT }));
+
+  return new Document({ sections: [{ properties: {}, children: cuerpo }] });
+}
+
+// =====================================================================
+// v70 Fase 6 - ETIQUETA DE ENVÍO (solo para imprimir, no se guarda)
+// =====================================================================
+
+// Estado del modal de etiqueta.
+let _etqState = { ordenes: [], remitos: [], notas: [] };
+
+// Abre el modal de etiqueta desde un proyecto: precarga la lista de notas
+// de envío con todas las notas de ese proyecto.
+function showEtiquetaModalProyecto(projId) {
+  const proj = getProject(projId) || proyectos.find(p => p.id === projId);
+  if (!proj) { toast('Proyecto no encontrado', true); return; }
+  const cliente = clientes.find(c => c.id === proj.cliente_id);
+  const contacto = proj.contacto_id ? clienteContactos.find(c => c.id === proj.contacto_id) : null;
+  const notasProj = notasEnvio.filter(n => n.proyecto_id === projId)
+    .map(n => n.numero).filter(Boolean);
+  _etqAbrir({
+    cliente: cliente, contacto: contacto,
+    notas: notasProj
+  });
+}
+
+// Abre el modal de etiqueta desde una nota de envío: precarga esa nota.
+function showEtiquetaModalNota(notaId) {
+  const n = notasEnvio.find(x => x.id === notaId);
+  if (!n) { toast('Nota no encontrada', true); return; }
+  const cliente = clientes.find(c => c.id === n.cliente_id);
+  // Contacto: buscamos por el nombre guardado en la nota.
+  let contacto = null;
+  if (cliente) {
+    contacto = clienteContactos.find(c => c.cliente_id === cliente.id &&
+      [c.nombre, c.apellido].filter(Boolean).join(' ') === n.cliente_contacto) || null;
+  }
+  _etqAbrir({
+    cliente: cliente, contacto: contacto,
+    contactoTexto: n.cliente_contacto || '',
+    notas: n.numero ? [n.numero] : []
+  });
+}
+
+// Render del modal de etiqueta.
+function _etqAbrir(cfg) {
+  const cli = cfg.cliente;
+  const cont = cfg.contacto;
+  const contactoNombre = cfg.contactoTexto != null ? cfg.contactoTexto
+    : (cont ? [cont.nombre, cont.apellido].filter(Boolean).join(' ') : '');
+  const destinatario = (cli ? cli.nombre : '') + (contactoNombre ? ' (' + contactoNombre + ')' : '');
+  const telefono = cont && cont.telefono ? cont.telefono : '';
+
+  _etqState = {
+    ordenes: [''],
+    remitos: [''],
+    notas: (cfg.notas && cfg.notas.length) ? cfg.notas.slice() : ['']
+  };
+
+  const prev = document.getElementById('etq-modal');
+  if (prev) prev.remove();
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'etq-modal';
+  const m = document.createElement('div'); m.className = 'md';
+  m.style.maxWidth = '560px'; m.style.maxHeight = '92vh'; m.style.overflowY = 'auto';
+
+  let h = '<div class="md-t">Etiqueta de envío</div>';
+  h += '<div style="font-size:11px;color:#5F5E5A;margin-bottom:10px">Todos los campos son editables. La etiqueta se imprime, no se guarda.</div>';
+
+  h += '<div class="ef"><div class="ef-l">Destinatario</div>';
+  h += '<input type="text" class="ef-i" id="etq-dest" value="' + escapeHtml(destinatario) + '"></div>';
+  h += '<div class="ef"><div class="ef-l">Dirección</div>';
+  h += '<input type="text" class="ef-i" id="etq-dir" value="' + escapeHtml(cli && cli.direccion_entrega ? cli.direccion_entrega : '') + '" placeholder="Incluí la localidad acá mismo"></div>';
+  h += '<div class="row">';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Código postal</div>';
+  h += '<input type="text" class="ef-i" id="etq-cp" value="' + escapeHtml(cli && cli.codigo_postal ? cli.codigo_postal : '') + '"></div>';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Teléfono</div>';
+  h += '<input type="text" class="ef-i" id="etq-tel" value="' + escapeHtml(telefono) + '"></div>';
+  h += '</div>';
+
+  // Listas multivalor
+  h += '<div class="section-t" style="margin-top:12px"><span>Orden de compra</span>';
+  h += '<button class="b b-p" type="button" onclick="_etqAdd(\'ordenes\')" style="font-size:11px;padding:3px 10px">+ Agregar</button></div>';
+  h += '<div id="etq-ordenes">' + _etqRenderLista('ordenes') + '</div>';
+  h += '<div class="section-t" style="margin-top:10px"><span>Remito</span>';
+  h += '<button class="b b-p" type="button" onclick="_etqAdd(\'remitos\')" style="font-size:11px;padding:3px 10px">+ Agregar</button></div>';
+  h += '<div id="etq-remitos">' + _etqRenderLista('remitos') + '</div>';
+  h += '<div class="section-t" style="margin-top:10px"><span>Nota de envío</span>';
+  h += '<button class="b b-p" type="button" onclick="_etqAdd(\'notas\')" style="font-size:11px;padding:3px 10px">+ Agregar</button></div>';
+  h += '<div id="etq-notas">' + _etqRenderLista('notas') + '</div>';
+
+  h += '<div class="actions" style="margin-top:14px">';
+  h += '<button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button>';
+  h += '<button class="b b-p" onclick="imprimirEtiqueta()">🖨 Imprimir etiqueta</button></div>';
+
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
+}
+
+// HTML de una lista multivalor (ordenes / remitos / notas).
+function _etqRenderLista(campo) {
+  const arr = _etqState[campo];
+  let h = '';
+  arr.forEach((val, idx) => {
+    h += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:5px">';
+    h += '<input type="text" class="ef-i" value="' + escapeHtml(val) + '" data-etq="' + campo + '" data-idx="' + idx + '" style="flex:1" placeholder="—">';
+    h += '<button class="b b-icon b-d" type="button" onclick="_etqRemove(\'' + campo + '\',' + idx + ')" title="Quitar" style="width:30px;padding:2px 0"' + (arr.length <= 1 ? ' disabled' : '') + '>✕</button>';
+    h += '</div>';
+  });
+  return h;
+}
+
+// Vuelca los inputs de las listas al estado.
+function _etqSync() {
+  ['ordenes', 'remitos', 'notas'].forEach(campo => {
+    document.querySelectorAll('[data-etq="' + campo + '"]').forEach(el => {
+      const idx = parseInt(el.dataset.idx, 10);
+      if (_etqState[campo][idx] !== undefined) _etqState[campo][idx] = el.value;
+    });
+  });
+}
+
+function _etqAdd(campo) {
+  _etqSync();
+  _etqState[campo].push('');
+  document.getElementById('etq-' + campo).innerHTML = _etqRenderLista(campo);
+}
+
+function _etqRemove(campo, idx) {
+  _etqSync();
+  _etqState[campo].splice(idx, 1);
+  if (!_etqState[campo].length) _etqState[campo].push('');
+  document.getElementById('etq-' + campo).innerHTML = _etqRenderLista(campo);
+}
+
+// Genera la etiqueta y la abre en ventana nueva para imprimir.
+function imprimirEtiqueta() {
+  _etqSync();
+  const getV = id => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
+  const limpiar = arr => arr.map(s => (s || '').trim()).filter(Boolean);
+
+  const d = {
+    destinatario: getV('etq-dest'),
+    direccion: getV('etq-dir'),
+    cp: getV('etq-cp'),
+    telefono: getV('etq-tel'),
+    ordenes: limpiar(_etqState.ordenes),
+    remitos: limpiar(_etqState.remitos),
+    notas: limpiar(_etqState.notas)
+  };
+
+  const html = _etqBuildHtml(d);
+  const w = window.open('', '_blank');
+  if (!w) { toast('Permitir pop-ups para imprimir la etiqueta', true); return; }
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+
+  const modal = document.getElementById('etq-modal');
+  if (modal) modal.remove();
+}
+
+// Arma el HTML de la etiqueta de envío.
+function _etqBuildHtml(d) {
+  const esc = escapeHtml;
+  // Para listas: une con coma; si está vacía, muestra un guion.
+  const lista = arr => (arr && arr.length) ? arr.map(esc).join(' · ') : '-';
+
+  return `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
+<title>Etiqueta de envío</title>
+<style>
+@page { size: A4; margin: 14mm; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: Arial, Helvetica, sans-serif; color: #000;
+  -webkit-print-color-adjust: exact; print-color-adjust: exact;
+}
+.etq-logo { text-align: center; margin-bottom: 6px; }
+.etq-logo img { height: 70px; width: auto; }
+
+.etq-caja {
+  border: 2.6px solid #000;
+  padding: 16px 20px;
+}
+.etq-linea { font-size: 19px; margin: 9px 0; line-height: 1.3; }
+.etq-linea .etq-lbl { font-weight: 700; }
+
+.etq-caja-doc {
+  border: 2.6px solid #000; border-top: none;
+  padding: 9px 20px;
+}
+.etq-doc { font-size: 13px; margin: 4px 0; line-height: 1.35; }
+.etq-doc .etq-lbl { font-weight: 700; }
+.etq-doc-row { display: flex; gap: 24px; flex-wrap: wrap; }
+</style></head><body>
+
+<div class="etq-logo"><img src="${LOGO_DATA_URL}" alt="Velasco Metalúrgica"></div>
+
+<div class="etq-caja">
+  <div class="etq-linea"><span class="etq-lbl">DESTINATARIO</span>: ${esc(d.destinatario)}</div>
+  <div class="etq-linea"><span class="etq-lbl">DIRECCIÓN</span>: ${esc(d.direccion)}</div>
+  <div class="etq-linea"><span class="etq-lbl">CÓDIGO POSTAL</span>: ${esc(d.cp)}</div>
+  <div class="etq-linea"><span class="etq-lbl">TELÉFONO</span>: ${esc(d.telefono)}</div>
+</div>
+
+<div class="etq-caja-doc">
+  <div class="etq-doc"><span class="etq-lbl">ORDEN DE COMPRA</span>: ${lista(d.ordenes)}</div>
+  <div class="etq-doc-row">
+    <div class="etq-doc"><span class="etq-lbl">REMITO</span>: ${lista(d.remitos)}</div>
+    <div class="etq-doc"><span class="etq-lbl">NOTA DE ENVÍO</span>: ${lista(d.notas)}</div>
+  </div>
+</div>
+
 <script>setTimeout(function(){ window.print(); }, 400);<\/script>
 </body></html>`;
 }
