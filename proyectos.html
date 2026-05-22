@@ -2697,7 +2697,7 @@ function renderProjectDetail() {
   h += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 4px">';
   h += '<button class="b b-p" onclick="showProjectStateModal(' + proj.id + ')">Cambiar estado</button>';
   h += '<button class="b" onclick="copyProjectForMail(' + proj.id + ')" title="Copia el proyecto formateado para pegar en el mail estandarizado">✉ Copiar mail</button>';
-  h += '<button class="b" onclick="showRemitoModal(' + proj.id + ')" title="Cargar un remito para este proyecto">📋 Cargar remito</button>';
+  h += '<button class="b" onclick="showRemitoModal(' + proj.id + ')" title="Cargar un remito para este proyecto">🚚 Cargar remito</button>';
   h += '<button class="b" onclick="showNotaEnvioModal(' + proj.id + ')" title="Generar nota de envío para este proyecto">🚚 Nota de envío</button>';
   h += '<button class="b" onclick="showEtiquetaModalProyecto(' + proj.id + ')" title="Generar etiqueta de envío para imprimir">🏷 Etiqueta de envío</button>';
   h += '<button class="b" onclick="copyProject(' + proj.id + ')" title="Crea un proyecto nuevo con todos estos datos">📑 Duplicar proyecto</button>';
@@ -2887,7 +2887,7 @@ function renderProjectDetail() {
       h += '<button class="b b-icon" onclick="event.stopPropagation();showEditarGrupoModal(\'' + g.uid + '\')" title="Editar conjunto (cantidad y notas)" style="flex:0 0 auto">✎</button>';
       h += '</div>';
       if (expanded) {
-        h += '<div style="border-top:1px solid #C8DBF0;background:#FAFCFE;padding:6px">';
+        h += '<div style="border-top:1px solid #C8DBF0;background:#FAFCFE;padding:6px 0">';
         g.items.forEach(it => {
           h += renderItemCard(it, '·', true);
         });
@@ -13621,35 +13621,44 @@ function _neFmtCuit(cuit) {
 // Apertura del modal
 // ---------------------------------------------------------------------
 
-// Calcula, para un proyecto, cuánto se remitió ya de cada item/conjunto,
-// sumando los ítems vinculados (refKey) de TODAS las notas de envío Y de
-// TODOS los remitos del proyecto. Si excluirNotaId está dado, esa nota no
-// se cuenta (modo editar de nota). excluirRemitoId hace lo mismo para remitos.
+// Calcula, para un proyecto, cuánto se remitió ya de cada item/conjunto.
+// Suma: las NOTAS de envío + los REMITOS DIRECTOS (tipo 'directo').
+// Los remitos tipo 'nota' NO suman: solo cierran una nota de envío que ya
+// contó esas piezas — contarlos sería contar doble el mismo envío.
+// excluirNotaId / excluirRemitoId: para los modos editar.
 // Devuelve un objeto { refKey: cantidadRemitida }.
 function _neRemitidoPorProyecto(projId, excluirNotaId, excluirRemitoId) {
   const acc = {};
-  const sumar = (lista, excluirId) => {
-    lista.forEach(reg => {
-      if (reg.proyecto_id !== projId) return;
-      if (excluirId && reg.id === excluirId) return;
-      if (!Array.isArray(reg.items)) return;
-      reg.items.forEach(it => {
-        if (!it.refKey) return;  // ítem suelto a mano: no cuenta
-        acc[it.refKey] = (acc[it.refKey] || 0) + (Number(it.cantidad) || 0);
-      });
+  notasEnvio.forEach(n => {
+    if (n.proyecto_id !== projId) return;
+    if (excluirNotaId && n.id === excluirNotaId) return;
+    if (!Array.isArray(n.items)) return;
+    n.items.forEach(it => {
+      if (!it.refKey) return;
+      acc[it.refKey] = (acc[it.refKey] || 0) + (Number(it.cantidad) || 0);
     });
-  };
-  sumar(notasEnvio, excluirNotaId);
-  sumar(remitos, excluirRemitoId);
+  });
+  remitos.forEach(r => {
+    if (r.proyecto_id !== projId) return;
+    if (excluirRemitoId && r.id === excluirRemitoId) return;
+    if (r.tipo === 'nota') return;  // los que cierran nota no suman
+    if (!Array.isArray(r.items)) return;
+    r.items.forEach(it => {
+      if (!it.refKey) return;
+      acc[it.refKey] = (acc[it.refKey] || 0) + (Number(it.cantidad) || 0);
+    });
+  });
   return acc;
 }
 
-// Cuánto está cubierto SOLO por remitos (para excluir items de la nota de
-// envío: un item con remito no puede ir en una nota).
+// Cuánto está cubierto por remitos DIRECTOS (para excluir ítems de la nota
+// de envío: un ítem ya remitido sin nota no puede ir en una nota nueva).
+// Los remitos tipo 'nota' no cuentan acá: cerraron una nota, no bloquean.
 function _remitoCubrePorProyecto(projId) {
   const acc = {};
   remitos.forEach(r => {
     if (r.proyecto_id !== projId) return;
+    if (r.tipo === 'nota') return;
     if (!Array.isArray(r.items)) return;
     r.items.forEach(it => {
       if (!it.refKey) return;
@@ -13877,6 +13886,11 @@ function _neRenderModal(cfg) {
     h += '<button class="b" onclick="descargarNotaEnvioWord(' + cfg.notaId + ')" title="Descargar la nota en formato Word">📄 Descargar Word</button>';
   }
   h += '<button class="b b-p" onclick="generarNotaEnvio()">' + (esEditar ? '💾 Guardar y ver PDF' : '🚚 Generar nota de envío') + '</button></div>';
+  // v70 Fase 6b: eliminar la nota desde el propio modal de edición.
+  if (esEditar) {
+    h += '<div style="margin-top:10px;text-align:right;border-top:1px solid #E8E6DF;padding-top:10px">';
+    h += '<button class="b b-d" onclick="_neEliminarDesdeModal(' + cfg.notaId + ')" title="Eliminar esta nota de envío">🗑 Eliminar nota de envío</button></div>';
+  }
 
   m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
 }
@@ -14080,6 +14094,13 @@ function _neVerPdf(notaId) {
 }
 
 // Elimina una nota del registro (el número no se reutiliza).
+// Elimina la nota desde el modal de edición: cierra el modal y confirma.
+function _neEliminarDesdeModal(notaId) {
+  const modal = document.getElementById('ne-modal');
+  if (modal) modal.remove();
+  _neEliminar(notaId);
+}
+
 function _neEliminar(notaId) {
   const n = notasEnvio.find(x => x.id === notaId);
   if (!n) return;
@@ -14800,76 +14821,87 @@ html, body {
 // =====================================================================
 // v70 Fase 6b - REMITOS
 // =====================================================================
+// Un remito tiene un "tipo":
+//  - 'nota'   : cierra notas de envío. Sus ítems referencian notas
+//               existentes; NO suman al conteo de remitidos (la nota ya
+//               contó esas piezas). Cada ítem lleva notaId además de refKey.
+//  - 'directo': remite ítems que nunca tuvieron nota. Estos SÍ suman.
+// Un remito es de un tipo o del otro, nunca mezcla.
 
-// Estado del modal de remito.
-// mode: 'nuevo' | 'editar'
-let _rmState = { mode: 'nuevo', projId: null, remitoId: null, items: [] };
+let _rmState = { mode: 'nuevo', projId: null, remitoId: null, tipo: 'nota',
+  itemsNota: [], itemsDirecto: [] };
+
+function _hoyIso() {
+  const h = new Date();
+  return h.getFullYear() + '-' + String(h.getMonth() + 1).padStart(2, '0') + '-' + String(h.getDate()).padStart(2, '0');
+}
+
+// Devuelve, para un proyecto, el set de IDs de notas de envío que ya están
+// cerradas por algún remito (excluyendo opcionalmente un remito).
+function _rmNotasYaCerradas(projId, excluirRemitoId) {
+  const set = new Set();
+  remitos.forEach(r => {
+    if (r.proyecto_id !== projId) return;
+    if (excluirRemitoId && r.id === excluirRemitoId) return;
+    if (r.tipo !== 'nota' || !Array.isArray(r.items)) return;
+    r.items.forEach(it => { if (it.notaId != null) set.add(it.notaId); });
+  });
+  return set;
+}
 
 // Abre el modal de carga de remito desde un proyecto.
 function showRemitoModal(projId) {
   const proj = getProject(projId) || proyectos.find(p => p.id === projId);
   if (!proj) { toast('Proyecto no encontrado', true); return; }
-
-  // Items del proyecto: un conjunto entra como UNA línea. Cada línea trae
-  // su total y cuánto ya está remitido (notas + remitos), para mostrar el
-  // pendiente y avisar si el item ya tiene nota de envío.
-  const itemsProj = items.filter(i => i.proyecto_id === projId);
-  const remitido = _neRemitidoPorProyecto(projId, null, null);
-  // Cuánto está cubierto por NOTAS de envío (para el aviso).
-  const cubreNota = {};
-  notasEnvio.forEach(n => {
-    if (n.proyecto_id !== projId || !Array.isArray(n.items)) return;
-    n.items.forEach(it => {
-      if (!it.refKey) return;
-      cubreNota[it.refKey] = (cubreNota[it.refKey] || 0) + (Number(it.cantidad) || 0);
-    });
-  });
-
-  const lineas = [];
-  const gruposVistos = new Set();
-  itemsProj.forEach(it => {
-    if (it.grupo_uid) {
-      if (!gruposVistos.has(it.grupo_uid)) {
-        gruposVistos.add(it.grupo_uid);
-        const refKey = 'grupo:' + it.grupo_uid;
-        lineas.push({
-          refKey: refKey, total: it.grupo_cantidad || 1,
-          yaRemitido: remitido[refKey] || 0, enNota: cubreNota[refKey] || 0,
-          descripcion: it.grupo_etiqueta || 'Conjunto', incluir: false, cantidad: 0
-        });
-      }
-    } else {
-      const refKey = 'item:' + it.id;
-      lineas.push({
-        refKey: refKey, total: it.cantidad || 1,
-        yaRemitido: remitido[refKey] || 0, enNota: cubreNota[refKey] || 0,
-        descripcion: it.descripcion || '', incluir: false, cantidad: 0
-      });
-    }
-  });
-  // Por defecto se incluye cada línea con su pendiente.
-  lineas.forEach(l => {
-    l.pendiente = Math.max(0, l.total - l.yaRemitido);
-    if (l.pendiente > 0) { l.incluir = true; l.cantidad = l.pendiente; }
-  });
-
-  _rmRenderModal({ mode: 'nuevo', projId: projId, remitoId: null, numero: '', fecha: _hoyIso(), items: lineas });
+  _rmAbrir({ mode: 'nuevo', projId: projId, remitoId: null, numero: '',
+    fecha: _hoyIso(), tipo: 'nota', remitoItems: [] });
 }
 
 // Abre el modal en modo editar con un remito guardado.
 function editarRemito(remitoId) {
   const r = remitos.find(x => x.id === remitoId);
   if (!r) { toast('Remito no encontrado', true); return; }
-  const proj = getProject(r.proyecto_id) || proyectos.find(p => p.id === r.proyecto_id);
-  const itemsProj = proj ? items.filter(i => i.proyecto_id === r.proyecto_id) : [];
-  const remitido = _neRemitidoPorProyecto(r.proyecto_id, null, remitoId);  // excluye este remito
+  _rmAbrir({ mode: 'editar', projId: r.proyecto_id, remitoId: r.id,
+    numero: r.numero || '', fecha: r.fecha || _hoyIso(),
+    tipo: r.tipo || 'directo', remitoItems: Array.isArray(r.items) ? r.items : [] });
+}
 
-  // Reconstruyo las líneas del proyecto y marco las que están en el remito.
+// Prepara el estado del modal: arma las dos listas (notas / directo).
+function _rmAbrir(cfg) {
+  const projId = cfg.projId;
+  const itemsProj = items.filter(i => i.proyecto_id === projId);
+
+  // --- Sección "Notas de envío": una fila por cada ítem de cada nota del
+  //     proyecto. Las notas ya cerradas por otro remito no aparecen. ---
+  const cerradas = _rmNotasYaCerradas(projId, cfg.remitoId);
+  // Ítems del remito que estamos editando, indexados para marcar.
   const enRemito = {};
-  (Array.isArray(r.items) ? r.items : []).forEach(it => {
-    if (it.refKey) enRemito[it.refKey] = it;
+  cfg.remitoItems.forEach(it => {
+    const k = it.notaId != null ? ('n' + it.notaId + '|' + it.refKey) : ('d|' + it.refKey);
+    enRemito[k] = it;
   });
-  const lineas = [];
+  const filasNota = [];
+  notasEnvio
+    .filter(n => n.proyecto_id === projId)
+    .slice().sort((a, b) => (a.id || 0) - (b.id || 0))
+    .forEach(n => {
+      // Si esta nota ya está cerrada por otro remito, no se ofrece.
+      if (cerradas.has(n.id)) return;
+      (Array.isArray(n.items) ? n.items : []).forEach(it => {
+        if (!it.refKey) return;  // ítems sueltos de la nota no se cierran
+        const k = 'n' + n.id + '|' + it.refKey;
+        filasNota.push({
+          notaId: n.id, numeroNota: n.numero || '', refKey: it.refKey,
+          descripcion: it.descripcion || '', cantidad: Number(it.cantidad) || 0,
+          incluir: !!enRemito[k]
+        });
+      });
+    });
+
+  // --- Sección "Remito sin nota de envío": ítems del proyecto (conjunto =
+  //     una línea), con su pendiente. ---
+  const remitido = _neRemitidoPorProyecto(projId, null, cfg.remitoId);
+  const filasDirecto = [];
   const gruposVistos = new Set();
   itemsProj.forEach(it => {
     let refKey, total, desc;
@@ -14880,46 +14912,33 @@ function editarRemito(remitoId) {
     } else {
       refKey = 'item:' + it.id; total = it.cantidad || 1; desc = it.descripcion || '';
     }
-    const enR = enRemito[refKey];
-    lineas.push({
-      refKey: refKey, total: total, yaRemitido: remitido[refKey] || 0, enNota: 0,
-      descripcion: desc, pendiente: Math.max(0, total - (remitido[refKey] || 0)),
-      incluir: !!enR, cantidad: enR ? (Number(enR.cantidad) || 0) : 0
-    });
-    delete enRemito[refKey];
-  });
-  // Ítems del remito que ya no están en el proyecto (por si se borró el item):
-  // los conservamos como líneas sueltas para no perder datos.
-  Object.values(enRemito).forEach(it => {
-    lineas.push({
-      refKey: it.refKey, total: Number(it.cantidad) || 0, yaRemitido: 0, enNota: 0,
-      descripcion: (it.descripcion || '') + ' (ítem ya no está en el proyecto)',
-      pendiente: 0, incluir: true, cantidad: Number(it.cantidad) || 0, huerfano: true
+    const k = 'd|' + refKey;
+    const enR = enRemito[k];
+    const pend = Math.max(0, total - (remitido[refKey] || 0));
+    filasDirecto.push({
+      refKey: refKey, total: total, pendiente: pend, descripcion: desc,
+      incluir: !!enR, cantidad: enR ? (Number(enR.cantidad) || 0) : (pend > 0 ? pend : 0)
     });
   });
 
-  _rmRenderModal({ mode: 'editar', projId: r.proyecto_id, remitoId: r.id,
-    numero: r.numero || '', fecha: r.fecha || _hoyIso(), items: lineas });
-}
-
-function _hoyIso() {
-  const h = new Date();
-  return h.getFullYear() + '-' + String(h.getMonth() + 1).padStart(2, '0') + '-' + String(h.getDate()).padStart(2, '0');
+  _rmState = {
+    mode: cfg.mode, projId: projId, remitoId: cfg.remitoId, tipo: cfg.tipo,
+    itemsNota: filasNota, itemsDirecto: filasDirecto
+  };
+  _rmRenderModal({ numero: cfg.numero, fecha: cfg.fecha });
 }
 
 // Render del modal de remito.
 function _rmRenderModal(cfg) {
-  _rmState = { mode: cfg.mode, projId: cfg.projId, remitoId: cfg.remitoId, items: cfg.items.slice() };
-  const esEditar = cfg.mode === 'editar';
-
+  const esEditar = _rmState.mode === 'editar';
   const prev = document.getElementById('rm-modal');
   if (prev) prev.remove();
   const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'rm-modal';
   const m = document.createElement('div'); m.className = 'md';
-  m.style.maxWidth = '600px'; m.style.maxHeight = '92vh'; m.style.overflowY = 'auto';
+  m.style.maxWidth = '640px'; m.style.maxHeight = '92vh'; m.style.overflowY = 'auto';
 
   let h = '<div class="md-t">' + (esEditar ? 'Editar remito ' + escapeHtml(cfg.numero) : 'Cargar remito') + '</div>';
-  h += '<div style="font-size:11px;color:#5F5E5A;margin-bottom:10px">El remito es el número de TacticaSoft. Los ítems marcados quedan registrados como remitidos.</div>';
+  h += '<div style="font-size:11px;color:#5F5E5A;margin-bottom:10px">El remito es el número de TacticaSoft. Un remito cierra notas de envío <b>o</b> remite ítems sin nota — una opción u otra.</div>';
 
   h += '<div class="row">';
   h += '<div class="ef" style="flex:1"><div class="ef-l">Nº de remito <span style="color:#A32D2D">*</span></div>';
@@ -14928,8 +14947,14 @@ function _rmRenderModal(cfg) {
   h += '<input type="date" class="ef-i" id="rm-fecha" value="' + escapeHtml(cfg.fecha) + '"></div>';
   h += '</div>';
 
-  h += '<div class="section-t" style="margin-top:8px"><span>Ítems del remito</span></div>';
-  h += '<div id="rm-items">' + _rmRenderItemsList() + '</div>';
+  // Selector de tipo
+  h += '<div class="ef"><div class="ef-l">Tipo de remito</div>';
+  h += '<div style="display:flex;gap:14px;font-size:12px">';
+  h += '<label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="radio" name="rm-tipo" value="nota"' + (_rmState.tipo === 'nota' ? ' checked' : '') + ' onchange="_rmSetTipo(\'nota\')"> Cierra notas de envío</label>';
+  h += '<label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="radio" name="rm-tipo" value="directo"' + (_rmState.tipo === 'directo' ? ' checked' : '') + ' onchange="_rmSetTipo(\'directo\')"> Remito sin nota de envío</label>';
+  h += '</div></div>';
+
+  h += '<div id="rm-secciones">' + _rmRenderSecciones() + '</div>';
 
   h += '<div class="actions" style="margin-top:14px">';
   h += '<button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button>';
@@ -14938,94 +14963,138 @@ function _rmRenderModal(cfg) {
   m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
 }
 
-// Lista de ítems del remito: checkbox incluir + cantidad. La descripción no
-// se edita (sólo se eligen ítems y cantidades).
-function _rmRenderItemsList() {
-  if (!_rmState.items.length) {
+// Render de la sección activa según el tipo elegido.
+function _rmRenderSecciones() {
+  if (_rmState.tipo === 'nota') {
+    return '<div class="section-t" style="margin-top:8px"><span>Notas de envío</span></div>' + _rmRenderListaNota();
+  }
+  return '<div class="section-t" style="margin-top:8px"><span>Remito sin nota de envío</span></div>' + _rmRenderListaDirecto();
+}
+
+// Lista de la sección "Notas de envío": fila por ítem, cantidad fija.
+function _rmRenderListaNota() {
+  if (!_rmState.itemsNota.length) {
+    return '<div style="font-size:12px;color:#888;font-style:italic;padding:10px;text-align:center;background:#FAFAF7;border-radius:4px">No hay notas de envío del proyecto pendientes de cerrar.</div>';
+  }
+  let h = '<div style="display:flex;gap:8px;align-items:center;padding:2px 4px;font-size:10px;font-weight:700;color:#5F5E5A;text-transform:uppercase;letter-spacing:0.5px">';
+  h += '<div style="width:46px;text-align:center">Incluir</div>';
+  h += '<div style="width:120px">Nº nota de envío</div>';
+  h += '<div style="width:64px;text-align:center">Cantidad</div>';
+  h += '<div style="flex:1">Ítem</div></div>';
+  _rmState.itemsNota.forEach((it, idx) => {
+    h += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:5px">';
+    h += '<div style="width:46px;text-align:center"><input type="checkbox" data-rmn-inc="' + idx + '" onchange="_rmToggleNota(' + idx + ')"' + (it.incluir ? ' checked' : '') + '></div>';
+    h += '<div style="width:120px;font-size:12px;font-weight:600">' + escapeHtml(it.numeroNota) + '</div>';
+    h += '<div style="width:64px;text-align:center;font-size:14px;font-weight:700">' + it.cantidad + '</div>';
+    h += '<div style="flex:1;min-width:0;font-size:12px">' + escapeHtml(it.descripcion) + '</div>';
+    h += '</div>';
+  });
+  return h;
+}
+
+// Lista de la sección "Remito sin nota": checkbox + cantidad editable.
+function _rmRenderListaDirecto() {
+  if (!_rmState.itemsDirecto.length) {
     return '<div style="font-size:12px;color:#888;font-style:italic;padding:10px;text-align:center;background:#FAFAF7;border-radius:4px">El proyecto no tiene ítems.</div>';
   }
   let h = '<div style="display:flex;gap:8px;align-items:center;padding:2px 4px;font-size:10px;font-weight:700;color:#5F5E5A;text-transform:uppercase;letter-spacing:0.5px">';
   h += '<div style="width:46px;text-align:center">Incluir</div>';
   h += '<div style="width:64px;text-align:center">Cantidad</div>';
   h += '<div style="flex:1">Ítem</div></div>';
-  _rmState.items.forEach((it, idx) => {
-    const pend = it.pendiente != null ? it.pendiente : Math.max(0, it.total - it.yaRemitido);
+  _rmState.itemsDirecto.forEach((it, idx) => {
     h += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:5px">';
-    h += '<div style="width:46px;text-align:center"><input type="checkbox" data-rm-inc="' + idx + '" onchange="_rmToggleInc(' + idx + ')"' + (it.incluir ? ' checked' : '') + '></div>';
-    h += '<input type="number" class="ef-i" min="0" step="1" max="' + it.total + '" value="' + escapeHtml(String(it.cantidad)) + '" data-rm-cant="' + idx + '" data-rm-max="' + it.total + '" oninput="_rmCantInput(this)" style="width:64px;text-align:center"' + (it.incluir ? '' : ' disabled') + '>';
+    h += '<div style="width:46px;text-align:center"><input type="checkbox" data-rmd-inc="' + idx + '" onchange="_rmToggleDirecto(' + idx + ')"' + (it.incluir ? ' checked' : '') + '></div>';
+    h += '<input type="number" class="ef-i" min="0" step="1" max="' + it.total + '" value="' + escapeHtml(String(it.cantidad)) + '" data-rmd-cant="' + idx + '" data-rmd-max="' + it.total + '" oninput="_rmCantInput(this)" style="width:64px;text-align:center"' + (it.incluir ? '' : ' disabled') + '>';
     h += '<div style="flex:1;min-width:0">';
     h += '<div style="font-size:12px;font-weight:600">' + escapeHtml(it.descripcion) + '</div>';
-    let sub = 'En el proyecto: ' + it.total + ' · pendiente: ' + pend;
-    if (it.enNota > 0) sub += ' · ⚠ ya tiene nota de envío';
-    h += '<div style="font-size:10px;color:' + (it.enNota > 0 ? '#A35A00' : '#5F5E5A') + '">' + sub + '</div>';
+    h += '<div style="font-size:10px;color:#5F5E5A">En el proyecto: ' + it.total + ' · pendiente: ' + it.pendiente + '</div>';
     h += '</div></div>';
   });
   return h;
 }
 
-function _rmSyncItems() {
-  document.querySelectorAll('[data-rm-cant]').forEach(el => {
-    const idx = parseInt(el.dataset.rmCant, 10);
-    if (_rmState.items[idx]) {
+// Cambia el tipo de remito y re-renderiza la sección.
+function _rmSetTipo(tipo) {
+  _rmSyncDirecto();
+  _rmState.tipo = tipo;
+  document.getElementById('rm-secciones').innerHTML = _rmRenderSecciones();
+}
+
+// Vuelca las cantidades de la sección directo al estado.
+function _rmSyncDirecto() {
+  document.querySelectorAll('[data-rmd-cant]').forEach(el => {
+    const idx = parseInt(el.dataset.rmdCant, 10);
+    if (_rmState.itemsDirecto[idx]) {
       let n = parseInt(el.value, 10);
       if (isNaN(n)) n = 0;
-      // La cantidad del remito no puede superar la del proyecto.
-      const max = parseInt(el.dataset.rmMax, 10);
+      const max = parseInt(el.dataset.rmdMax, 10);
       if (!isNaN(max) && n > max) { n = max; el.value = max; }
       if (n < 0) { n = 0; el.value = 0; }
-      _rmState.items[idx].cantidad = n;
+      _rmState.itemsDirecto[idx].cantidad = n;
     }
   });
 }
 
-// Topea el valor de cantidad al máximo del proyecto mientras se escribe.
+// Topea el valor mientras se escribe.
 function _rmCantInput(el) {
-  const max = parseInt(el.dataset.rmMax, 10);
+  const max = parseInt(el.dataset.rmdMax, 10);
   const n = parseInt(el.value, 10);
   if (!isNaN(max) && !isNaN(n) && n > max) el.value = max;
 }
 
-function _rmToggleInc(idx) {
-  _rmSyncItems();
-  const it = _rmState.items[idx];
+function _rmToggleNota(idx) {
+  const it = _rmState.itemsNota[idx];
+  if (it) it.incluir = !it.incluir;
+}
+
+function _rmToggleDirecto(idx) {
+  _rmSyncDirecto();
+  const it = _rmState.itemsDirecto[idx];
   if (!it) return;
   it.incluir = !it.incluir;
   if (it.incluir && (!it.cantidad || it.cantidad === 0)) {
-    it.cantidad = it.pendiente != null ? it.pendiente : Math.max(0, it.total - it.yaRemitido);
+    it.cantidad = it.pendiente > 0 ? it.pendiente : it.total;
   }
-  document.getElementById('rm-items').innerHTML = _rmRenderItemsList();
+  document.getElementById('rm-secciones').innerHTML = _rmRenderSecciones();
 }
 
 // Guarda (inserta o actualiza) el remito.
 async function guardarRemito() {
-  _rmSyncItems();
+  _rmSyncDirecto();
   const numEl = document.getElementById('rm-numero');
   const fechaEl = document.getElementById('rm-fecha');
   const numero = numEl ? numEl.value.trim() : '';
   const fecha = fechaEl ? fechaEl.value.trim() : '';
   if (!numero) { toast('Ingresá el número de remito', true); return; }
 
-  const itemsSel = _rmState.items
-    .filter(it => it.incluir && (it.cantidad || 0) > 0)
-    .map(it => ({ refKey: it.refKey, cantidad: it.cantidad, descripcion: it.descripcion }));
-  if (!itemsSel.length) { toast('Marcá al menos un ítem con cantidad', true); return; }
+  let itemsSel;
+  if (_rmState.tipo === 'nota') {
+    itemsSel = _rmState.itemsNota
+      .filter(it => it.incluir)
+      .map(it => ({ refKey: it.refKey, cantidad: it.cantidad, descripcion: it.descripcion, notaId: it.notaId }));
+    if (!itemsSel.length) { toast('Marcá al menos un ítem de una nota de envío', true); return; }
+  } else {
+    itemsSel = _rmState.itemsDirecto
+      .filter(it => it.incluir && (it.cantidad || 0) > 0)
+      .map(it => ({ refKey: it.refKey, cantidad: it.cantidad, descripcion: it.descripcion }));
+    if (!itemsSel.length) { toast('Marcá al menos un ítem con cantidad', true); return; }
+  }
 
-  // Chequeo de número único (excluyendo el propio remito en modo editar).
+  // Número único (excluye el propio remito en modo editar).
   const dup = remitos.find(r => (r.numero || '').toLowerCase() === numero.toLowerCase()
     && r.id !== _rmState.remitoId);
   if (dup) { toast('Ya existe un remito con el número ' + numero, true); return; }
 
+  const base = { numero: numero, fecha: fecha || null, tipo: _rmState.tipo, items: itemsSel };
   if (_rmState.mode === 'nuevo') {
-    const payload = { numero: numero, proyecto_id: _rmState.projId, fecha: fecha || null, items: itemsSel };
-    const { error } = await sb.from('remitos').insert(payload);
+    const { error } = await sb.from('remitos').insert({ ...base, proyecto_id: _rmState.projId });
     if (error) {
       toast(error.code === '23505' ? 'Ya existe un remito con ese número' : 'Error al guardar el remito: ' + error.message, true);
       return;
     }
     toast('Remito ' + numero + ' cargado');
   } else {
-    const payload = { numero: numero, fecha: fecha || null, items: itemsSel, updated_at: new Date().toISOString() };
-    const { error } = await sb.from('remitos').update(payload).eq('id', _rmState.remitoId);
+    const { error } = await sb.from('remitos').update({ ...base, updated_at: new Date().toISOString() }).eq('id', _rmState.remitoId);
     if (error) {
       toast(error.code === '23505' ? 'Ya existe un remito con ese número' : 'Error al guardar el remito: ' + error.message, true);
       return;
@@ -15045,7 +15114,7 @@ function _rmEliminar(remitoId) {
   if (!r) return;
   confirmModal({
     titulo: 'Eliminar remito',
-    mensaje: 'Eliminar el remito ' + r.numero + '? Los ítems dejarán de contar como remitidos por este remito.',
+    mensaje: 'Eliminar el remito ' + r.numero + '?',
     textoConfirmar: 'Eliminar',
     onConfirm: async () => {
       const { error } = await sb.from('remitos').delete().eq('id', remitoId);
@@ -15069,10 +15138,11 @@ function _rmSeccionProyectoHtml(projId) {
   }
   rms.forEach(r => {
     const cant = Array.isArray(r.items) ? r.items.length : 0;
+    const tipoLbl = r.tipo === 'nota' ? 'cierra nota de envío' : 'sin nota de envío';
     h += '<div style="display:flex;align-items:center;gap:10px;padding:7px 12px;background:#fff;border:1px solid #E8E6DF;border-radius:4px;margin-bottom:5px">';
     h += '<div style="flex:1;min-width:0">';
     h += '<div style="font-size:13px;font-weight:700">Remito ' + escapeHtml(r.numero || '') + '</div>';
-    h += '<div style="font-size:11px;color:#5F5E5A">' + escapeHtml(_neFmtFechaCorta(r.fecha)) + ' · ' + cant + ' ítem(s)</div>';
+    h += '<div style="font-size:11px;color:#5F5E5A">' + escapeHtml(_neFmtFechaCorta(r.fecha)) + ' · ' + cant + ' ítem(s) · ' + tipoLbl + '</div>';
     h += '</div>';
     h += '<button class="b b-icon" onclick="editarRemito(' + r.id + ')" title="Editar remito">Editar</button>';
     h += '<button class="b b-icon b-d" onclick="_rmEliminar(' + r.id + ')" title="Eliminar remito">🗑</button>';
@@ -15080,6 +15150,7 @@ function _rmSeccionProyectoHtml(projId) {
   });
   return h;
 }
+
 
 // Hardcoded checklist for "Despacho/Cierre" processes
 const DESPACHO_CHECKLIST = [
