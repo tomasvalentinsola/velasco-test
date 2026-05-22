@@ -12922,14 +12922,9 @@ async function copyProjectForMail(projectId) {
     if (procs.length > 0) {
       html += '<ul style="margin:2px 0 4px 0;padding-left:24px">';
       procs.forEach(p => {
-        // Formato simple: "Proceso - descripcion truncada a 20 chars"
-        // Sin deteccion de duplicados ni "...". Si la desc es vacia,
-        // solo se muestra el nombre del proceso.
-        const procName = p.proceso || '';
-        const procDesc = p.descripcion || '';
-        const descTrunc = trunc20(procDesc);
-        const txt = descTrunc ? procName + ' - ' + descTrunc : procName;
-        html += '<li>' + escapeHtml(txt) + '</li>';
+        // La descripción de la actividad es "<item> - <proceso>", redundante
+        // acá (el item ya está en el encabezado). Mostramos solo el proceso.
+        html += '<li>' + escapeHtml(p.proceso || '') + '</li>';
       });
       html += '</ul>';
     }
@@ -12938,16 +12933,19 @@ async function copyProjectForMail(projectId) {
   html += '</ul>';
   html += '<p style="margin:10px 0 0 0">&nbsp;</p>';
 
-  // Fotos (si hay): solo enumeradas
+  // Fotos (si hay): rótulo + la imagen real (por URL del bucket). Al pegar
+  // el HTML en Gmail, el cliente descarga las imágenes y las incrusta.
   const itemsConFoto = projItems.filter(it => it.foto_url);
   if (proj.foto_url || itemsConFoto.length > 0) {
     html += sect('Fotos (si hay)');
     let fotoIdx = 1;
     if (proj.foto_url) {
-      html += '<p style="margin:0">Foto general del proyecto</p>';
+      html += '<p style="margin:6px 0 2px 0">Foto general del proyecto</p>';
+      html += '<p style="margin:0 0 12px 0"><img src="' + escapeHtml(proj.foto_url) + '" style="max-width:420px;height:auto;display:block;border:1px solid #ddd"></p>';
     }
     itemsConFoto.forEach(it => {
-      html += '<p style="margin:0">Foto ' + fotoIdx + ': ' + escapeHtml(it.descripcion || '') + '</p>';
+      html += '<p style="margin:6px 0 2px 0">Foto ' + fotoIdx + ': ' + escapeHtml(it.descripcion || '') + '</p>';
+      html += '<p style="margin:0 0 12px 0"><img src="' + escapeHtml(it.foto_url) + '" style="max-width:420px;height:auto;display:block;border:1px solid #ddd"></p>';
       fotoIdx++;
     });
   }
@@ -12970,8 +12968,7 @@ async function copyProjectForMail(projectId) {
     const procs = actividades.filter(a => a.item_id === it.id && !a.proceso_eliminado).sort((a, b) => (a.orden || 999999) - (b.orden || 999999));
     plain += '* ' + (it.descripcion || '').toUpperCase() + (it.cantidad ? ' (Cant.: ' + it.cantidad + ')' : '') + '\n';
     procs.forEach(p => {
-      const descTrunc = trunc20(p.descripcion || '');
-      plain += '   * ' + (p.proceso || '') + (descTrunc ? ' - ' + descTrunc : '') + '\n';
+      plain += '   * ' + (p.proceso || '') + '\n';
     });
   });
 
