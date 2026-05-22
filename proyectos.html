@@ -170,6 +170,9 @@ let productosGemelos = [];
 // v70 Fase 6: notas de envío registradas. Cada fila es un documento congelado
 // (snapshot del cliente y de los ítems al momento de generarse).
 let notasEnvio = [];
+// v70 Fase 6b: remitos. Registro propio ligado a un proyecto, con lista de
+// ítems (refKey + cantidad). El número lo carga el usuario a mano.
+let remitos = [];
 // v62: toggles "mostrar inactivos" por módulo (solo dentro del módulo Recursos).
 // Cada uno es una llave booleana que se setea desde la UI.
 let mostrarInactivos = { clientes: false, materiales: false, operarios: false, maquinas: false };
@@ -196,7 +199,7 @@ function _esSubconjuntoDefault(sub) {
 let itemsUbicaciones = [];   // Entrega A: ubicaciones de items en proyectos
 let nav = { view: 'projects' };
 // Default filter for projects list: all states except closed/anulado/perdido
-let projectFilters = new Set(['Proyectando', 'Presupuestar', 'Confirmado']);
+let projectFilters = new Set(['Proyectando', 'Solicitud', 'Pedido']);
 
 // ============= FILTROS AVANZADOS =============
 // Estado persistente en localStorage. Filtros aplicados (no en edicion).
@@ -857,12 +860,12 @@ function getProject(projectId) {
 }
 
 // Estados disponibles
-const PROJ_STATES = ['Proyectando', 'Presupuestar', 'Confirmado', 'Anulado', 'Perdido', 'Cerrado'];
+const PROJ_STATES = ['Proyectando', 'Solicitud', 'Pedido', 'Anulado', 'Perdido', 'Cerrado'];
 const PROJ_STATES_SUB_CERRADO = ['Enviado', 'Terminado', 'Stockeado'];
 // In which states should we show the "missing pedido_nro" warning?
-const PROJ_STATES_REQUIRE_PEDIDO = new Set(['Confirmado', 'Anulado', 'Cerrado']);
+const PROJ_STATES_REQUIRE_PEDIDO = new Set(['Pedido', 'Anulado', 'Cerrado']);
 // In which states do the activities of this project show up in the tablero "+"?
-const PROJ_STATES_ACTIVE_TABLERO = new Set(['Confirmado']);
+const PROJ_STATES_ACTIVE_TABLERO = new Set(['Pedido']);
 
 // Item states. Order matters for display.
 const ITEM_STATES = ['Espera MP', 'Llegó MP', 'Proceso', 'Enviar a TT', 'TT', 'Llegó TT', 'Terminado', 'Enviado', 'Stockeado', 'Anulado'];
@@ -882,8 +885,8 @@ const ITEM_STATES_ACTIVE_TABLERO = new Set(['Espera MP', 'Llegó MP', 'Proceso',
 function projStateColor(estado) {
   switch (estado) {
     case 'Proyectando': return { bg: '#E6F1FB', fg: '#0C447C' };  // azul claro
-    case 'Presupuestar': return { bg: '#FFF4D5', fg: '#854F0B' };  // amarillo claro
-    case 'Confirmado': return { bg: '#E5F5E1', fg: '#1B6B1B' };  // verde
+    case 'Solicitud': return { bg: '#FFF4D5', fg: '#854F0B' };  // amarillo claro
+    case 'Pedido': return { bg: '#E5F5E1', fg: '#1B6B1B' };  // verde
     case 'Anulado': return { bg: '#FEDADA', fg: '#A32D2D' };  // rojo
     case 'Perdido': return { bg: '#E8E6DF', fg: '#5F5E5A' };  // gris
     case 'Cerrado': return { bg: '#1A1A1A', fg: '#fff' };  // negro
@@ -925,7 +928,7 @@ async function loadAll() {
   // funciona sin tocar nada).
   try {
     const [pm, pmp, mat, sec, eq, con, sub, ce, sc, pmu, iu, pmc, ph, cc,
-           ec, cs, ep, cp, sp, pg, ne] = await Promise.all([
+           ec, cs, ep, cp, sp, pg, ne, rm] = await Promise.all([
       sb.from('productos_matriz').select('*').order('descripcion'),
       sb.from('productos_matriz_procesos').select('*').order('orden', { ascending: true, nullsFirst: false }),
       sb.from('materiales').select('*').order('nombre'),
@@ -948,7 +951,9 @@ async function loadAll() {
       sb.from('subconjunto_productos').select('*'),
       sb.from('productos_gemelos').select('*'),
       // v70 Fase 6: notas de envío
-      sb.from('notas_envio').select('*').order('id', { ascending: false })
+      sb.from('notas_envio').select('*').order('id', { ascending: false }),
+      // v70 Fase 6b: remitos
+      sb.from('remitos').select('*').order('id', { ascending: false })
     ]);
     productosMatriz = pm.data || [];
     productosMatrizProcesos = pmp.data || [];
@@ -972,6 +977,7 @@ async function loadAll() {
     subconjuntoProductos = sp.data || [];
     productosGemelos = pg.data || [];
     notasEnvio = ne.data || [];
+    remitos = rm.data || [];
   } catch(e) {
     console.warn('[loadAll] Tablas matriz/jerarquia no disponibles aun:', e);
     productosMatriz = [];
@@ -1225,7 +1231,7 @@ function renderProjectsList() {
   h += '</div>';   // fin sticky bar
 
   // Listado: aplica primero filtro de estado, luego advFilters
-  const filteredProjects = applyAdvFilters(getProjects().filter(p => projectFilters.has(p.estado || 'Confirmado')));
+  const filteredProjects = applyAdvFilters(getProjects().filter(p => projectFilters.has(p.estado || 'Pedido')));
 
   if (viewMode === 'items') {
     h += renderItemsListBody(filteredProjects);
@@ -1724,7 +1730,7 @@ function toggleProjectFilter(state) {
   render();
 }
 function setProjectFilters(all) {
-  projectFilters = new Set(all ? PROJ_STATES : ['Proyectando', 'Presupuestar', 'Confirmado']);
+  projectFilters = new Set(all ? PROJ_STATES : ['Proyectando', 'Solicitud', 'Pedido']);
   render();
 }
 
@@ -1771,7 +1777,7 @@ function renderNewProjectForm() {
   h += '</div>';
   h += '<div class="ef" style="flex:1"><div class="ef-l">Estado <span style="color:#A32D2D">*</span></div>';
   h += '<select class="ef-i" id="f-estado" onchange="onStateChangeNew()">';
-  ['Proyectando', 'Presupuestar', 'Confirmado'].forEach(st => {
+  ['Proyectando', 'Solicitud', 'Pedido'].forEach(st => {
     h += '<option value="' + st + '"' + (st === 'Proyectando' ? ' selected' : '') + '>' + st + '</option>';
   });
   h += '</select></div></div>';
@@ -2275,7 +2281,7 @@ function newProjectCargarMaterial(initialName) {
 
 function onStateChangeNew() {
   const estado = document.getElementById('f-estado').value;
-  document.getElementById('ef-pedido').style.display = (estado === 'Confirmado') ? 'block' : 'none';
+  document.getElementById('ef-pedido').style.display = (estado === 'Pedido') ? 'block' : 'none';
 }
 
 // ========== Cliente combobox ==========
@@ -2704,10 +2710,10 @@ function renderProjectDetail() {
   h += '<div style="flex-shrink:0;max-width:330px"><div class="ef-l">Fotos del proyecto</div>' + buildPhotoGalleryHtml('proyecto', proj.id, 'proj') + '</div>';
   h += '<div style="flex:1">';
   h += '<div class="row">';
-  // Cliente: editable salvo si el proyecto esta Confirmado/Cerrado/Anulado.
-  // Para Proyectando, Presupuestar y Perdido se permite cambiar (ej. tras
+  // Cliente: editable salvo si el proyecto esta Pedido/Cerrado/Anulado.
+  // Para Proyectando, Solicitud y Perdido se permite cambiar (ej. tras
   // duplicar un proyecto donde el cliente real es otro).
-  const clienteBloqueado = ['Confirmado', 'Cerrado', 'Anulado'].includes(proj.estado);
+  const clienteBloqueado = ['Pedido', 'Cerrado', 'Anulado'].includes(proj.estado);
   if (clienteBloqueado) {
     h += '<div class="ef" style="flex:2"><div class="ef-l">Cliente</div><input type="text" class="ef-i" value="' + escapeHtml(clN(proj.cliente_id)) + '" disabled title="No se puede cambiar mientras el proyecto este en ' + proj.estado + '"></div>';
   } else {
@@ -2805,8 +2811,15 @@ function renderProjectDetail() {
         : '<div style="width:42px;height:42px;border-radius:5px;background:#E8E6DF;display:flex;align-items:center;justify-content:center;color:#888780;font-size:8px;flex-shrink:0">sin foto</div>';
       let c = '<div class="card-item card-clickable" style="background:' + cardBg + '" onclick="navigate({view:\'item\',projectId:' + nav.projectId + ',itemId:' + it.id + '})">';
       c += '<div style="width:32px;text-align:center;color:#2C2C2A;font-size:14px">' + numero + '</div>';
-      c += '<div style="width:48px;text-align:center;font-size:16px;font-weight:700;color:#2C2C2A">' + it.cantidad + '</div>';
-      c += sinRemitida ? '<div style="width:56px"></div>' : celdaRemitida('item:' + it.id, it.cantidad || 1);
+      if (sinRemitida) {
+        // Producto dentro de un conjunto: la cantidad lleva mini-rótulo, ya
+        // que el encabezado de columnas no aplica acá adentro.
+        c += '<div style="width:48px;text-align:center"><div style="font-size:8px;font-weight:700;color:#888780;text-transform:uppercase">Cant.</div><div style="font-size:16px;font-weight:700;color:#2C2C2A">' + it.cantidad + '</div></div>';
+        c += '<div style="width:56px"></div>';
+      } else {
+        c += '<div style="width:48px;text-align:center;font-size:16px;font-weight:700;color:#2C2C2A">' + it.cantidad + '</div>';
+        c += celdaRemitida('item:' + it.id, it.cantidad || 1);
+      }
       c += img;
       c += '<div style="flex:1;min-width:0">';
       c += '<div style="font-size:13px;font-weight:600">' + escapeHtml(it.descripcion) + itBadge + '</div>';
@@ -2853,18 +2866,20 @@ function renderProjectDetail() {
       const expanded = matrizExpanded.has(key);
       const procTotal = g.items.reduce((acc, it) => acc + actividades.filter(a => a.item_id === it.id && !a.proceso_eliminado).length, 0);
       h += '<div style="background:#EEF4FB;border:1px solid #A8C8E8;border-radius:6px;margin-bottom:6px;overflow:hidden">';
-      h += '<div style="display:flex;align-items:center;padding:8px 12px;gap:8px;cursor:pointer" onclick="toggleGrupoProyecto(\'' + key + '\',' + proj.id + ')">';
-      h += '<span style="font-size:13px;color:#5F5E5A;flex:0 0 auto;width:14px">' + (expanded ? '▼' : '▶') + '</span>';
-      h += '<div style="width:32px;text-align:center;color:#2C2C2A;font-size:14px">' + numero + '</div>';
-      h += '<span style="font-size:18px;flex:0 0 auto">📦</span>';
-      h += '<div style="flex:1;min-width:0">';
-      // v70 Fase 6: remitido del conjunto entero.
+      h += '<div style="display:flex;align-items:center;padding:8px 12px;gap:10px;cursor:pointer" onclick="toggleGrupoProyecto(\'' + key + '\',' + proj.id + ')">';
+      // Celda Nº (32px): flecha + número, alineado con el título "Nº".
+      h += '<div style="width:32px;display:flex;align-items:center;gap:2px;color:#2C2C2A;font-size:13px">';
+      h += '<span style="color:#5F5E5A">' + (expanded ? '▼' : '▶') + '</span><span>' + numero + '</span></div>';
+      // Celda Cant. (48px) y Remitida (56px), alineadas con sus títulos.
       const _remG = _remitidoProj['grupo:' + g.uid] || 0;
       let _remGColor = '#5F5E5A';
       if (_remG > 0 && _remG >= g.cantidad) _remGColor = '#1E7A34';
       else if (_remG > 0) _remGColor = '#A35A00';
-      h += '<div style="font-size:13px;font-weight:700;color:#0C447C">' + escapeHtml(g.etiqueta) + ' <span style="font-size:11px;color:#5F5E5A;font-weight:400">×' + g.cantidad + '</span>';
-      h += ' <span style="font-size:11px;font-weight:700;color:' + _remGColor + '">· remitido ' + _remG + '/' + g.cantidad + '</span></div>';
+      h += '<div style="width:48px;text-align:center;font-size:16px;font-weight:700;color:#2C2C2A">' + g.cantidad + '</div>';
+      h += '<div style="width:56px;text-align:center;font-size:13px;font-weight:700;color:' + _remGColor + '">' + _remG + (_remG > 0 && _remG >= g.cantidad ? ' ✓' : '') + '</div>';
+      h += '<span style="font-size:18px;flex:0 0 auto">📦</span>';
+      h += '<div style="flex:1;min-width:0">';
+      h += '<div style="font-size:13px;font-weight:700;color:#0C447C">' + escapeHtml(g.etiqueta) + '</div>';
       h += '<div style="font-size:11px;color:#5F5E5A">' + g.items.length + ' producto(s) · ' + procTotal + ' proceso(s)' + (g.notas ? ' · 📝 con notas' : '') + '</div>';
       h += '</div>';
       h += '<button class="b b-icon" onclick="event.stopPropagation();showEditarGrupoModal(\'' + g.uid + '\')" title="Editar conjunto (cantidad y notas)" style="flex:0 0 auto">✎</button>';
@@ -2888,6 +2903,8 @@ function renderProjectDetail() {
 
   // v70 Fase 6: sección de notas de envío vinculadas a este proyecto.
   h += _neSeccionProyectoHtml(proj.id);
+  // v70 Fase 6b: sección de remitos vinculados a este proyecto.
+  h += _rmSeccionProyectoHtml(proj.id);
 
   main.innerHTML = h;
   setupPhotoPaste();
@@ -2981,7 +2998,7 @@ function _projectHasUnsavedChanges() {
   const urgencia = getVal('f-urg') || '';
   const pedido_nro = (getVal('f-pedido') || '').trim();
   const cliente_id_raw = getVal('f-cliente');
-  // v66: si el cliente está bloqueado (estados Confirmado/Cerrado/Anulado), el
+  // v66: si el cliente está bloqueado (estados Pedido/Cerrado/Anulado), el
   // campo f-cliente no se renderiza. En ese caso, el cliente no puede haber
   // cambiado, así que usamos el valor del snapshot para no detectar falso cambio.
   const cliente_id = cliente_id_raw === null
@@ -3148,7 +3165,7 @@ async function saveProjectMeta() {
   // Leer HTML del editor rico (no .value de textarea)
   const obsMail = readRichEditor('f-obs-mail');
   const pedidoNro = document.getElementById('f-pedido').value.trim() || null;
-  // Cliente_id: solo se lee si el campo no estaba bloqueado (estados Proyectando/Presupuestar/Perdido)
+  // Cliente_id: solo se lee si el campo no estaba bloqueado (estados Proyectando/Solicitud/Perdido)
   const clienteIdEl = document.getElementById('f-cliente');
   let nuevoClienteId = proj.cliente_id;
   if (clienteIdEl) {
@@ -3225,19 +3242,19 @@ async function confirmDeleteProject() {
 
 // ========== PROJECT STATE CHANGE MODAL ==========
 // Reglas de transicion:
-// - Proyectando -> Confirmado, Perdido (NO se puede ir directo a Cerrado/Anulado)
-// - Confirmado -> Cerrado, Anulado, Perdido (cualquiera con pedido)
+// - Proyectando -> Pedido, Perdido (NO se puede ir directo a Cerrado/Anulado)
+// - Pedido -> Cerrado, Anulado, Perdido (cualquiera con pedido)
 // - Cerrado -> ningun cambio (estado final)
 // - Anulado -> ningun cambio (estado final)
-// - Perdido -> Confirmado (si se reactivara)
+// - Perdido -> Pedido (si se reactivara)
 // La regla "para llegar a Cerrado o Anulado, el proyecto tiene que estar
-// actualmente en Confirmado" se implementa filtrando las opciones del select.
+// actualmente en Pedido" se implementa filtrando las opciones del select.
 function _allowedNextStates(currentEstado) {
-  if (currentEstado === 'Proyectando') return ['Proyectando', 'Confirmado', 'Perdido'];
-  if (currentEstado === 'Confirmado') return ['Confirmado', 'Cerrado', 'Anulado', 'Perdido'];
+  if (currentEstado === 'Proyectando') return ['Proyectando', 'Pedido', 'Perdido'];
+  if (currentEstado === 'Pedido') return ['Pedido', 'Cerrado', 'Anulado', 'Perdido'];
   if (currentEstado === 'Cerrado') return ['Cerrado'];  // estado final
   if (currentEstado === 'Anulado') return ['Anulado'];  // estado final
-  if (currentEstado === 'Perdido') return ['Perdido', 'Confirmado'];
+  if (currentEstado === 'Perdido') return ['Perdido', 'Pedido'];
   return PROJ_STATES.slice();
 }
 
@@ -3272,7 +3289,7 @@ function showProjectStateModal(projectId) {
   h += '<div class="ef-l">Observaciones de anulacion <span style="color:#A32D2D">*</span></div>';
   h += '<textarea class="ef-i" id="ps-obs" rows="3" placeholder="Ej. Cliente se arrepintio, se cobra parcial">' + escapeHtml(proj.observaciones_anulacion || '') + '</textarea></div>';
   // Campo Nº pedido inline. Solo se muestra cuando: (a) el estado nuevo
-  // requiere pedido (Confirmado/Cerrado/Anulado), Y (b) el proyecto NO tiene
+  // requiere pedido (Pedido/Cerrado/Anulado), Y (b) el proyecto NO tiene
   // ya un pedido cargado. Asi evitamos pisar valores existentes.
   h += '<div class="ef" id="ps-pedido-wrap" style="display:none">';
   h += '<div class="ef-l">Numero de pedido</div>';
@@ -6979,7 +6996,7 @@ function renderClientesTab() {
 // botón Inhabilitar/Reactivar en lugar de Eliminar).
 function renderClienteCard(c) {
   const pedidosPendientes = getProjects().filter(p =>
-    p.cliente_id === c.id && p.estado === 'Confirmado'
+    p.cliente_id === c.id && p.estado === 'Pedido'
   ).length;
   const inactivo = c.activo === false;
   let h = '<div class="card" style="padding:6px 10px;align-items:center;' + (inactivo ? 'opacity:0.55' : '') + '">';
@@ -12902,9 +12919,9 @@ async function copyProjectForMail(projectId) {
     if (s.length <= 20) return s;
     return s.substring(0, 20);
   };
-  // Cotizar: "Si" si el proyecto esta en estado Proyectando o Presupuestar.
+  // Cotizar: "Si" si el proyecto esta en estado Proyectando o Solicitud.
   // Para los demas estados, "No". Esto se puede modificar a mano en el mail.
-  const cotizarVal = (proj.estado === 'Proyectando' || proj.estado === 'Presupuestar') ? 'Si' : 'No';
+  const cotizarVal = (proj.estado === 'Proyectando' || proj.estado === 'Solicitud') ? 'Si' : 'No';
 
   // Construir HTML
   let html = '<div style="font-family:Arial,sans-serif;font-size:13px;color:#000;line-height:1.45">';
@@ -13603,17 +13620,37 @@ function _neFmtCuit(cuit) {
 // ---------------------------------------------------------------------
 
 // Calcula, para un proyecto, cuánto se remitió ya de cada item/conjunto,
-// sumando los ítems vinculados (refKey) de todas las notas existentes.
-// Si excluirNotaId está dado, esa nota no se cuenta (modo editar).
+// sumando los ítems vinculados (refKey) de TODAS las notas de envío Y de
+// TODOS los remitos del proyecto. Si excluirNotaId está dado, esa nota no
+// se cuenta (modo editar de nota). excluirRemitoId hace lo mismo para remitos.
 // Devuelve un objeto { refKey: cantidadRemitida }.
-function _neRemitidoPorProyecto(projId, excluirNotaId) {
+function _neRemitidoPorProyecto(projId, excluirNotaId, excluirRemitoId) {
   const acc = {};
-  notasEnvio.forEach(n => {
-    if (n.proyecto_id !== projId) return;
-    if (excluirNotaId && n.id === excluirNotaId) return;
-    if (!Array.isArray(n.items)) return;
-    n.items.forEach(it => {
-      if (!it.refKey) return;  // ítem suelto agregado a mano: no cuenta
+  const sumar = (lista, excluirId) => {
+    lista.forEach(reg => {
+      if (reg.proyecto_id !== projId) return;
+      if (excluirId && reg.id === excluirId) return;
+      if (!Array.isArray(reg.items)) return;
+      reg.items.forEach(it => {
+        if (!it.refKey) return;  // ítem suelto a mano: no cuenta
+        acc[it.refKey] = (acc[it.refKey] || 0) + (Number(it.cantidad) || 0);
+      });
+    });
+  };
+  sumar(notasEnvio, excluirNotaId);
+  sumar(remitos, excluirRemitoId);
+  return acc;
+}
+
+// Cuánto está cubierto SOLO por remitos (para excluir items de la nota de
+// envío: un item con remito no puede ir en una nota).
+function _remitoCubrePorProyecto(projId) {
+  const acc = {};
+  remitos.forEach(r => {
+    if (r.proyecto_id !== projId) return;
+    if (!Array.isArray(r.items)) return;
+    r.items.forEach(it => {
+      if (!it.refKey) return;
       acc[it.refKey] = (acc[it.refKey] || 0) + (Number(it.cantidad) || 0);
     });
   });
@@ -13658,9 +13695,22 @@ function showNotaEnvioModal(projId) {
   });
 
   // Cantidad pendiente por línea (total - remitido, nunca negativo).
-  lineas.forEach(l => { l.pendiente = Math.max(0, l.total - l.yaRemitido); });
-  const totalPend = lineas.reduce((a, l) => a + l.pendiente, 0);
+  // pendiente: lo que falta remitir en general (notas + remitos).
+  // cubrioRemito: cuánto de esta línea está cubierto por remitos — esa parte
+  // NO puede ir en una nota de envío.
+  const cubreRemito = _remitoCubrePorProyecto(projId);
+  lineas.forEach(l => {
+    l.pendiente = Math.max(0, l.total - l.yaRemitido);
+    l.porRemito = cubreRemito[l.refKey] || 0;
+    // Disponible para nota = total - lo cubierto por remito - lo ya en notas.
+    // Como yaRemitido ya incluye notas+remitos, disponible = pendiente
+    // siempre que esta línea no tenga remito; si tiene remito, queda 0
+    // (la regla: un item con remito no se puede mandar por nota).
+    l.dispNota = l.porRemito > 0 ? 0 : l.pendiente;
+  });
+  const totalDispNota = lineas.reduce((a, l) => a + l.dispNota, 0);
   const hayRemitido = lineas.some(l => l.yaRemitido > 0);
+  const hayBloqueadoPorRemito = lineas.some(l => l.porRemito > 0);
 
   const contacto = proj.contacto_id ? clienteContactos.find(c => c.id === proj.contacto_id) : null;
   const contactoNombre = contacto ? [contacto.nombre, contacto.apellido].filter(Boolean).join(' ') : '';
@@ -13691,20 +13741,31 @@ function showNotaEnvioModal(projId) {
     cantidad: cant, descripcion: l.descripcion
   });
 
-  if (totalPend === 0 && lineas.length > 0) {
-    // Todo remitido: advertencia antes de abrir.
+  // Aviso combinado según qué dejó afuera la nota.
+  const avisoParcial = () => {
+    if (hayBloqueadoPorRemito) return 'Algunos ítems no figuran porque ya tienen remito cargado, o ya se remitieron en otras notas.';
+    return 'El resto de los ítems ya se remitieron en otras notas de envío.';
+  };
+
+  if (lineas.length === 0) {
+    // Proyecto sin ítems: nota vacía para cargar a mano (ej. una muestra).
+    abrir([], '');
+  } else if (totalDispNota === 0) {
+    // No queda nada para mandar por nota: aviso, pero permite nota vacía
+    // (a veces se manda una muestra no cargada como ítem).
     confirmModal({
-      titulo: 'Productos ya remitidos',
-      mensaje: 'YA SE INCLUYERON TODOS LOS PRODUCTOS EN OTRAS NOTAS DE ENVÍO. ¿Desea continuar igualmente?',
+      titulo: 'Sin ítems disponibles',
+      mensaje: hayBloqueadoPorRemito
+        ? 'TODOS LOS ÍTEMS YA TIENEN REMITO CARGADO O FUERON REMITIDOS EN OTRAS NOTAS. Podés generar una nota vacía y cargar ítems a mano. ¿Desea continuar?'
+        : 'YA SE INCLUYERON TODOS LOS PRODUCTOS EN OTRAS NOTAS DE ENVÍO. ¿Desea continuar igualmente?',
       textoConfirmar: 'Continuar',
       peligroso: false,
-      onConfirm: () => abrir(lineas.map(l => aLinea(l, l.total)), '')
+      onConfirm: () => abrir([], '')
     });
-  } else if (hayRemitido) {
-    // Parcial: precargo las cantidades pendientes y dejo un aviso.
-    const conPend = lineas.filter(l => l.pendiente > 0);
-    abrir(conPend.map(l => aLinea(l, l.pendiente)),
-      'El resto de los ítems ya se remitieron en otras notas de envío.');
+  } else if (hayRemitido || hayBloqueadoPorRemito) {
+    // Parcial: precargo lo disponible para nota y dejo un aviso.
+    const conDisp = lineas.filter(l => l.dispNota > 0);
+    abrir(conDisp.map(l => aLinea(l, l.dispNota)), avisoParcial());
   } else {
     // Nada remitido: comportamiento normal.
     abrir(lineas.map(l => aLinea(l, l.total)), '');
@@ -14165,7 +14226,7 @@ function _neListaHtml() {
   let h = '<div style="font-size:11px;color:#5F5E5A;margin-bottom:6px">' + rows.length + ' nota(s)</div>';
   h += '<div style="display:flex;gap:10px;align-items:center;padding:4px 12px;font-size:10px;font-weight:700;color:#5F5E5A;text-transform:uppercase;letter-spacing:0.5px">';
   h += '<div style="width:130px">Nº de nota</div><div style="width:96px">Fecha</div><div style="flex:1">Cliente</div>';
-  h += '<div style="width:90px">Pedido</div><div style="width:54px;text-align:center">Ítems</div><div style="width:330px"></div></div>';
+  h += '<div style="width:90px">Pedido</div><div style="width:54px;text-align:center">Ítems</div><div style="width:392px"></div></div>';
   rows.forEach(n => {
     const cant = Array.isArray(n.items) ? n.items.length : 0;
     h += '<div style="display:flex;gap:10px;align-items:center;padding:7px 12px;background:#fff;border:1px solid #E8E6DF;border-radius:4px;margin-bottom:5px">';
@@ -14174,10 +14235,11 @@ function _neListaHtml() {
     h += '<div style="flex:1;min-width:0;font-size:12px">' + escapeHtml(n.cliente_nombre || clN(n.cliente_id) || '—') + '</div>';
     h += '<div style="width:90px;font-size:12px">' + escapeHtml(n.pedido_nro || '—') + '</div>';
     h += '<div style="width:54px;text-align:center;font-size:12px">' + cant + '</div>';
-    h += '<div style="width:330px;display:flex;gap:3px;justify-content:flex-end">';
+    h += '<div style="width:392px;display:flex;gap:3px;justify-content:flex-end">';
     h += '<button class="b b-icon" onclick="_neVerPdf(' + n.id + ')" title="Abrir el PDF">Ver PDF</button>';
     h += '<button class="b b-icon" onclick="descargarNotaEnvioWord(' + n.id + ')" title="Descargar en formato Word">Word</button>';
     h += '<button class="b b-icon" onclick="showEtiquetaModalNota(' + n.id + ')" title="Generar etiqueta de envío con esta nota">🏷</button>';
+    h += (n.proyecto_id ? '<button class="b b-icon" onclick="navigate({view:\'project\',projectId:' + n.proyecto_id + '})" title="Ir al proyecto enlazado">Proyecto</button>' : '');
     h += '<button class="b b-icon" onclick="editarNotaEnvio(' + n.id + ')" title="Editar">Editar</button>';
     h += '<button class="b b-icon b-d" onclick="_neEliminar(' + n.id + ')" title="Eliminar">🗑</button>';
     h += '</div></div>';
@@ -14733,6 +14795,277 @@ html, body {
 </body></html>`;
 }
 
+// =====================================================================
+// v70 Fase 6b - REMITOS
+// =====================================================================
+
+// Estado del modal de remito.
+// mode: 'nuevo' | 'editar'
+let _rmState = { mode: 'nuevo', projId: null, remitoId: null, items: [] };
+
+// Abre el modal de carga de remito desde un proyecto.
+function showRemitoModal(projId) {
+  const proj = getProject(projId) || proyectos.find(p => p.id === projId);
+  if (!proj) { toast('Proyecto no encontrado', true); return; }
+
+  // Items del proyecto: un conjunto entra como UNA línea. Cada línea trae
+  // su total y cuánto ya está remitido (notas + remitos), para mostrar el
+  // pendiente y avisar si el item ya tiene nota de envío.
+  const itemsProj = items.filter(i => i.proyecto_id === projId);
+  const remitido = _neRemitidoPorProyecto(projId, null, null);
+  // Cuánto está cubierto por NOTAS de envío (para el aviso).
+  const cubreNota = {};
+  notasEnvio.forEach(n => {
+    if (n.proyecto_id !== projId || !Array.isArray(n.items)) return;
+    n.items.forEach(it => {
+      if (!it.refKey) return;
+      cubreNota[it.refKey] = (cubreNota[it.refKey] || 0) + (Number(it.cantidad) || 0);
+    });
+  });
+
+  const lineas = [];
+  const gruposVistos = new Set();
+  itemsProj.forEach(it => {
+    if (it.grupo_uid) {
+      if (!gruposVistos.has(it.grupo_uid)) {
+        gruposVistos.add(it.grupo_uid);
+        const refKey = 'grupo:' + it.grupo_uid;
+        lineas.push({
+          refKey: refKey, total: it.grupo_cantidad || 1,
+          yaRemitido: remitido[refKey] || 0, enNota: cubreNota[refKey] || 0,
+          descripcion: it.grupo_etiqueta || 'Conjunto', incluir: false, cantidad: 0
+        });
+      }
+    } else {
+      const refKey = 'item:' + it.id;
+      lineas.push({
+        refKey: refKey, total: it.cantidad || 1,
+        yaRemitido: remitido[refKey] || 0, enNota: cubreNota[refKey] || 0,
+        descripcion: it.descripcion || '', incluir: false, cantidad: 0
+      });
+    }
+  });
+  // Por defecto se incluye cada línea con su pendiente.
+  lineas.forEach(l => {
+    l.pendiente = Math.max(0, l.total - l.yaRemitido);
+    if (l.pendiente > 0) { l.incluir = true; l.cantidad = l.pendiente; }
+  });
+
+  _rmRenderModal({ mode: 'nuevo', projId: projId, remitoId: null, numero: '', fecha: _hoyIso(), items: lineas });
+}
+
+// Abre el modal en modo editar con un remito guardado.
+function editarRemito(remitoId) {
+  const r = remitos.find(x => x.id === remitoId);
+  if (!r) { toast('Remito no encontrado', true); return; }
+  const proj = getProject(r.proyecto_id) || proyectos.find(p => p.id === r.proyecto_id);
+  const itemsProj = proj ? items.filter(i => i.proyecto_id === r.proyecto_id) : [];
+  const remitido = _neRemitidoPorProyecto(r.proyecto_id, null, remitoId);  // excluye este remito
+
+  // Reconstruyo las líneas del proyecto y marco las que están en el remito.
+  const enRemito = {};
+  (Array.isArray(r.items) ? r.items : []).forEach(it => {
+    if (it.refKey) enRemito[it.refKey] = it;
+  });
+  const lineas = [];
+  const gruposVistos = new Set();
+  itemsProj.forEach(it => {
+    let refKey, total, desc;
+    if (it.grupo_uid) {
+      if (gruposVistos.has(it.grupo_uid)) return;
+      gruposVistos.add(it.grupo_uid);
+      refKey = 'grupo:' + it.grupo_uid; total = it.grupo_cantidad || 1; desc = it.grupo_etiqueta || 'Conjunto';
+    } else {
+      refKey = 'item:' + it.id; total = it.cantidad || 1; desc = it.descripcion || '';
+    }
+    const enR = enRemito[refKey];
+    lineas.push({
+      refKey: refKey, total: total, yaRemitido: remitido[refKey] || 0, enNota: 0,
+      descripcion: desc, pendiente: Math.max(0, total - (remitido[refKey] || 0)),
+      incluir: !!enR, cantidad: enR ? (Number(enR.cantidad) || 0) : 0
+    });
+    delete enRemito[refKey];
+  });
+  // Ítems del remito que ya no están en el proyecto (por si se borró el item):
+  // los conservamos como líneas sueltas para no perder datos.
+  Object.values(enRemito).forEach(it => {
+    lineas.push({
+      refKey: it.refKey, total: Number(it.cantidad) || 0, yaRemitido: 0, enNota: 0,
+      descripcion: (it.descripcion || '') + ' (ítem ya no está en el proyecto)',
+      pendiente: 0, incluir: true, cantidad: Number(it.cantidad) || 0, huerfano: true
+    });
+  });
+
+  _rmRenderModal({ mode: 'editar', projId: r.proyecto_id, remitoId: r.id,
+    numero: r.numero || '', fecha: r.fecha || _hoyIso(), items: lineas });
+}
+
+function _hoyIso() {
+  const h = new Date();
+  return h.getFullYear() + '-' + String(h.getMonth() + 1).padStart(2, '0') + '-' + String(h.getDate()).padStart(2, '0');
+}
+
+// Render del modal de remito.
+function _rmRenderModal(cfg) {
+  _rmState = { mode: cfg.mode, projId: cfg.projId, remitoId: cfg.remitoId, items: cfg.items.slice() };
+  const esEditar = cfg.mode === 'editar';
+
+  const prev = document.getElementById('rm-modal');
+  if (prev) prev.remove();
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'rm-modal';
+  const m = document.createElement('div'); m.className = 'md';
+  m.style.maxWidth = '600px'; m.style.maxHeight = '92vh'; m.style.overflowY = 'auto';
+
+  let h = '<div class="md-t">' + (esEditar ? 'Editar remito ' + escapeHtml(cfg.numero) : 'Cargar remito') + '</div>';
+  h += '<div style="font-size:11px;color:#5F5E5A;margin-bottom:10px">El remito es el número de TacticaSoft. Los ítems marcados quedan registrados como remitidos.</div>';
+
+  h += '<div class="row">';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Nº de remito <span style="color:#A32D2D">*</span></div>';
+  h += '<input type="text" class="ef-i" id="rm-numero" value="' + escapeHtml(cfg.numero) + '" placeholder="Ej. 0001-00012345"></div>';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Fecha</div>';
+  h += '<input type="date" class="ef-i" id="rm-fecha" value="' + escapeHtml(cfg.fecha) + '"></div>';
+  h += '</div>';
+
+  h += '<div class="section-t" style="margin-top:8px"><span>Ítems del remito</span></div>';
+  h += '<div id="rm-items">' + _rmRenderItemsList() + '</div>';
+
+  h += '<div class="actions" style="margin-top:14px">';
+  h += '<button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button>';
+  h += '<button class="b b-p" onclick="guardarRemito()">' + (esEditar ? '💾 Guardar remito' : '✓ Cargar remito') + '</button></div>';
+
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
+}
+
+// Lista de ítems del remito: checkbox incluir + cantidad. La descripción no
+// se edita (sólo se eligen ítems y cantidades).
+function _rmRenderItemsList() {
+  if (!_rmState.items.length) {
+    return '<div style="font-size:12px;color:#888;font-style:italic;padding:10px;text-align:center;background:#FAFAF7;border-radius:4px">El proyecto no tiene ítems.</div>';
+  }
+  let h = '<div style="display:flex;gap:8px;align-items:center;padding:2px 4px;font-size:10px;font-weight:700;color:#5F5E5A;text-transform:uppercase;letter-spacing:0.5px">';
+  h += '<div style="width:46px;text-align:center">Incluir</div>';
+  h += '<div style="width:64px;text-align:center">Cantidad</div>';
+  h += '<div style="flex:1">Ítem</div></div>';
+  _rmState.items.forEach((it, idx) => {
+    const pend = it.pendiente != null ? it.pendiente : Math.max(0, it.total - it.yaRemitido);
+    h += '<div style="display:flex;gap:8px;align-items:center;margin-bottom:5px">';
+    h += '<div style="width:46px;text-align:center"><input type="checkbox" data-rm-inc="' + idx + '" onchange="_rmToggleInc(' + idx + ')"' + (it.incluir ? ' checked' : '') + '></div>';
+    h += '<input type="number" class="ef-i" min="0" step="1" value="' + escapeHtml(String(it.cantidad)) + '" data-rm-cant="' + idx + '" style="width:64px;text-align:center"' + (it.incluir ? '' : ' disabled') + '>';
+    h += '<div style="flex:1;min-width:0">';
+    h += '<div style="font-size:12px;font-weight:600">' + escapeHtml(it.descripcion) + '</div>';
+    let sub = 'En el proyecto: ' + it.total + ' · pendiente: ' + pend;
+    if (it.enNota > 0) sub += ' · ⚠ ya tiene nota de envío';
+    h += '<div style="font-size:10px;color:' + (it.enNota > 0 ? '#A35A00' : '#5F5E5A') + '">' + sub + '</div>';
+    h += '</div></div>';
+  });
+  return h;
+}
+
+function _rmSyncItems() {
+  document.querySelectorAll('[data-rm-cant]').forEach(el => {
+    const idx = parseInt(el.dataset.rmCant, 10);
+    if (_rmState.items[idx]) {
+      const n = parseInt(el.value, 10);
+      _rmState.items[idx].cantidad = isNaN(n) ? 0 : n;
+    }
+  });
+}
+
+function _rmToggleInc(idx) {
+  _rmSyncItems();
+  const it = _rmState.items[idx];
+  if (!it) return;
+  it.incluir = !it.incluir;
+  if (it.incluir && (!it.cantidad || it.cantidad === 0)) {
+    it.cantidad = it.pendiente != null ? it.pendiente : Math.max(0, it.total - it.yaRemitido);
+  }
+  document.getElementById('rm-items').innerHTML = _rmRenderItemsList();
+}
+
+// Guarda (inserta o actualiza) el remito.
+async function guardarRemito() {
+  _rmSyncItems();
+  const numEl = document.getElementById('rm-numero');
+  const fechaEl = document.getElementById('rm-fecha');
+  const numero = numEl ? numEl.value.trim() : '';
+  const fecha = fechaEl ? fechaEl.value.trim() : '';
+  if (!numero) { toast('Ingresá el número de remito', true); return; }
+
+  const itemsSel = _rmState.items
+    .filter(it => it.incluir && (it.cantidad || 0) > 0)
+    .map(it => ({ refKey: it.refKey, cantidad: it.cantidad, descripcion: it.descripcion }));
+  if (!itemsSel.length) { toast('Marcá al menos un ítem con cantidad', true); return; }
+
+  // Chequeo de número único (excluyendo el propio remito en modo editar).
+  const dup = remitos.find(r => (r.numero || '').toLowerCase() === numero.toLowerCase()
+    && r.id !== _rmState.remitoId);
+  if (dup) { toast('Ya existe un remito con el número ' + numero, true); return; }
+
+  if (_rmState.mode === 'nuevo') {
+    const payload = { numero: numero, proyecto_id: _rmState.projId, fecha: fecha || null, items: itemsSel };
+    const { error } = await sb.from('remitos').insert(payload);
+    if (error) {
+      toast(error.code === '23505' ? 'Ya existe un remito con ese número' : 'Error al guardar el remito: ' + error.message, true);
+      return;
+    }
+    toast('Remito ' + numero + ' cargado');
+  } else {
+    const payload = { numero: numero, fecha: fecha || null, items: itemsSel, updated_at: new Date().toISOString() };
+    const { error } = await sb.from('remitos').update(payload).eq('id', _rmState.remitoId);
+    if (error) {
+      toast(error.code === '23505' ? 'Ya existe un remito con ese número' : 'Error al guardar el remito: ' + error.message, true);
+      return;
+    }
+    toast('Remito ' + numero + ' actualizado');
+  }
+
+  await loadAll();
+  const modal = document.getElementById('rm-modal');
+  if (modal) modal.remove();
+  render();
+}
+
+// Elimina un remito.
+function _rmEliminar(remitoId) {
+  const r = remitos.find(x => x.id === remitoId);
+  if (!r) return;
+  confirmModal({
+    titulo: 'Eliminar remito',
+    mensaje: 'Eliminar el remito ' + r.numero + '? Los ítems dejarán de contar como remitidos por este remito.',
+    textoConfirmar: 'Eliminar',
+    onConfirm: async () => {
+      const { error } = await sb.from('remitos').delete().eq('id', remitoId);
+      if (error) { toast('Error: ' + error.message, true); return; }
+      await loadAll();
+      toast('Remito eliminado');
+      render();
+    }
+  });
+}
+
+// Sección de remitos vinculados, al pie del detalle del proyecto.
+function _rmSeccionProyectoHtml(projId) {
+  const rms = remitos.filter(r => r.proyecto_id === projId)
+    .slice().sort((a, b) => (b.id || 0) - (a.id || 0));
+  let h = '<div class="section-t" style="margin-top:18px"><span>Remitos</span>';
+  h += '<button class="b b-p" type="button" onclick="showRemitoModal(' + projId + ')" style="font-size:11px;padding:3px 10px">+ Cargar remito</button></div>';
+  if (!rms.length) {
+    h += '<div style="font-size:12px;color:#888;font-style:italic;padding:10px 12px;background:#FAFAF7;border-radius:4px">Este proyecto no tiene remitos cargados.</div>';
+    return h;
+  }
+  rms.forEach(r => {
+    const cant = Array.isArray(r.items) ? r.items.length : 0;
+    h += '<div style="display:flex;align-items:center;gap:10px;padding:7px 12px;background:#fff;border:1px solid #E8E6DF;border-radius:4px;margin-bottom:5px">';
+    h += '<div style="flex:1;min-width:0">';
+    h += '<div style="font-size:13px;font-weight:700">Remito ' + escapeHtml(r.numero || '') + '</div>';
+    h += '<div style="font-size:11px;color:#5F5E5A">' + escapeHtml(_neFmtFechaCorta(r.fecha)) + ' · ' + cant + ' ítem(s)</div>';
+    h += '</div>';
+    h += '<button class="b b-icon" onclick="editarRemito(' + r.id + ')" title="Editar remito">Editar</button>';
+    h += '<button class="b b-icon b-d" onclick="_rmEliminar(' + r.id + ')" title="Eliminar remito">🗑</button>';
+    h += '</div>';
+  });
+  return h;
+}
 
 // Hardcoded checklist for "Despacho/Cierre" processes
 const DESPACHO_CHECKLIST = [
