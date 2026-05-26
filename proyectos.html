@@ -173,6 +173,14 @@ let notasEnvio = [];
 // v70 Fase 6b: remitos. Registro propio ligado a un proyecto, con lista de
 // ítems (refKey + cantidad). El número lo carga el usuario a mano.
 let remitos = [];
+// v70 Fase 8: tipos de proceso (antes era un array fijo en el código).
+let procesos = [];
+// Devuelve los nombres de proceso ordenados, leídos de la tabla `procesos`.
+function procNombres() {
+  return procesos.slice()
+    .sort((a, b) => (a.orden || 0) - (b.orden || 0) || (a.nombre || '').localeCompare(b.nombre || ''))
+    .map(p => p.nombre);
+}
 // v62: toggles "mostrar inactivos" por módulo (solo dentro del módulo Recursos).
 // Cada uno es una llave booleana que se setea desde la UI.
 let mostrarInactivos = { clientes: false, materiales: false, operarios: false, maquinas: false };
@@ -930,7 +938,7 @@ async function loadAll() {
   // funciona sin tocar nada).
   try {
     const [pm, pmp, mat, sec, eq, con, sub, ce, sc, pmu, iu, pmc, ph, cc,
-           ec, cs, ep, cp, sp, pg, ne, rm] = await Promise.all([
+           ec, cs, ep, cp, sp, pg, ne, rm, pr2] = await Promise.all([
       sb.from('productos_matriz').select('*').order('descripcion'),
       sb.from('productos_matriz_procesos').select('*').order('orden', { ascending: true, nullsFirst: false }),
       sb.from('materiales').select('*').order('nombre'),
@@ -955,7 +963,9 @@ async function loadAll() {
       // v70 Fase 6: notas de envío
       sb.from('notas_envio').select('*').order('id', { ascending: false }),
       // v70 Fase 6b: remitos
-      sb.from('remitos').select('*').order('id', { ascending: false })
+      sb.from('remitos').select('*').order('id', { ascending: false }),
+      // v70 Fase 8: tipos de proceso
+      sb.from('procesos').select('*').order('orden', { ascending: true, nullsFirst: false })
     ]);
     productosMatriz = pm.data || [];
     productosMatrizProcesos = pmp.data || [];
@@ -980,6 +990,7 @@ async function loadAll() {
     productosGemelos = pg.data || [];
     notasEnvio = ne.data || [];
     remitos = rm.data || [];
+    procesos = pr2.data || [];
   } catch(e) {
     console.warn('[loadAll] Tablas matriz/jerarquia no disponibles aun:', e);
     productosMatriz = [];
@@ -1108,7 +1119,7 @@ function renderCrumbs() {
   } else if (nav.view === 'clientes') {
     h = '<a onclick="navigate({view:\'projects\'})">Proyectos</a> <span class="sep">›</span> Clientes';
   } else if (nav.view === 'recursos') {
-    const tabLabels = { clientes: 'Clientes', matriz: 'Matriz de Productos', rrhh: 'RRHH', maquinas: 'Máquinas', materiales: 'Materiales', notas: 'Notas de envío' };
+    const tabLabels = { clientes: 'Clientes', matriz: 'Matriz de Productos', rrhh: 'RRHH', maquinas: 'Máquinas', materiales: 'Materiales', notas: 'Notas de envío', procesos: 'Procesos' };
     const tab = nav.tab || _recursosLastTab || 'matriz';
     const tabLbl = tabLabels[tab] || tab;
     h = '<a onclick="navigate({view:\'projects\'})">Proyectos</a> <span class="sep">›</span> ' +
@@ -1810,6 +1821,10 @@ function renderNewProjectForm() {
   h += '<input type="date" class="ef-i" id="f-fechaing" value="' + new Date().toISOString().substring(0, 10) + '"></div>';
   h += '<div class="ef" style="flex:1"><div class="ef-l">Fecha de entrega <span style="color:#A32D2D">*</span></div>';
   h += '<input type="date" class="ef-i" id="f-fechaentrega" value=""><div class="ef-help">Fecha comprometida al cliente.</div></div></div>';
+  // v70: observaciones para el mail estandarizado (mismo campo que en editar).
+  h += '<div class="ef"><div class="ef-l">Observaciones para mail estandarizado</div>';
+  h += renderRichEditor('f-obs-mail', '', 'Texto opcional que aparecera en la fila Observaciones del mail');
+  h += '<div class="ef-help">Estas observaciones se incluyen al usar el boton Copiar mail. Podes aplicarles negrita, italica, color y tamanos.</div></div>';
   h += '</div></div>';
 
   // ===========================================================================
@@ -2099,10 +2114,19 @@ function showNewProjectItemForm(idx) {
   let h = '<div class="md-t">' + (isNew ? 'Nuevo item' : 'Editar item') + '</div>';
 
   // Si el item viene de matriz, mostrar cartel informativo (bloqueamos algunos campos)
+  // Excepción: los productos GENÉRICOS (sin cliente) permiten editar la
+  // descripción, ya que se usan para trabajos distintos cada vez (ej.
+  // "Trabajo General No Repetitivo").
+  let _itEsGenerico = false;
   if (it.fromMatriz) {
     const prod = productosMatriz.find(p => p.id === it.fromMatriz.productoId);
+    _itEsGenerico = prod ? !prod.cliente_id : false;
     h += '<div style="background:#E8F2FC;color:#0C447C;padding:8px 12px;border-radius:5px;margin-bottom:10px;font-size:11px;border:1px solid #A8C8E8">';
-    h += '<b>Item importado de matriz:</b> ' + escapeHtml(prod ? prod.descripcion : '?') + '. Los campos heredados (descripción, código, material) están bloqueados.';
+    if (_itEsGenerico) {
+      h += '<b>Producto genérico de matriz:</b> ' + escapeHtml(prod ? prod.descripcion : '?') + '. Podés editar la descripción para este proyecto. El código y material quedan bloqueados.';
+    } else {
+      h += '<b>Item importado de matriz:</b> ' + escapeHtml(prod ? prod.descripcion : '?') + '. Los campos heredados (descripción, código, material) están bloqueados.';
+    }
     h += '</div>';
   }
 
@@ -2110,7 +2134,8 @@ function showNewProjectItemForm(idx) {
   h += '<div style="flex-shrink:0"><div class="ef-l">Foto del item</div>' + buildPhotoWrapHtml(it.foto_url || null, 'np-item') + '</div>';
   h += '<div style="flex:1">';
 
-  const readonly = it.fromMatriz ? ' readonly style="background:#F0EEE7"' : '';
+  // La descripción se bloquea si viene de matriz, salvo producto genérico.
+  const readonly = (it.fromMatriz && !_itEsGenerico) ? ' readonly style="background:#F0EEE7"' : '';
   h += '<div class="ef"><div class="ef-l">Descripción <span style="color:#A32D2D">*</span></div>';
   h += '<input type="text" class="ef-i" id="np-it-desc" value="' + escapeHtml(it.descripcion || '') + '"' + readonly + '></div>';
 
@@ -2462,6 +2487,9 @@ async function saveNewProject() {
   const fechaIngreso = document.getElementById('f-fechaing').value || null;
   const fechaEntrega = document.getElementById('f-fechaentrega').value || null;
   const clienteFinal = document.getElementById('f-clifinal').value.trim() || null;
+  // v70: observaciones para el mail estandarizado.
+  let obsMail = '';
+  try { obsMail = readRichEditor('f-obs-mail') || ''; } catch (e) { obsMail = ''; }
   // v62: contacto_id (opcional pero con warning amarillo)
   const contactoSel = document.getElementById('f-contacto');
   const contacto_id = contactoSel && contactoSel.value && contactoSel.value !== '__nuevo__'
@@ -2487,7 +2515,8 @@ async function saveNewProject() {
     const { data: newProj, error: projErr } = await sb.from('proyectos').insert({
       cliente_id, pedido_nro, descripcion, urgencia, foto_url: fotoUrl,
       fecha_ingreso: fechaIngreso, fecha_entrega: fechaEntrega,
-      cliente_final: clienteFinal, estado, contacto_id
+      cliente_final: clienteFinal, estado, contacto_id,
+      observaciones_mail: obsMail || null
     }).select().single();
     if (projErr) { toast('Error creando proyecto: ' + projErr.message, true); return; }
 
@@ -2642,7 +2671,7 @@ async function _crearItemDesdeBuffer(item, proj, projDesc, urgencia, projFoto, f
       const actInserts = procs.map((pp, i) => {
         const oper = pp.duracion_estimada_min || 0;     // tiempo por pieza
         const setup = pp.duracion_operario_min || 0;     // setup, una vez
-        const durTotal = setup + cantPiezas * oper;
+        const durTotal = Math.round((setup + cantPiezas * oper) * 100) / 100;
         return {
           item_id: newItem.id,
           cliente_id: proj.cliente_id,
@@ -2770,7 +2799,13 @@ function renderProjectDetail() {
   h += '<div class="ef" style="flex:1"><div class="ef-l">Fecha de entrega' + (!proj.fecha_entrega ? ' <span style="color:#A32D2D" title="Falta completar">*</span>' : '') + '</div>';
   h += '<input type="date" class="ef-i" id="f-fechaentrega" value="' + (proj.fecha_entrega || '') + '"' + (!proj.fecha_entrega ? ' style="border-color:#A32D2D;background:#FEF5F5"' : '') + '></div></div>';
   h += '<div class="ef"><div class="ef-l">Cliente final (opcional)</div>';
-  h += '<input type="text" class="ef-i" id="f-clifinal" value="' + escapeHtml(proj.cliente_final || '') + '" placeholder="Solo si el destinatario real es otro"></div>';
+  const _cfVal = proj.cliente_final || '';
+  const _cfHab = _cfVal.trim() !== '';
+  h += '<label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#5F5E5A;margin-bottom:4px;cursor:pointer">';
+  h += '<input type="checkbox" id="f-clifinal-hab"' + (_cfHab ? ' checked' : '') + ' onchange="_toggleClienteFinal()"> Habilitar cliente final</label>';
+  h += '<input type="text" class="ef-i" id="f-clifinal" value="' + escapeHtml(_cfVal) + '" placeholder="Solo si el destinatario real es otro"' +
+       (_cfHab ? '' : ' disabled style="background:#F0EFEA;color:#5F5E5A"') + '>';
+  h += '<div class="ef-help">Para casos como stock interno donde el destinatario real es otro. Marcá la casilla para habilitarlo.</div></div>';
   // v62: contacto del proyecto
   h += '<div class="ef"><div class="ef-l">Contacto del proyecto <span style="color:#A32D2D">*</span></div>';
   const contactosCli = contactosDeCliente(proj.cliente_id);
@@ -5233,7 +5268,7 @@ async function _importarProductoCore(productoId, valores, ignorarValidaciones) {
     const _cantPiezas = newItem.cantidad || 1;
     const _oper = pp.duracion_estimada_min || 0;
     const _setup = pp.duracion_operario_min || 0;
-    const _durTotal = _setup + _cantPiezas * _oper;
+    const _durTotal = Math.round((_setup + _cantPiezas * _oper) * 100) / 100;
     return {
       item_id: newItem.id,
       cliente_id: proj.cliente_id,
@@ -5888,6 +5923,8 @@ function procCtxList() {
 }
 
 function showProcesoForm(procesoId, ctx) {
+  // v70 Fase 8: reset del filtro de operarios suplentes de una apertura previa.
+  _operariosSuplenteLista = null;
   // ctx es opcional. Si viene, lo usamos. Si no, default a 'item' usando
   // nav.itemId (compat con todos los lugares ya existentes).
   if (ctx) {
@@ -5899,6 +5936,20 @@ function showProcesoForm(procesoId, ctx) {
   const proceso = procesoId ? list.find(a => a.id === procesoId) : null;
   const isNew = !proceso;
   const tipo = proceso ? proceso.tipo : 'manual';
+  // v70 Fase 7: el campo "Tiempo de operación" muestra el tiempo POR PIEZA.
+  // En la matriz, duracion_estimada_min ya es por pieza. En un proceso de
+  // proyecto, duracion_estimada_min es el total (setup + cant*operación), así
+  // que recuperamos la operación: (total - setup) / cantidad.
+  let _operacionMostrar = proceso ? (proceso.duracion_estimada_min || 0) : '';
+  if (proceso && procCtx.tipo === 'item') {
+    const _it = items.find(i => i.id === proceso.item_id);
+    const _cant = (_it && _it.cantidad) ? _it.cantidad : 1;
+    const _setupProc = proceso.duracion_operario_min || 0;
+    // Operación por pieza = (total - setup) / cantidad. Puede ser decimal.
+    const _op = ((proceso.duracion_estimada_min || 0) - _setupProc) / _cant;
+    // Redondeo a 2 decimales para no arrastrar errores de coma flotante.
+    _operacionMostrar = _op > 0 ? Math.round(_op * 100) / 100 : 0;
+  }
   // Solo en contexto 'item' tiene sentido "isPlanificada"
   const isPlanificada = procCtx.tipo === 'item' && proceso && proceso.estado && proceso.estado !== 'sin_planificar' && proceso.fecha !== '1900-01-01';
   // Machine selection state
@@ -5934,7 +5985,7 @@ function showProcesoForm(procesoId, ctx) {
 
   h += '<div class="ef"><div class="ef-l">Proceso <span style="color:#A32D2D">*</span></div>';
   h += '<select class="ef-i" id="p-proceso" onchange="onProcesoChange()">';
-  const procStandard = ['Agujereado','Armado','Compra','Control','Corte','Corte Pantografo','Desarme y limpieza','Despacho/Cierre','Electroerosion','Fresado','Grabado láser','Mantenimiento','Plegado','Rectificado a piedra','Relevamiento','Rolado','Soldadura','Torneado','Tratamiento térmico'];
+  const procStandard = procNombres();
   // Si es proceso existente, tomamos su valor. Si es nuevo, queda vacio para
   // forzar al responsable a elegir explicitamente (default no debe ser Torneado).
   const currentProc = proceso ? (proceso.proceso || proceso.descripcion) : '';
@@ -5948,18 +5999,20 @@ function showProcesoForm(procesoId, ctx) {
   h += '<input type="text" class="ef-i" id="p-proceso-custom" value="' + escapeHtml(customVal) + '" placeholder="Especifica el proceso..." style="margin-top:6px;display:' + (selectedValue === 'Otro' ? 'block' : 'none') + '">';
   h += '<div class="ef-help">Sera lo que se muestra en el bloque del tablero junto al item.</div></div>';
 
+  // v70 Fase 7: orden setup → operación. El margen solo va en procesos de
+  // proyecto (no en la matriz); es un margen global, no por pieza.
+  const _esProyecto = procCtx.tipo === 'item';
   h += '<div class="row">';
-  h += '<div class="ef" style="flex:1"><div class="ef-l">Tiempo de operación (min) <span style="color:#A32D2D">*</span></div>';
-  h += '<input type="number" class="ef-i" id="p-dur" value="' + (proceso ? proceso.duracion_estimada_min : '') + '" min="10" step="10" placeholder="Ej. 240"></div>';
   h += '<div class="ef" style="flex:1"><div class="ef-l">Tiempo de setup (min)</div>';
   h += '<input type="number" class="ef-i" id="p-setup" value="' + (proceso && proceso.duracion_operario_min != null ? proceso.duracion_operario_min : 0) + '" min="0" step="5" placeholder="0"></div>';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Tiempo de operación (min) <span style="color:#A32D2D">*</span></div>';
+  h += '<input type="number" class="ef-i" id="p-dur" value="' + _operacionMostrar + '" min="0.17" step="0.1" placeholder="Ej. 240 — usá decimales para menos de 1 min (0,17 = 10 s)"></div>';
+  if (_esProyecto) {
+    h += '<div class="ef" style="flex:1"><div class="ef-l">Margen (min)</div>';
+    h += '<input type="number" class="ef-i" id="p-margen" value="' + (proceso && proceso.duracion_margen_min ? proceso.duracion_margen_min : 0) + '" min="0" step="10"></div>';
+  }
   h += '</div>';
-  h += '<div class="ef-help" style="margin-top:-6px;margin-bottom:10px;font-size:10px">El <b>tiempo de operación</b> es por pieza (incluye sacar la terminada y poner la siguiente). El <b>tiempo de setup</b> es el seteo de la máquina, una sola vez. Para varias unidades: setup + cantidad × operación.</div>';
-  h += '<div class="row">';
-  h += '<div class="ef" style="flex:1"><div class="ef-l">Margen (min)</div>';
-  h += '<input type="number" class="ef-i" id="p-margen" value="' + (proceso && proceso.duracion_margen_min ? proceso.duracion_margen_min : 0) + '" min="0" step="10"></div>';
-  h += '<div class="ef" style="flex:1"></div>';
-  h += '</div>';
+  h += '<div class="ef-help" style="margin-top:-6px;margin-bottom:10px;font-size:10px">El <b>tiempo de setup</b> es el seteo de la máquina, una sola vez. El <b>tiempo de operación</b> es por pieza. El tiempo total se calcula como setup + cantidad × operación' + (_esProyecto ? ', y el <b>margen</b> se suma al total.' : '.') + '</div>';
 
   // Tipo de proceso: 3 opciones (manual / semi-automatica / automatica)
   // El comportamiento de cada uno se explica abajo del radio.
@@ -6027,7 +6080,11 @@ function showProcesoForm(procesoId, ctx) {
   // funcionando proporcionalmente sin agrandar verticalmente la hoja.
   // El campo se llama "descripcion_trabajo" en actividades_tablero y
   // "trabajo_a_realizar" en productos_matriz_procesos. Soportamos ambos.
-  const trabajoVal = proceso ? (proceso.descripcion_trabajo || proceso.trabajo_a_realizar || '') : '';
+  let trabajoVal = proceso ? (proceso.descripcion_trabajo || proceso.trabajo_a_realizar || '') : '';
+  // v70 Fase 8: si el proceso es "Control" y no hay detalle de tarea, se
+  // precarga "Controlar pieza".
+  const _procNombreActual = proceso ? (proceso.proceso || '') : '';
+  if (!trabajoVal && _procNombreActual === 'Control') trabajoVal = 'Controlar pieza';
   h += renderRichEditor('p-trabajo', trabajoVal, 'Ej. Tornear segun plano. Consultar dudas con Nicolas.');
   h += '<div class="ef-help">Texto que va a aparecer en la orden de trabajo impresa para este proceso.</div></div></div>';
 
@@ -6037,7 +6094,25 @@ function showProcesoForm(procesoId, ctx) {
   h += '</div>';
   m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
   buildChips('chips-maq', maquinasFiltradas, supMaqIds, 'maq');
-  buildChips('chips-op', operarios, supOpIds, 'op');
+  // v70 Fase 8: la lista de operarios suplentes se acota según el proceso.
+  // Si el proceso lleva máquina, según la máquina elegida; si no, según la
+  // config del proceso. Si no hay restricción, se ofrecen todos.
+  let _opSuplLista = operarios;
+  if (procesoActual) {
+    const _cfg = procConfig(procesoActual);
+    if (_cfg && !_cfg.lleva_maquina) {
+      const _ids = _operariosDelProceso(_cfg);
+      if (_ids.length) _opSuplLista = operarios.filter(o => _ids.includes(o.id));
+    } else if (maqSelected && maqSelected !== 'OTRA' && maqSelected !== 'NINGUNA') {
+      const _maq = maquinas.find(m => m.id === parseInt(maqSelected));
+      if (_maq) {
+        const _ids = _operariosDeMaquina(_maq);
+        if (_ids.length) _opSuplLista = operarios.filter(o => _ids.includes(o.id));
+      }
+    }
+  }
+  _operariosSuplenteLista = _opSuplLista;
+  buildChips('chips-op', _opSuplLista, supOpIds, 'op');
   // Fix tentativo del bug "no se puede escribir en el modal":
   // 1. Forzamos focus al primer select del modal en el siguiente tick.
   // 2. Logueamos a consola para debug si el bug se reproduce.
@@ -6106,8 +6181,12 @@ async function _saveProcesoImpl(procesoId) {
     if (!customVal) { toast('Especifica el proceso (Otro)', true); return; }
     proceso_cat = customVal;
   }
-  const dur = parseInt(document.getElementById('p-dur').value);
-  const margen = parseInt(document.getElementById('p-margen').value) || 0;
+  // v70 Fase 7: el tiempo de operación admite decimales (minutos), para
+  // poder cargar piezas de menos de 1 min. Mínimo 0.17 min (~10 segundos).
+  const dur = parseFloat(document.getElementById('p-dur').value);
+  // El margen solo existe en el modal de proceso de proyecto (minutos enteros).
+  const margenEl = document.getElementById('p-margen');
+  const margen = margenEl ? (parseInt(margenEl.value) || 0) : 0;
   const tipoEl = document.querySelector('input[name="p-tipo"]:checked');
   const tipo = tipoEl ? tipoEl.value : 'manual';
   const maqVal = document.getElementById('p-maq-ideal').value;
@@ -6127,7 +6206,7 @@ async function _saveProcesoImpl(procesoId) {
   // v70 Fase 7: el tiempo de setup aplica a todos los procesos. Default 0.
   let setup = parseInt(document.getElementById('p-setup').value);
   if (isNaN(setup) || setup < 0) setup = 0;
-  if (!dur || dur < 10) { toast('El tiempo de operación mínimo es 10 min', true); return; }
+  if (!dur || dur < 0.17) { toast('El tiempo de operación mínimo es 0,17 min (~10 segundos)', true); return; }
   if (!opIdeal) { toast('Elegi operario ideal', true); return; }
 
   const supMaqs = [...chipState.maq];
@@ -6144,7 +6223,7 @@ async function _saveProcesoImpl(procesoId) {
       proceso: proceso_cat,
       descripcion: producto.descripcion + ' - ' + proceso_cat,
       duracion_estimada_min: dur,
-      duracion_margen_min: margen,
+      duracion_margen_min: 0,
       duracion_operario_min: setup,
       tipo: tipo,
       maquina_ideal_id: maqIdealId,
@@ -6189,6 +6268,12 @@ async function _saveProcesoImpl(procesoId) {
   const existing = procesoId ? actividades.find(a => a.id === procesoId) : null;
   const isPlanificada = existing && existing.estado && existing.estado !== 'sin_planificar' && existing.fecha !== '1900-01-01';
 
+  // v70 Fase 7: en un proceso de proyecto, p-dur es el tiempo de operación
+  // POR PIEZA. El total de la actividad se calcula con la cantidad del item:
+  //   total = setup + cantidad * operación   (el margen se suma aparte)
+  const _cantItem = (item && item.cantidad) ? item.cantidad : 1;
+  const _durTotal = Math.round((setup + _cantItem * dur) * 100) / 100;
+
   const payload = {
     item_id: procCtx.parentId,
     cliente_id: item.cliente_id,
@@ -6197,7 +6282,7 @@ async function _saveProcesoImpl(procesoId) {
     descripcion_proyecto: proj.descripcion,
     descripcion_trabajo: trabajo,
     proceso: proceso_cat,
-    duracion_estimada_min: dur,
+    duracion_estimada_min: _durTotal,
     duracion_margen_min: margen,
     duracion_operario_min: setup,
     tipo: tipo,
@@ -6215,7 +6300,7 @@ async function _saveProcesoImpl(procesoId) {
 
   if (procesoId) {
     if (!isPlanificada) {
-      payload.duracion_planificador_min = dur + margen;
+      payload.duracion_planificador_min = _durTotal + margen;
     } else {
       const prevPlanLen = existing.duracion_planificador_min;
       if (prevPlanLen === null || prevPlanLen === undefined) {
@@ -6368,6 +6453,12 @@ function onProcesoChange() {
   buildChips('chips-maq', filtradas, [], 'maq');
   // v69: aplicar auto-completar de operarios según el proceso seleccionado.
   aplicarAutocompletarPorProceso(procNombre);
+  // v70 Fase 8: si se eligió "Control" y el detalle de tarea está vacío,
+  // precargar "Controlar pieza".
+  if (procNombre === 'Control') {
+    const ed = document.getElementById('p-trabajo');
+    if (ed && !(ed.textContent || '').trim()) ed.innerHTML = 'Controlar pieza';
+  }
 }
 // Alias retrocompatible
 function toggleProcCustom() { onProcesoChange(); }
@@ -6394,63 +6485,76 @@ function _opIdPorNombre(busqueda) {
   return found ? found.id : null;
 }
 
+// v70 Fase 8: autocompletar operario al elegir el PROCESO.
+// Si el proceso NO lleva máquina (Compra, Control, Despacho), toma el
+// operario ideal/suplentes de la tabla `procesos`. Si lleva máquina, no
+// hace nada acá: el operario lo define la máquina (ver aplicarAutocompletarPorMaquina).
+// Solo autocompleta si el campo de operario ideal está vacío.
 function aplicarAutocompletarPorProceso(procNombre) {
   if (!procNombre) return;
-  const p = procNombre.toLowerCase().trim();
-  let opIdeal = null;
-  let suplente = null;
-  if (p === 'control') {
-    opIdeal = _opIdPorNombre('leonardo');
-    suplente = _opIdPorNombre('tomas c');
-  } else if (p === 'cierre/despacho' || p === 'cierre' || p === 'despacho') {
-    opIdeal = _opIdPorNombre('tomás s') || _opIdPorNombre('tomas s');
-    suplente = _opIdPorNombre('daniel');  // Daniel Blanco — si no existe, queda null
-  } else {
-    return;  // ninguna regla aplica
+  const cfg = procConfig(procNombre);
+  if (!cfg || cfg.lleva_maquina) return;  // con máquina: lo resuelve la máquina
+  // Filtrar la lista de operarios suplentes ofrecidos a los del proceso.
+  const permitidos = _operariosDelProceso(cfg);
+  _filtrarSuplentesOperario(permitidos);
+  // Autocompletar ideal solo si está vacío.
+  const sel = document.getElementById('p-op-ideal');
+  if (sel && !sel.value && cfg.operario_ideal_id) {
+    sel.value = cfg.operario_ideal_id;
   }
-  _setOperarioIdeal(opIdeal);
-  _setSuplenteUnico(suplente);
+  // Suplentes por defecto del proceso (si no hay suplentes ya elegidos).
+  if (chipState.op.size === 0 && cfg.operarios_suplentes && cfg.operarios_suplentes.length) {
+    buildChips('chips-op', operarios, cfg.operarios_suplentes, 'op');
+  }
 }
 
+// v70 Fase 8: autocompletar operario al elegir la MÁQUINA.
+// El operario ideal/suplentes salen de la máquina. Solo autocompleta el
+// ideal si el campo está vacío (respeta lo ya cargado).
 function aplicarAutocompletarPorMaquina(maqIdRaw) {
   if (!maqIdRaw || maqIdRaw === 'OTRA' || maqIdRaw === 'NINGUNA') return;
-  const maqId = parseInt(maqIdRaw);
-  const maq = maquinas.find(m => m.id === maqId);
+  const maq = maquinas.find(m => m.id === parseInt(maqIdRaw));
   if (!maq) return;
-  const nombre = (maq.nombre || '').toLowerCase().trim();
-  let opIdeal = null;
-  if (nombre === 'st-30') {
-    opIdeal = _opIdPorNombre('roman');
-  } else if (nombre === 'tc alfredo' || nombre === 'tc-alfredo' || nombre.startsWith('tc alfredo') || nombre.startsWith('tc-alfredo')) {
-    opIdeal = _opIdPorNombre('alfredo');
-  } else {
-    return;
-  }
-  _setOperarioIdeal(opIdeal);
-  // v69: las reglas por máquina no especifican suplente, así que limpiamos el
-  // suplente que pudiera estar seteado de antes (de una regla por proceso o
-  // de carga manual).
-  _setSuplenteUnico(null);
-}
-
-function _setOperarioIdeal(operarioId) {
+  // Acotar los operarios suplentes ofrecidos a los de la máquina.
+  const permitidos = _operariosDeMaquina(maq);
+  _filtrarSuplentesOperario(permitidos);
   const sel = document.getElementById('p-op-ideal');
-  if (!sel) return;
-  if (operarioId) {
-    sel.value = operarioId;
-  } else {
-    sel.value = '';
+  if (sel && !sel.value && maq.operario_ideal_id) {
+    sel.value = maq.operario_ideal_id;
+  }
+  if (chipState.op.size === 0 && maq.operarios_suplentes && maq.operarios_suplentes.length) {
+    buildChips('chips-op', operarios, maq.operarios_suplentes, 'op');
   }
 }
 
-// Pone UN único suplente como chip seleccionado (descarta los anteriores).
-function _setSuplenteUnico(operarioId) {
-  if (operarioId) {
-    buildChips('chips-op', operarios, [operarioId], 'op');
-  } else {
-    buildChips('chips-op', operarios, [], 'op');
-  }
+// IDs de operarios asociados a un proceso sin máquina (ideal + suplentes).
+function _operariosDelProceso(cfg) {
+  const ids = [];
+  if (cfg.operario_ideal_id) ids.push(cfg.operario_ideal_id);
+  (cfg.operarios_suplentes || []).forEach(id => { if (!ids.includes(id)) ids.push(id); });
+  return ids;
 }
+
+// IDs de operarios asociados a una máquina (ideal + suplentes).
+function _operariosDeMaquina(maq) {
+  const ids = [];
+  if (maq.operario_ideal_id) ids.push(maq.operario_ideal_id);
+  (maq.operarios_suplentes || []).forEach(id => { if (!ids.includes(id)) ids.push(id); });
+  return ids;
+}
+
+// Acota la lista de operarios suplentes ofrecida (datalist de chips) a los
+// IDs permitidos. Si la lista está vacía, ofrece todos (fallback).
+function _filtrarSuplentesOperario(idsPermitidos) {
+  const lista = (idsPermitidos && idsPermitidos.length)
+    ? operarios.filter(o => idsPermitidos.includes(o.id))
+    : operarios;
+  _operariosSuplenteLista = lista;
+  // Re-render de los chips conservando lo ya seleccionado.
+  renderChips('chips-op', lista, 'op');
+}
+// Lista vigente de operarios ofrecidos como suplentes (para addChipFromInput).
+let _operariosSuplenteLista = null;
 
 // Chip multi-select state for machines/operators "suplentes"
 const chipState = { maq: new Set(), op: new Set() };
@@ -6478,7 +6582,7 @@ function addChipFromInput(kind) {
   const input = document.getElementById('chip-add-' + kind);
   const val = input.value.trim();
   if (!val) return;
-  const list = kind === 'maq' ? maquinas : operarios;
+  const list = kind === 'maq' ? maquinas : (_operariosSuplenteLista || operarios);
   const it = list.find(x => x.nombre.toLowerCase() === val.toLowerCase());
   if (!it) { toast('No se encontro: ' + val, true); input.value = ''; return; }
   if (chipState[kind].has(it.id)) { input.value = ''; return; }
@@ -6489,7 +6593,7 @@ function addChipFromInput(kind) {
 }
 function removeChip(kind, id) {
   chipState[kind].delete(id);
-  const list = kind === 'maq' ? maquinas : operarios;
+  const list = kind === 'maq' ? maquinas : (_operariosSuplenteLista || operarios);
   renderChips(kind === 'maq' ? 'chips-maq' : 'chips-op', list, kind);
 }
 
@@ -7110,21 +7214,31 @@ async function inhabilitarCliente(clienteId) {
     mensaje: 'Inhabilitar "' + c.nombre + '"? El cliente queda oculto de los listados pero podés reactivarlo en cualquier momento. Sus proyectos existentes no se ven afectados.',
     textoConfirmar: 'Inhabilitar',
     onConfirm: async () => {
-      const { error } = await sb.from('clientes').update({ activo: false }).eq('id', clienteId);
-      if (error) { toast('Error: ' + error.message, true); return; }
-      await loadAll();
-      toast('Cliente inhabilitado');
-      render();
+      showSpinner('Inhabilitando cliente...');
+      try {
+        const { error } = await sb.from('clientes').update({ activo: false }).eq('id', clienteId);
+        if (error) { toast('Error: ' + error.message, true); return; }
+        await loadAll();
+        toast('Cliente inhabilitado');
+        render();
+      } finally {
+        hideSpinner();
+      }
     }
   });
 }
 
 async function reactivarCliente(clienteId) {
-  const { error } = await sb.from('clientes').update({ activo: true }).eq('id', clienteId);
-  if (error) { toast('Error: ' + error.message, true); return; }
-  await loadAll();
-  toast('Cliente reactivado');
-  render();
+  showSpinner('Reactivando cliente...');
+  try {
+    const { error } = await sb.from('clientes').update({ activo: true }).eq('id', clienteId);
+    if (error) { toast('Error: ' + error.message, true); return; }
+    await loadAll();
+    toast('Cliente reactivado');
+    render();
+  } finally {
+    hideSpinner();
+  }
 }
 
 function renderClientesList() {
@@ -7157,6 +7271,7 @@ function renderRecursos() {
     ['notas', 'Notas de envío'],
     ['rrhh', 'RRHH'],
     ['maquinas', 'Máquinas'],
+    ['procesos', 'Procesos'],
     ['materiales', 'Materiales']
   ];
   tabs.forEach(([key, label]) => {
@@ -7183,6 +7298,8 @@ function renderRecursos() {
     h += renderClientesTab();
   } else if (activeTab === 'notas') {
     h += renderNotasEnvioTab();
+  } else if (activeTab === 'procesos') {
+    h += renderProcesosTab();
   }
   main.innerHTML = h;
 }
@@ -7478,21 +7595,31 @@ async function inhabilitarMaterial(materialId) {
     mensaje: 'Inhabilitar "' + mat.nombre + '"? El material queda oculto pero podés reactivarlo después.' + extraMsg,
     textoConfirmar: 'Inhabilitar',
     onConfirm: async () => {
-      const { error } = await sb.from('materiales').update({ activo: false }).eq('id', materialId);
-      if (error) { toast('Error: ' + error.message, true); return; }
-      await loadAll();
-      toast('Material inhabilitado');
-      render();
+      showSpinner('Inhabilitando material...');
+      try {
+        const { error } = await sb.from('materiales').update({ activo: false }).eq('id', materialId);
+        if (error) { toast('Error: ' + error.message, true); return; }
+        await loadAll();
+        toast('Material inhabilitado');
+        render();
+      } finally {
+        hideSpinner();
+      }
     }
   });
 }
 
 async function reactivarMaterial(materialId) {
-  const { error } = await sb.from('materiales').update({ activo: true }).eq('id', materialId);
-  if (error) { toast('Error: ' + error.message, true); return; }
-  await loadAll();
-  toast('Material reactivado');
-  render();
+  showSpinner('Reactivando material...');
+  try {
+    const { error } = await sb.from('materiales').update({ activo: true }).eq('id', materialId);
+    if (error) { toast('Error: ' + error.message, true); return; }
+    await loadAll();
+    toast('Material reactivado');
+    render();
+  } finally {
+    hideSpinner();
+  }
 }
 
 // Alias de compatibilidad: si algo viejo todavía llama confirmDeleteMaterial, va a inhabilitar.
@@ -7500,7 +7627,7 @@ async function confirmDeleteMaterial(materialId) { return inhabilitarMaterial(ma
 
 function renderMaquinasTab() {
   // Lista de procesos disponibles (mismo set que el modal de maquina)
-  const procStandard = ['Agujereado','Armado','Compra','Control','Corte','Corte Pantografo','Desarme y limpieza','Despacho/Cierre','Electroerosion','Fresado','Grabado láser','Mantenimiento','Plegado','Rectificado a piedra','Relevamiento','Rolado','Soldadura','Torneado','Tratamiento térmico'];
+  const procStandard = procNombres();
   const activeCount = countActiveMaqFilters();
 
   let h = '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;gap:10px">';
@@ -7565,7 +7692,7 @@ function maqProcSearchClose() {
   if (dd) dd.style.display = 'none';
 }
 function maqProcSearchInput() {
-  const procStandard = ['Agujereado','Armado','Compra','Control','Corte','Corte Pantografo','Desarme y limpieza','Despacho/Cierre','Electroerosion','Fresado','Grabado láser','Mantenimiento','Plegado','Rectificado a piedra','Relevamiento','Rolado','Soldadura','Torneado','Tratamiento térmico'];
+  const procStandard = procNombres();
   const input = document.getElementById('maq-proc-search');
   const dd = document.getElementById('maq-proc-dropdown');
   if (!input || !dd) return;
@@ -7634,7 +7761,7 @@ function showMaquinaForm(maquinaId) {
   if (!isNew && !maq) return;
   // Lista de procesos disponibles (mismo array que en el modal de proceso del item).
   // YA esta ordenada alfabeticamente (lo que necesitamos para el llenado por columnas).
-  const procStandard = ['Agujereado','Armado','Compra','Control','Corte','Corte Pantografo','Desarme y limpieza','Despacho/Cierre','Electroerosion','Fresado','Grabado láser','Mantenimiento','Plegado','Rectificado a piedra','Relevamiento','Rolado','Soldadura','Torneado','Tratamiento térmico'];
+  const procStandard = procNombres();
   const currentProcs = (maq && maq.procesos && Array.isArray(maq.procesos)) ? maq.procesos : [];
 
   const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'maq-modal';
@@ -7658,6 +7785,23 @@ function showMaquinaForm(maquinaId) {
   h += '</div>';
   h += '<div class="ef-help">Si no marcás ninguno, esta máquina aparecerá como fallback en TODAS las opciones de proceso (no se filtra).</div>';
   h += '</div>';
+  // v70 Fase 8: operario ideal y suplentes de la máquina. Al elegir esta
+  // máquina en un proceso, el operario se autocompleta desde acá.
+  const opActivos = operarios.filter(o => o.activo !== false);
+  h += '<div class="ef"><div class="ef-l">Operario ideal</div><select class="ef-i" id="maq-op-ideal">';
+  h += '<option value="">— sin operario —</option>';
+  opActivos.forEach(o => {
+    h += '<option value="' + o.id + '"' + (maq && maq.operario_ideal_id === o.id ? ' selected' : '') + '>' + escapeHtml(o.nombre) + '</option>';
+  });
+  h += '</select></div>';
+  h += '<div class="ef"><div class="ef-l">Operarios suplentes</div>';
+  h += '<select class="ef-i" id="maq-op-supl" multiple size="5" style="height:auto">';
+  opActivos.forEach(o => {
+    const sel = (maq && maq.operarios_suplentes && maq.operarios_suplentes.includes(o.id)) ? ' selected' : '';
+    h += '<option value="' + o.id + '"' + sel + '>' + escapeHtml(o.nombre) + '</option>';
+  });
+  h += '</select>';
+  h += '<div class="ef-help" style="font-size:10px">Mantené Ctrl (o Cmd) para elegir varios. Estos operarios se autocompletan al elegir esta máquina en un proceso.</div></div>';
   h += '<div class="actions">';
   h += '<button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button>';
   h += '<button class="b b-p" onclick="saveMaquina(' + (maquinaId || 'null') + ')">' + (isNew ? 'Crear' : 'Guardar') + '</button>';
@@ -7672,14 +7816,20 @@ async function saveMaquina(maquinaId) {
   if (!nombre) { toast('El nombre es obligatorio', true); return; }
   const cbs = document.querySelectorAll('.maq-proc-cb:checked');
   const procs = [...cbs].map(cb => cb.value);
+  // v70 Fase 8: operario ideal y suplentes de la máquina.
+  const opIdealEl = document.getElementById('maq-op-ideal');
+  const operario_ideal_id = opIdealEl && opIdealEl.value ? parseInt(opIdealEl.value) : null;
+  const opSuplEl = document.getElementById('maq-op-supl');
+  const _sup = opSuplEl ? [...opSuplEl.selectedOptions].map(o => parseInt(o.value)) : [];
+  const operarios_suplentes = _sup.length ? _sup : null;
   // Foto (puede ser nueva, sin cambios, o limpiada)
   const fotoEl = document.getElementById('photo-url-maq');
   const foto = fotoEl ? (fotoEl.value || null) : null;
   if (maquinaId) {
-    const { error } = await sb.from('maquinas').update({ nombre, procesos: procs, foto_url: foto }).eq('id', maquinaId);
+    const { error } = await sb.from('maquinas').update({ nombre, procesos: procs, foto_url: foto, operario_ideal_id, operarios_suplentes }).eq('id', maquinaId);
     if (error) { toast('Error al guardar: ' + error.message, true); console.error(error); return; }
   } else {
-    const { error } = await sb.from('maquinas').insert({ nombre, procesos: procs, foto_url: foto });
+    const { error } = await sb.from('maquinas').insert({ nombre, procesos: procs, foto_url: foto, operario_ideal_id, operarios_suplentes });
     if (error) { toast('Error al crear: ' + error.message, true); console.error(error); return; }
   }
   document.getElementById('maq-modal').remove();
@@ -8124,6 +8274,22 @@ function countActiveMatrizFilters() {
 // y OR entre las ubicaciones del producto.
 function applyMatrizFilters(list) {
   let out = list;
+  // 0. Excluir productos que pertenecen únicamente a clientes inhabilitados.
+  //    Un producto se muestra si es genérico (sin cliente) o si al menos uno
+  //    de los clientes a los que pertenece está activo. Los genéricos no se
+  //    ven afectados.
+  out = out.filter(p => {
+    const cliIds = new Set();
+    if (p.cliente_id) cliIds.add(p.cliente_id);
+    productosMatrizUbicaciones.forEach(u => {
+      if (u.producto_id === p.id && u.cliente_id) cliIds.add(u.cliente_id);
+    });
+    if (cliIds.size === 0) return true;  // genérico: siempre visible
+    return [...cliIds].some(cid => {
+      const c = clientes.find(x => x.id === cid);
+      return c && c.activo !== false;
+    });
+  });
   // 1. Busqueda por descripcion (substring)
   if (matrizFilters.search && matrizFilters.search.trim()) {
     const q = matrizFilters.search.trim().toLowerCase();
@@ -8336,6 +8502,8 @@ function matrizCliSearchInput() {
     candidates.push({ key: 'GENERICO', label: 'Productos Genéricos' });
   }
   clientes.forEach(c => {
+    // No ofrecer clientes inhabilitados (no se muestran en la matriz).
+    if (c.activo === false) return;
     if (!selected.has(c.id)) candidates.push({ key: c.id, label: c.nombre, sublabel: c.codigo || '' });
   });
   _renderMultiDropdown('matriz-cli', input.value, candidates, 'matrizToggleCliente');
@@ -9166,8 +9334,11 @@ function _matrizListClientesHtml() {
     }
   });
 
-  // Ordenar clientes alfabeticamente
-  const cliList = clientes.filter(c => clientesConProductos.has(c.id))
+  // Ordenar clientes alfabeticamente. Se excluyen los inhabilitados: al no
+  // mostrarse el cliente, sus productos exclusivos tampoco aparecen. Un
+  // producto que además esté bajo otro cliente activo sigue visible ahí.
+  const cliList = clientes
+    .filter(c => clientesConProductos.has(c.id) && c.activo !== false)
     .sort((a, b) => (a.nombre || '').localeCompare(b.nombre || ''));
 
   let h = '';
@@ -9798,14 +9969,23 @@ function _ceCamposHtml() {
   //  - producto: cliente, sector, equipo, conjunto (opc.), subconjunto (opc.)
   h += '<div style="font-size:12px;font-weight:600;color:#5F5E5A;margin:14px 0 6px">Ubicación</div>';
 
-  // Cliente (siempre)
+  // Cliente (siempre). Para PRODUCTO el cliente es opcional: puede ser un
+  // producto genérico. Para los demás tipos es obligatorio.
   h += '<div class="ef"><div class="ef-l">🏢 Cliente</div>';
   h += '<select class="ef-i" id="ce-cliente" onchange="_ceClienteChange()">';
-  h += '<option value="">(Elegir cliente)</option>';
-  clientes.slice().sort((a, b) => (a.nombre || '').localeCompare(b.nombre || '')).forEach(c => {
+  if (tipo === 'producto') {
+    h += '<option value="">— Producto Genérico (sin cliente) —</option>';
+  } else {
+    h += '<option value="">(Elegir cliente)</option>';
+  }
+  clientes.filter(c => c.activo !== false).sort((a, b) => (a.nombre || '').localeCompare(b.nombre || '')).forEach(c => {
     h += '<option value="' + c.id + '">' + escapeHtml(c.nombre) + '</option>';
   });
-  h += '</select></div>';
+  h += '</select>';
+  if (tipo === 'producto') {
+    h += '<div class="ef-help" style="font-size:10px">Dejalo en "Producto Genérico" para productos sin cliente (ej. Trabajo General No Repetitivo).</div>';
+  }
+  h += '</div>';
 
   // Sector (para equipo, conjunto, subconjunto, producto)
   if (tipo !== 'sector') {
@@ -9980,10 +10160,11 @@ async function _ceCrear() {
   const tipo = st.tipo;
   const ruta = _ceLeerRuta();
 
-  // Validaciones de ruta según el tipo
-  if (!ruta.clienteId) { toast('Elegí un cliente', true); return; }
-  if (tipo !== 'sector' && !ruta.sectorId) { toast('Elegí un sector', true); return; }
-  if ((tipo === 'conjunto' || tipo === 'subconjunto' || tipo === 'producto') && !ruta.equipoId) {
+  // Validaciones de ruta según el tipo. El PRODUCTO puede ser genérico
+  // (sin cliente); los demás tipos exigen cliente.
+  if (tipo !== 'producto' && !ruta.clienteId) { toast('Elegí un cliente', true); return; }
+  if (tipo !== 'sector' && tipo !== 'producto' && !ruta.sectorId) { toast('Elegí un sector', true); return; }
+  if ((tipo === 'conjunto' || tipo === 'subconjunto') && !ruta.equipoId) {
     toast('Elegí un equipo', true); return;
   }
   if (tipo === 'subconjunto' && !ruta.conjuntoId) { toast('Elegí un conjunto', true); return; }
@@ -11495,9 +11676,10 @@ async function _dupConEjecutar() {
     for (const pi of st.productos) {
       let prodIdFinal = pi.prodId;
       if (pi.modo === 'duplicar') {
+        const _origDesc = (productosMatriz.find(p => p.id === pi.prodId) || {}).descripcion || 'Producto';
         const nuevoProdId = await _duplicarProductoMatriz(pi.prodId, {
           cliente_id: cliId,
-          descripcion: (productosMatriz.find(p => p.id === pi.prodId) || {}).descripcion || 'Producto'
+          descripcion: _origDesc + ' (copia)'
         });
         if (nuevoProdId) prodIdFinal = nuevoProdId;
       }
@@ -11607,9 +11789,10 @@ async function _dupSubEjecutar() {
     for (const pi of st.productos) {
       let prodIdFinal = pi.prodId;
       if (pi.modo === 'duplicar') {
+        const _origDesc = (productosMatriz.find(p => p.id === pi.prodId) || {}).descripcion || 'Producto';
         const nuevoProdId = await _duplicarProductoMatriz(pi.prodId, {
           cliente_id: st.clienteOrig,
-          descripcion: (productosMatriz.find(p => p.id === pi.prodId) || {}).descripcion || 'Producto'
+          descripcion: _origDesc + ' (copia)'
         });
         if (nuevoProdId) prodIdFinal = nuevoProdId;
       }
@@ -11669,11 +11852,12 @@ function _renderPmModal(prod) {
     h += '<div class="row">';
     h += '<div class="ef" style="flex:1"><div class="ef-l">🏢 Cliente</div>';
     h += '<select class="ef-i" id="pm-ubic-cliente" onchange="_pmUbicClienteChange()">';
-    h += '<option value="">(Genérico)</option>';
-    clientes.slice().sort((a, b) => (a.nombre || '').localeCompare(b.nombre || '')).forEach(c => {
+    h += '<option value="">— Producto Genérico (sin cliente) —</option>';
+    clientes.filter(c => c.activo !== false).sort((a, b) => (a.nombre || '').localeCompare(b.nombre || '')).forEach(c => {
       h += '<option value="' + c.id + '">' + escapeHtml(c.nombre) + '</option>';
     });
-    h += '</select></div>';
+    h += '</select>';
+    h += '<div class="ef-help" style="font-size:10px">Dejalo en "Producto Genérico" para productos sin cliente (ej. Trabajo General No Repetitivo).</div></div>';
     h += '<div class="ef" style="flex:1"><div class="ef-l">🏭 Sector</div>';
     h += '<select class="ef-i" id="pm-ubic-sector" onchange="_pmUbicSectorChange()"></select></div>';
     h += '</div>';
@@ -12294,10 +12478,11 @@ async function saveProductoMatriz(productoId) {
   const fotoEl = document.getElementById('photo-url-pm');
   const foto_url = fotoEl ? (fotoEl.value || null) : null;
 
-  // v70 Camino B: el cliente del producto.
+  // v70 Camino B / Fase 8: el cliente del producto.
   // - Si edito: mantengo el cliente_id que ya tenía.
   // - Si creo desde el "+" de una tarjeta: lo tomo del prefill.
-  // - Si creo suelto: queda genérico (null).
+  // - Si creo suelto: lo tomo del selector de ubicación; si está vacío,
+  //   el producto queda genérico (null).
   let cliente_id = null;
   const prefill = pmFormState && pmFormState.prefillUbicacion;
   if (productoId) {
@@ -12305,6 +12490,9 @@ async function saveProductoMatriz(productoId) {
     cliente_id = prodPrev ? (prodPrev.cliente_id || null) : null;
   } else if (prefill && prefill.clienteId) {
     cliente_id = prefill.clienteId;
+  } else {
+    const cliSel = document.getElementById('pm-ubic-cliente');
+    cliente_id = (cliSel && cliSel.value) ? parseInt(cliSel.value) : null;
   }
 
   const payload = {
@@ -12344,11 +12532,16 @@ async function saveProductoMatriz(productoId) {
     }
   }
   // v70 Parte B: al editar un producto existente, sincronizamos su ubicación
-  // con lo elegido en los selectores. (Al crear, la ubicación ya se manejó
-  // arriba con el prefill.)
+  // con lo elegido en los selectores. Al crear suelto (sin prefill), también
+  // sincronizamos si se eligió una ubicación en el selector.
   if (productoId) {
     const ubic = _pmUbicLeer();
     await _pmSincronizarUbicacion(productoId, ubic);
+  } else if (!prefill && savedProductoId) {
+    const ubic = _pmUbicLeer();
+    if (ubic && ubic.clienteId) {
+      await _pmSincronizarUbicacion(savedProductoId, ubic);
+    }
   }
 
   document.getElementById('prod-matriz-modal').remove();
@@ -12796,12 +12989,17 @@ async function inhabilitarContacto(contactoId) {
     mensaje: '¿Inhabilitar a "' + [c.apellido, c.nombre].filter(Boolean).join(', ') + '"? El contacto queda oculto pero podés reactivarlo.',
     textoConfirmar: 'Inhabilitar',
     onConfirm: async () => {
-      const { error } = await sb.from('cliente_contactos').update({ activo: false }).eq('id', contactoId);
-      if (error) { toast('Error: ' + error.message, true); return; }
-      await loadAll();
-      toast('Contacto inhabilitado');
-      const listEl = document.getElementById('contactos-list-cli');
-      if (listEl) listEl.innerHTML = _renderContactosListHtml(c.cliente_id);
+      showSpinner('Inhabilitando contacto...');
+      try {
+        const { error } = await sb.from('cliente_contactos').update({ activo: false }).eq('id', contactoId);
+        if (error) { toast('Error: ' + error.message, true); return; }
+        await loadAll();
+        toast('Contacto inhabilitado');
+        const listEl = document.getElementById('contactos-list-cli');
+        if (listEl) listEl.innerHTML = _renderContactosListHtml(c.cliente_id);
+      } finally {
+        hideSpinner();
+      }
     }
   });
 }
@@ -12809,12 +13007,17 @@ async function inhabilitarContacto(contactoId) {
 async function reactivarContacto(contactoId) {
   const c = clienteContactos.find(x => x.id === contactoId);
   if (!c) return;
-  const { error } = await sb.from('cliente_contactos').update({ activo: true }).eq('id', contactoId);
-  if (error) { toast('Error: ' + error.message, true); return; }
-  await loadAll();
-  toast('Contacto reactivado');
-  const listEl = document.getElementById('contactos-list-cli');
-  if (listEl) listEl.innerHTML = _renderContactosListHtml(c.cliente_id);
+  showSpinner('Reactivando contacto...');
+  try {
+    const { error } = await sb.from('cliente_contactos').update({ activo: true }).eq('id', contactoId);
+    if (error) { toast('Error: ' + error.message, true); return; }
+    await loadAll();
+    toast('Contacto reactivado');
+    const listEl = document.getElementById('contactos-list-cli');
+    if (listEl) listEl.innerHTML = _renderContactosListHtml(c.cliente_id);
+  } finally {
+    hideSpinner();
+  }
 }
 
 // Si hay un combo de contactos en el form de proyecto visible para este
@@ -13328,6 +13531,15 @@ function generateCarpeta(itemId) {
     pedido_nro: proj.pedido_nro || ''
   };
   const cliente = clientes.find(c => c.id === item.cliente_id);
+  // v70: el contacto y el teléfono salen del contacto del PROYECTO
+  // (cliente_contactos), no del campo legacy cliente.contacto.
+  const _contactoProj = proj.contacto_id ? clienteContactos.find(c => c.id === proj.contacto_id) : null;
+  const _contactoNombre = _contactoProj
+    ? [_contactoProj.nombre, _contactoProj.apellido].filter(Boolean).join(' ')
+    : (cliente && cliente.contacto ? cliente.contacto : '');
+  const _contactoTel = _contactoProj && _contactoProj.telefono
+    ? _contactoProj.telefono
+    : (cliente && cliente.telefono ? cliente.telefono : '');
   // Resolver nombre del material (campo material_id es la columna nueva; 'material' es legacy)
   const itemMatLbl = item.material_id ? ((materiales.find(m => m.id === item.material_id) || {}).nombre || '') : (item.material || '');
   const fmt = d => { if (!d) return ''; const [y, m, da] = d.split('-'); return da + '/' + m + '/' + y; };
@@ -13539,11 +13751,11 @@ body { font-family: Arial, sans-serif; font-size: 11px; color: #000; }
       <tr><td class="label">ITEM:</td><td class="pieza-big value-fit" colspan="3"><div class="fit-content">${escapeHtml(item.descripcion)}</div></td></tr>
       <tr class="shade">
         <td class="label">NUMERO DE PEDIDO:</td><td class="value pedido-big">${escapeHtml(item.pedido_nro || '—')}</td>
-        <td class="label label-r">CONTACTO:</td><td class="value value-fit"><div class="fit-content">${escapeHtml(cliente && cliente.contacto ? cliente.contacto : '')}</div></td>
+        <td class="label label-r">CONTACTO:</td><td class="value value-fit"><div class="fit-content">${escapeHtml(_contactoNombre)}</div></td>
       </tr>
       <tr>
         <td class="label">CANTIDAD A REALIZAR:</td><td class="value cantidad-big">${item.cantidad}</td>
-        <td class="label label-r">TELEFONO:</td><td class="value value-fit"><div class="fit-content">${escapeHtml(cliente && cliente.telefono ? cliente.telefono : '')}</div></td>
+        <td class="label label-r">TELEFONO:</td><td class="value value-fit"><div class="fit-content">${escapeHtml(_contactoTel)}</div></td>
       </tr>
       <tr class="shade">
         <td class="label">MATERIAL:</td><td class="value value-fit"><div class="fit-content">${escapeHtml(itemMatLbl)}</div></td>
@@ -14293,6 +14505,163 @@ function renderNotasEnvioTab() {
 
   h += '<div id="ne-lista">' + _neListaHtml() + '</div>';
   return h;
+}
+
+// =====================================================================
+// v70 Fase 8 - PESTAÑA PROCESOS
+// =====================================================================
+
+function renderProcesosTab() {
+  let h = '';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
+  h += '<h2 style="font-size:16px;font-weight:600;margin:0">Procesos</h2>';
+  h += '<button class="b b-p" onclick="showProcesoTipoForm(null)">+ Nuevo proceso</button></div>';
+  h += '<div style="font-size:11px;color:#5F5E5A;margin-bottom:12px">Los procesos <b>con máquina</b> toman el operario de la máquina elegida. Los procesos <b>sin máquina</b> (Compra, Control, Despacho) usan el operario que definas acá.</div>';
+
+  const lista = procesos.slice()
+    .sort((a, b) => (a.orden || 0) - (b.orden || 0) || (a.nombre || '').localeCompare(b.nombre || ''));
+  if (!lista.length) {
+    h += '<div class="list-empty" style="padding:24px">No hay procesos cargados.</div>';
+    return h;
+  }
+  h += '<div style="display:flex;gap:10px;align-items:center;padding:4px 12px;font-size:10px;font-weight:700;color:#5F5E5A;text-transform:uppercase;letter-spacing:0.5px">';
+  h += '<div style="flex:1">Proceso</div><div style="width:110px">Lleva máquina</div>';
+  h += '<div style="width:230px">Operario (procesos sin máquina)</div><div style="width:90px"></div></div>';
+  lista.forEach(p => {
+    const opTxt = p.lleva_maquina
+      ? '— lo define la máquina —'
+      : (p.operario_ideal_id ? opN(p.operario_ideal_id) : '(sin operario)') +
+        ((p.operarios_suplentes && p.operarios_suplentes.length)
+          ? ' · supl: ' + p.operarios_suplentes.map(id => opN(id)).join(', ') : '');
+    h += '<div style="display:flex;gap:10px;align-items:center;padding:7px 12px;background:#fff;border:1px solid #E8E6DF;border-radius:4px;margin-bottom:5px">';
+    h += '<div style="flex:1;font-size:13px;font-weight:600">' + escapeHtml(p.nombre) + '</div>';
+    h += '<div style="width:110px;font-size:12px">' + (p.lleva_maquina ? '🛠 Sí' : 'No') + '</div>';
+    h += '<div style="width:230px;font-size:11px;color:' + (p.lleva_maquina ? '#9A9890' : '#2C2C2A') + '">' + escapeHtml(opTxt) + '</div>';
+    h += '<div style="width:90px;text-align:right"><button class="b b-icon" onclick="showProcesoTipoForm(' + p.id + ')">Editar</button></div>';
+    h += '</div>';
+  });
+  return h;
+}
+
+// Modal de alta/edición de un tipo de proceso.
+function showProcesoTipoForm(procId) {
+  const p = procId ? procesos.find(x => x.id === procId) : null;
+  const esEditar = !!p;
+  const prev = document.getElementById('proctipo-modal');
+  if (prev) prev.remove();
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'proctipo-modal';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '480px';
+
+  let h = '<div class="md-t">' + (esEditar ? 'Editar proceso' : 'Nuevo proceso') + '</div>';
+  h += '<div class="ef"><div class="ef-l">Nombre del proceso <span style="color:#A32D2D">*</span></div>';
+  h += '<input type="text" class="ef-i" id="pt-nombre" value="' + escapeHtml(p ? p.nombre : '') + '" placeholder="Ej. Torneado"></div>';
+
+  h += '<div class="ef"><label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:13px">';
+  h += '<input type="checkbox" id="pt-maq"' + (!p || p.lleva_maquina ? ' checked' : '') + ' onchange="_ptToggleMaq()"> Este proceso se hace en una máquina</label>';
+  h += '<div class="ef-help" style="font-size:10px">Si lo tildás, el operario lo define la máquina (Recursos > Máquinas). Si no, definí el operario acá abajo.</div></div>';
+
+  // Bloque de operario, visible solo si NO lleva máquina.
+  const sinMaq = p && !p.lleva_maquina;
+  h += '<div id="pt-op-wrap" style="display:' + (sinMaq ? 'block' : 'none') + '">';
+  h += '<div class="ef"><div class="ef-l">Operario ideal</div><select class="ef-i" id="pt-op-ideal">';
+  h += '<option value="">— sin operario —</option>';
+  operarios.filter(o => o.activo !== false).forEach(o => {
+    h += '<option value="' + o.id + '"' + (p && p.operario_ideal_id === o.id ? ' selected' : '') + '>' + escapeHtml(o.nombre) + '</option>';
+  });
+  h += '</select></div>';
+  h += '<div class="ef"><div class="ef-l">Operarios suplentes</div>';
+  h += '<select class="ef-i" id="pt-op-supl" multiple size="5" style="height:auto">';
+  operarios.filter(o => o.activo !== false).forEach(o => {
+    const sel = (p && p.operarios_suplentes && p.operarios_suplentes.includes(o.id)) ? ' selected' : '';
+    h += '<option value="' + o.id + '"' + sel + '>' + escapeHtml(o.nombre) + '</option>';
+  });
+  h += '</select>';
+  h += '<div class="ef-help" style="font-size:10px">Mantené Ctrl (o Cmd) para elegir varios.</div></div>';
+  h += '</div>';
+
+  h += '<div class="actions" style="margin-top:14px">';
+  h += '<button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button>';
+  if (esEditar) {
+    h += '<button class="b b-d" onclick="_ptEliminar(' + p.id + ')">🗑 Eliminar</button>';
+  }
+  h += '<button class="b b-p" onclick="guardarProcesoTipo(' + (procId || 'null') + ')">Guardar</button></div>';
+
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
+}
+
+// Muestra/oculta el bloque de operario según el checkbox "lleva máquina".
+function _ptToggleMaq() {
+  const cb = document.getElementById('pt-maq');
+  const wrap = document.getElementById('pt-op-wrap');
+  if (cb && wrap) wrap.style.display = cb.checked ? 'none' : 'block';
+}
+
+async function guardarProcesoTipo(procId) {
+  const nombre = (document.getElementById('pt-nombre').value || '').trim();
+  if (!nombre) { toast('Ingresá el nombre del proceso', true); return; }
+  const llevaMaq = document.getElementById('pt-maq').checked;
+  // Nombre único (excluye el propio en modo editar).
+  const dup = procesos.find(x => (x.nombre || '').toLowerCase() === nombre.toLowerCase() && x.id !== procId);
+  if (dup) { toast('Ya existe un proceso con ese nombre', true); return; }
+
+  let opIdeal = null, opSupl = null;
+  if (!llevaMaq) {
+    const v = document.getElementById('pt-op-ideal').value;
+    opIdeal = v ? parseInt(v) : null;
+    const sel = document.getElementById('pt-op-supl');
+    const sup = sel ? [...sel.selectedOptions].map(o => parseInt(o.value)) : [];
+    opSupl = sup.length ? sup : null;
+  }
+  const payload = { nombre: nombre, lleva_maquina: llevaMaq, operario_ideal_id: opIdeal, operarios_suplentes: opSupl };
+
+  showSpinner('Guardando proceso...');
+  try {
+    if (procId) {
+      const { error } = await sb.from('procesos').update(payload).eq('id', procId);
+      if (error) { toast('Error: ' + error.message, true); return; }
+    } else {
+      const maxOrden = procesos.reduce((mx, p) => Math.max(mx, p.orden || 0), 0);
+      payload.orden = maxOrden + 10;
+      const { error } = await sb.from('procesos').insert(payload);
+      if (error) { toast('Error: ' + error.message, true); return; }
+    }
+    await loadAll();
+    toast('Proceso guardado');
+    const modal = document.getElementById('proctipo-modal');
+    if (modal) modal.remove();
+    render();
+  } finally {
+    hideSpinner();
+  }
+}
+
+function _ptEliminar(procId) {
+  const p = procesos.find(x => x.id === procId);
+  if (!p) return;
+  confirmModal({
+    titulo: 'Eliminar proceso',
+    mensaje: 'Eliminar el proceso "' + p.nombre + '"? Los procesos ya cargados en productos y proyectos no se ven afectados, pero no vas a poder elegirlo para nuevos.',
+    textoConfirmar: 'Eliminar',
+    onConfirm: async () => {
+      showSpinner('Eliminando proceso...');
+      try {
+        const { error } = await sb.from('procesos').delete().eq('id', procId);
+        if (error) { toast('Error: ' + error.message, true); return; }
+        await loadAll();
+        toast('Proceso eliminado');
+        const modal = document.getElementById('proctipo-modal');
+        if (modal) modal.remove();
+        render();
+      } finally {
+        hideSpinner();
+      }
+    }
+  });
+}
+
+// Lee de la tabla `procesos` la config (lleva máquina, operario) de un nombre.
+function procConfig(nombreProceso) {
+  return procesos.find(p => (p.nombre || '') === nombreProceso) || null;
 }
 
 // Lee los inputs de filtro al estado y re-renderiza solo la lista.
