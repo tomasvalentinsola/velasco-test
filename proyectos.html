@@ -2836,7 +2836,7 @@ function renderProjectDetail() {
   h += '<div class="actions" style="margin-top:8px">';
   h += '<button class="b b-d" onclick="confirmDeleteProject()">Eliminar proyecto</button>';
   h += '<button class="b" onclick="descartarCambiosProyecto()" title="Revierte los cambios al estado guardado">Descartar cambios</button>';
-  h += '<button class="b b-p" onclick="saveProjectMeta()">Guardar cambios</button></div>';
+  h += '<button class="b b-p" id="btn-guardar-proyecto" onclick="saveProjectMeta()" disabled style="opacity:0.5;cursor:default">Guardar cambios</button></div>';
 
   h += '<div class="section-t">Items del proyecto <div style="display:flex;gap:6px"><button class="b b-p" onclick="showItemForm(null)">+ Agregar item</button> <button class="b b-p" onclick="showAgregarDesdeMatriz()">+ Agregar desde Matriz</button></div></div>';
   if (proj.items.length > 0) {
@@ -2984,6 +2984,16 @@ function renderProjectDetail() {
   if (!_projectEditSnapshot || _projectEditSnapshot.projectId !== proj.id) {
     _takeProjectSnapshot(proj.id);
   }
+  // v70: el botón "Guardar cambios" se habilita solo si hay cambios.
+  // Escuchamos input/change en el contenedor para re-evaluar en cada edición.
+  const _mainEl = document.getElementById('main') || main;
+  if (_mainEl && !_mainEl._guardarBtnBound) {
+    const _h = () => _refreshBtnGuardarProyecto();
+    _mainEl.addEventListener('input', _h);
+    _mainEl.addEventListener('change', _h);
+    _mainEl._guardarBtnBound = true;
+  }
+  _refreshBtnGuardarProyecto();
 }
 
 // v64: Captura snapshot de los campos editables del proyecto + fotos.
@@ -3053,6 +3063,17 @@ function _takeProjectSnapshot(projectId) {
 }
 
 // v64: Devuelve true si el form/galería tienen cambios respecto del snapshot.
+// Refresca el estado (habilitado/gris) del botón "Guardar cambios" del
+// proyecto según haya o no cambios sin guardar.
+function _refreshBtnGuardarProyecto() {
+  const btn = document.getElementById('btn-guardar-proyecto');
+  if (!btn) return;
+  const hayCambios = _projectHasUnsavedChanges();
+  btn.disabled = !hayCambios;
+  btn.style.opacity = hayCambios ? '1' : '0.5';
+  btn.style.cursor = hayCambios ? 'pointer' : 'default';
+}
+
 // v66: comparaciones robustas (fechas normalizadas, HTML equivalente) y log
 // del primer campo que difiere para debug en consola.
 function _projectHasUnsavedChanges() {
