@@ -188,7 +188,7 @@ function setPulmonActionPref(v) {
   try { localStorage.setItem('velasco_pulmonAction', v); } catch (e) {}
 }
 // States that allow an activity to appear in the "+" picker
-const PROJ_ACTIVE_FOR_TABLERO = new Set(['Confirmado']);
+const PROJ_ACTIVE_FOR_TABLERO = new Set(['Pedido']);
 const ITEM_ACTIVE_FOR_TABLERO = new Set(['Espera MP', 'Llegó MP', 'Proceso', 'Enviar a TT', 'TT', 'Llegó TT']);
 function isActAvailableForPlanning(a) {
   if (a.estado !== 'sin_planificar') return false;
@@ -197,7 +197,7 @@ function isActAvailableForPlanning(a) {
   if (!ITEM_ACTIVE_FOR_TABLERO.has(it.estado || 'Espera MP')) return false;
   const p = proys.find(x => x.id === it.proyecto_id);
   if (!p) return true;  // legacy
-  if (!PROJ_ACTIVE_FOR_TABLERO.has(p.estado || 'Confirmado')) return false;
+  if (!PROJ_ACTIVE_FOR_TABLERO.has(p.estado || 'Pedido')) return false;
   return true;
 }
 
