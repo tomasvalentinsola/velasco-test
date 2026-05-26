@@ -199,7 +199,9 @@ function _esSubconjuntoDefault(sub) {
 let itemsUbicaciones = [];   // Entrega A: ubicaciones de items en proyectos
 let nav = { view: 'projects' };
 // Default filter for projects list: all states except closed/anulado/perdido
-let projectFilters = new Set(['Proyectando', 'Solicitud', 'Pedido']);
+// v70: filtro de estado de la vista Proyectos. Valor: '__activos__',
+// '__todos__' o un estado puntual de PROJ_STATES.
+let projectFilterValue = '__activos__';
 
 // ============= FILTROS AVANZADOS =============
 // Estado persistente en localStorage. Filtros aplicados (no en edicion).
@@ -1193,20 +1195,16 @@ function renderProjectsList() {
   }
   h += '</div>';
 
-  // Fila 1: filtros de estado + boton avanzados
+  // Fila 1: filtro de estado (desplegable) + boton avanzados
   h += '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px">';
-  h += '<div style="display:flex;flex-wrap:wrap;gap:6px;flex:1">';
-  h += '<div style="font-size:11px;font-weight:600;color:#5F5E5A;align-self:center;margin-right:6px">Estado:</div>';
-  PROJ_STATES.forEach(st => {
-    const isOn = projectFilters.has(st);
-    const colors = projStateColor(st);
-    const style = isOn
-      ? 'background:' + colors.bg + ';color:' + colors.fg + ';border:1px solid ' + colors.fg
-      : 'background:#fff;color:#888780;border:1px solid #C8C6BE';
-    h += '<button class="b" style="' + style + ';padding:3px 9px;font-size:11px;font-weight:600" onclick="toggleProjectFilter(\'' + st + '\')">' + st + '</button>';
+  h += '<div style="display:flex;flex-wrap:wrap;gap:6px;flex:1;align-items:center">';
+  h += '<div style="font-size:11px;font-weight:600;color:#5F5E5A">Estado:</div>';
+  h += '<select class="ef-i" style="width:auto;padding:4px 8px;font-size:12px" onchange="setProjectFilterValue(this.value)">';
+  const _pfOpts = [['__activos__', 'Activos'], ['__todos__', 'Todos']].concat(PROJ_STATES.map(s => [s, s]));
+  _pfOpts.forEach(([val, lbl]) => {
+    h += '<option value="' + val + '"' + (projectFilterValue === val ? ' selected' : '') + '>' + lbl + '</option>';
   });
-  h += '<button class="b" style="padding:3px 9px;font-size:11px;margin-left:6px" onclick="setProjectFilters(true)">Todos</button>';
-  h += '<button class="b" style="padding:3px 9px;font-size:11px" onclick="setProjectFilters(false)">Activos</button>';
+  h += '</select>';
   h += '</div>';
   // Boton de filtros avanzados
   const badge = activeCount > 0 ? ' (' + activeCount + ')' : '';
@@ -1230,8 +1228,16 @@ function renderProjectsList() {
   h += '</div>';   // fin contenedor blanco
   h += '</div>';   // fin sticky bar
 
-  // Listado: aplica primero filtro de estado, luego advFilters
-  const filteredProjects = applyAdvFilters(getProjects().filter(p => projectFilters.has(p.estado || 'Pedido')));
+  // Listado: aplica primero filtro de estado, luego advFilters.
+  // '__activos__' = Proyectando/Solicitud/Pedido; '__todos__' = sin filtro;
+  // cualquier otro valor = ese estado puntual.
+  const _activos = ['Proyectando', 'Solicitud', 'Pedido'];
+  const filteredProjects = applyAdvFilters(getProjects().filter(p => {
+    const est = p.estado || 'Pedido';
+    if (projectFilterValue === '__todos__') return true;
+    if (projectFilterValue === '__activos__') return _activos.includes(est);
+    return est === projectFilterValue;
+  }));
 
   if (viewMode === 'items') {
     h += renderItemsListBody(filteredProjects);
@@ -1724,13 +1730,8 @@ function advCliModalToggle(id) {
   refreshAdvFiltersPanel();
 }
 
-function toggleProjectFilter(state) {
-  if (projectFilters.has(state)) projectFilters.delete(state);
-  else projectFilters.add(state);
-  render();
-}
-function setProjectFilters(all) {
-  projectFilters = new Set(all ? PROJ_STATES : ['Proyectando', 'Solicitud', 'Pedido']);
+function setProjectFilterValue(val) {
+  projectFilterValue = val;
   render();
 }
 
@@ -1788,8 +1789,10 @@ function renderNewProjectForm() {
   h += '<div id="f-contacto-warn" style="display:none;font-size:11px;color:#854F0B;background:#FFF8E1;padding:4px 8px;border-radius:3px;margin-top:3px;border:1px solid #FFE5A0">⚠ Falta asignar contacto del proyecto. En TácticaSoft es obligatorio.</div>';
   h += '</div>';
   h += '<div class="ef"><div class="ef-l">Cliente final (opcional)</div>';
-  h += '<input type="text" class="ef-i" id="f-clifinal" placeholder="Ej. GDLP">';
-  h += '<div class="ef-help">Para casos como stock interno donde el destinatario real es otro.</div></div>';
+  h += '<label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#5F5E5A;margin-bottom:4px;cursor:pointer">';
+  h += '<input type="checkbox" id="f-clifinal-hab" onchange="_toggleClienteFinal()"> Habilitar cliente final</label>';
+  h += '<input type="text" class="ef-i" id="f-clifinal" placeholder="Ej. GDLP" disabled style="background:#F0EFEA;color:#5F5E5A">';
+  h += '<div class="ef-help">Para casos como stock interno donde el destinatario real es otro. Marcá la casilla para habilitarlo.</div></div>';
   h += '<div class="ef" id="ef-pedido" style="display:none"><div class="ef-l">Numero de pedido <span style="color:#A32D2D">*</span></div>';
   h += '<input type="text" class="ef-i" id="f-pedido" placeholder="Ej. 4130 (de TacticaSoft)">';
   h += '<div class="ef-help">Solo para proyectos confirmados. Si no lo tenes ahora, podes dejarlo vacio y aparecera una advertencia.</div>';
@@ -2348,6 +2351,24 @@ function _llenarComboContactoProj(clienteId, selectedId) {
 function _toggleContactoWarn(showWarn) {
   const w = document.getElementById('f-contacto-warn');
   if (w) w.style.display = showWarn ? 'block' : 'none';
+}
+
+// v70: habilita/deshabilita el campo "Cliente final" según la casilla.
+function _toggleClienteFinal() {
+  const cb = document.getElementById('f-clifinal-hab');
+  const inp = document.getElementById('f-clifinal');
+  if (!cb || !inp) return;
+  if (cb.checked) {
+    inp.disabled = false;
+    inp.style.background = '#fff';
+    inp.style.color = '#2C2C2A';
+    inp.focus();
+  } else {
+    inp.disabled = true;
+    inp.style.background = '#F0EFEA';
+    inp.style.color = '#5F5E5A';
+    inp.value = '';
+  }
 }
 
 function onContactoComboChange() {
@@ -6021,7 +6042,31 @@ function showProcesoForm(procesoId, ctx) {
   }, 50);
 }
 
+// v70: flag de reentrada y wrapper. Evita el doble-guardado si se clickea
+// "Agregar" dos veces mientras la primera operación todavía está en curso.
+let _guardandoProceso = false;
 async function saveProceso(procesoId) {
+  if (_guardandoProceso) return;  // ya hay un guardado en curso
+  _guardandoProceso = true;
+  // Deshabilitar el botón del modal y mostrar spinner.
+  const btn = document.querySelector('#proc-modal .b-p');
+  const txtOrig = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Guardando...'; }
+  showSpinner('Guardando proceso...');
+  try {
+    await _saveProcesoImpl(procesoId);
+  } catch (e) {
+    toast('Error al guardar el proceso: ' + (e.message || e), true);
+  } finally {
+    hideSpinner();
+    _guardandoProceso = false;
+    // El modal puede haberse cerrado tras un guardado exitoso; si sigue
+    // abierto (hubo error de validación), restauramos el botón.
+    if (btn && document.body.contains(btn)) { btn.disabled = false; btn.textContent = txtOrig; }
+  }
+}
+
+async function _saveProcesoImpl(procesoId) {
   // Contexto: 'item' (proyecto) o 'producto' (matriz).
   const ctxItem = procCtx.tipo === 'item';
   const ctxProducto = procCtx.tipo === 'producto';
@@ -12542,6 +12587,24 @@ async function confirmDeleteProductoMatriz(productoId) {
   });
 }
 
+// v70: File del logo elegido al crear un cliente nuevo (se sube al guardar).
+let _clienteNuevoFoto = null;
+
+// Handler del input de logo en el modal de cliente nuevo: guarda el File y
+// muestra una vista previa.
+function _clienteNuevoFotoChange(input) {
+  const file = input.files && input.files[0];
+  _clienteNuevoFoto = file || null;
+  const prev = document.getElementById('c-logo-preview');
+  if (!prev) return;
+  if (!file) { prev.innerHTML = ''; return; }
+  const reader = new FileReader();
+  reader.onload = e => {
+    prev.innerHTML = '<img src="' + e.target.result + '" style="max-width:120px;max-height:90px;border:1px solid #ddd;border-radius:4px">';
+  };
+  reader.readAsDataURL(file);
+}
+
 function showClienteForm(clienteId) {
   const cliente = clienteId ? clientes.find(c => c.id === clienteId) : null;
   const isNew = !cliente;
@@ -12576,12 +12639,20 @@ function showClienteForm(clienteId) {
   h += '<input type="text" class="ef-i" id="c-cp" value="' + escapeHtml(cliente && cliente.codigo_postal ? cliente.codigo_postal : '') + '" placeholder="Ej. 6330" style="max-width:160px">';
   h += '<div class="ef-help" style="font-size:10px">Se usa en la etiqueta de envío.</div></div>';
 
-  // v70 Fase 4.5: logo del cliente. La galería opera directo sobre la DB.
-  // Solo disponible si el cliente ya existe (al crear, se sube después).
+  // v70 Fase 4.5: logo del cliente.
   if (!isNew) {
+    // Cliente existente: galería que opera directo sobre la DB.
     h += '<div class="ef"><div class="ef-l">Logo del cliente</div>';
     h += buildPhotoGalleryHtml('cliente', cliente.id, 'cliente');
     h += '<div class="ef-help" style="font-size:10px">Se usa la primera foto como logo en la matriz.</div></div>';
+  } else {
+    // Cliente nuevo: todavía no hay id. Se elige el archivo y se sube al
+    // guardar. _clienteNuevoFoto guarda el File pendiente.
+    _clienteNuevoFoto = null;
+    h += '<div class="ef"><div class="ef-l">Logo del cliente</div>';
+    h += '<input type="file" accept="image/*" id="c-logo-nuevo" onchange="_clienteNuevoFotoChange(this)" style="font-size:12px">';
+    h += '<div id="c-logo-preview" style="margin-top:6px"></div>';
+    h += '<div class="ef-help" style="font-size:10px">Opcional. Se sube al crear el cliente.</div></div>';
   }
 
   // Campos legacy: "contacto" (texto libre) y "telefono" del cliente quedan
@@ -12846,6 +12917,21 @@ async function saveCliente(clienteId) {
     // v67: auto-crear "General" + "Sin equipo específico" para el cliente
     // recién creado. Idempotente: si ya existen no los duplica.
     await _ensureDefaultsCliente(savedId);
+    // v70: si se eligió un logo en el modal de nuevo cliente, subirlo ahora
+    // que ya tenemos el id.
+    if (_clienteNuevoFoto) {
+      showSpinner('Subiendo logo...');
+      try {
+        const url = await uploadImagenABucket(_clienteNuevoFoto);
+        if (url) await agregarFoto('cliente', savedId, url);
+        else toast('El cliente se creó pero el logo no se pudo subir', true);
+      } catch (e) {
+        toast('El cliente se creó pero el logo no se pudo subir', true);
+      } finally {
+        hideSpinner();
+        _clienteNuevoFoto = null;
+      }
+    }
     toast('Cliente creado');
   }
   await loadAll();
