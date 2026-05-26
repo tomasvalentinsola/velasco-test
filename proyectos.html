@@ -2635,35 +2635,44 @@ async function _crearItemDesdeBuffer(item, proj, projDesc, urgencia, projFoto, f
     // Procesos (batch)
     const procs = item.fromMatriz.procesos || [];
     if (procs.length > 0) {
-      const actInserts = procs.map((pp, i) => ({
-        item_id: newItem.id,
-        cliente_id: proj.cliente_id,
-        pedido_nro: proj.pedido_nro,
-        descripcion: item.descripcion + ' - ' + (pp.proceso || ''),
-        descripcion_proyecto: projDesc,
-        descripcion_trabajo: pp.trabajo_a_realizar || null,
-        proceso: pp.proceso,
-        duracion_estimada_min: pp.duracion_estimada_min,
-        duracion_margen_min: pp.duracion_margen_min || 0,
-        duracion_operario_min: pp.duracion_operario_min,
-        duracion_planificador_min: (pp.duracion_estimada_min || 0) + (pp.duracion_margen_min || 0),
-        tipo: pp.tipo,
-        maquina_ideal_id: pp.maquina_ideal_id,
-        maquina_ideal_nombre: pp.maquina_ideal_nombre,
-        maquinas_suplentes_ids: pp.maquinas_suplentes,
-        operario_ideal_id: pp.operario_ideal_id,
-        operarios_suplentes_ids: pp.operarios_suplentes,
-        urgencia: urgencia,
-        foto_proyecto_url: projFoto,
-        foto_url: item.foto_url,
-        fecha_ingreso: fechaIngreso,
-        cliente_final: clienteFinal,
-        orden: i + 1,
-        estado: 'sin_planificar',
-        fecha: '1900-01-01',
-        hora_inicio: '06:00:00',
-        estado_proceso: 'Planificación Pendiente'
-      }));
+      // v70 Fase 7: el tiempo del proceso escala con la cantidad de piezas.
+      // operación es por pieza; setup es una sola vez.
+      //   duración total = setup + cantidad * operación
+      const cantPiezas = item.cantidad || 1;
+      const actInserts = procs.map((pp, i) => {
+        const oper = pp.duracion_estimada_min || 0;     // tiempo por pieza
+        const setup = pp.duracion_operario_min || 0;     // setup, una vez
+        const durTotal = setup + cantPiezas * oper;
+        return {
+          item_id: newItem.id,
+          cliente_id: proj.cliente_id,
+          pedido_nro: proj.pedido_nro,
+          descripcion: item.descripcion + ' - ' + (pp.proceso || ''),
+          descripcion_proyecto: projDesc,
+          descripcion_trabajo: pp.trabajo_a_realizar || null,
+          proceso: pp.proceso,
+          duracion_estimada_min: durTotal,
+          duracion_margen_min: pp.duracion_margen_min || 0,
+          duracion_operario_min: setup,
+          duracion_planificador_min: durTotal + (pp.duracion_margen_min || 0),
+          tipo: pp.tipo,
+          maquina_ideal_id: pp.maquina_ideal_id,
+          maquina_ideal_nombre: pp.maquina_ideal_nombre,
+          maquinas_suplentes_ids: pp.maquinas_suplentes,
+          operario_ideal_id: pp.operario_ideal_id,
+          operarios_suplentes_ids: pp.operarios_suplentes,
+          urgencia: urgencia,
+          foto_proyecto_url: projFoto,
+          foto_url: item.foto_url,
+          fecha_ingreso: fechaIngreso,
+          cliente_final: clienteFinal,
+          orden: i + 1,
+          estado: 'sin_planificar',
+          fecha: '1900-01-01',
+          hora_inicio: '06:00:00',
+          estado_proceso: 'Planificación Pendiente'
+        };
+      });
       const { data: actsData, error: actErr } = await sb.from('actividades_tablero').insert(actInserts).select('id');
       if (actErr) { console.error('Error creando procesos:', actErr); return { error: actErr.message }; }
       const newActIds = (actsData || []).map(x => x.id);
@@ -5220,6 +5229,11 @@ async function _importarProductoCore(productoId, valores, ignorarValidaciones) {
         return !op || op.activo !== false;
       });
     }
+    // v70 Fase 7: duración del proceso = setup + cantidad * operación.
+    const _cantPiezas = newItem.cantidad || 1;
+    const _oper = pp.duracion_estimada_min || 0;
+    const _setup = pp.duracion_operario_min || 0;
+    const _durTotal = _setup + _cantPiezas * _oper;
     return {
       item_id: newItem.id,
       cliente_id: proj.cliente_id,
@@ -5228,10 +5242,10 @@ async function _importarProductoCore(productoId, valores, ignorarValidaciones) {
       descripcion_proyecto: proj.descripcion,
       descripcion_trabajo: pp.trabajo_a_realizar || null,
       proceso: pp.proceso,
-      duracion_estimada_min: pp.duracion_estimada_min,
+      duracion_estimada_min: _durTotal,
       duracion_margen_min: pp.duracion_margen_min || 0,
-      duracion_operario_min: pp.duracion_operario_min,
-      duracion_planificador_min: (pp.duracion_estimada_min || 0) + (pp.duracion_margen_min || 0),
+      duracion_operario_min: _setup,
+      duracion_planificador_min: _durTotal + (pp.duracion_margen_min || 0),
       tipo: pp.tipo,
       maquina_ideal_id: maq_id,
       maquina_ideal_nombre: pp.maquina_ideal_nombre,
@@ -5492,7 +5506,7 @@ function renderItemDetail() {
       if (p.tipo === 'automatica') tag = '<span class="tag tag-auto">AUTO</span>';
       else if (p.tipo === 'semi_automatica') tag = '<span class="tag tag-semi">SEMI</span>';
       else tag = '<span class="tag tag-man">MAN</span>';
-      const setup = (p.tipo === 'automatica' || p.tipo === 'semi_automatica') && p.duracion_operario_min ? ' · setup: ' + p.duracion_operario_min + ' min' : '';
+      const setup = p.duracion_operario_min ? ' · setup: ' + p.duracion_operario_min + ' min' : '';
       const supMaqs = (p.maquinas_suplentes_ids || []).map(id => mN(parseInt(id))).join(', ');
       const supOps = (p.operarios_suplentes_ids || []).map(id => opN(parseInt(id))).join(', ');
       const isPlanificada = p.estado && p.estado !== 'sin_planificar' && p.fecha !== '1900-01-01';
@@ -5604,7 +5618,7 @@ function renderProductoMatrizDetail() {
       if (p.tipo === 'automatica') tag = '<span class="tag tag-auto">AUTO</span>';
       else if (p.tipo === 'semi_automatica') tag = '<span class="tag tag-semi">SEMI</span>';
       else tag = '<span class="tag tag-man">MAN</span>';
-      const setup = (p.tipo === 'automatica' || p.tipo === 'semi_automatica') && p.duracion_operario_min ? ' · setup: ' + p.duracion_operario_min + ' min' : '';
+      const setup = p.duracion_operario_min ? ' · setup: ' + p.duracion_operario_min + ' min' : '';
       // Suplentes: en producto matriz se llaman maquinas_suplentes / operarios_suplentes
       const supMaqs = (p.maquinas_suplentes || []).map(id => mN(parseInt(id))).join(', ');
       const supOps = (p.operarios_suplentes || []).map(id => opN(parseInt(id))).join(', ');
@@ -5612,7 +5626,7 @@ function renderProductoMatrizDetail() {
       h += '<div class="proc-card-t"><span style="color:#888780;font-weight:400;margin-right:6px">' + (idx + 1) + '.</span>' + escapeHtml(p.proceso || p.descripcion || '') + tag;
       h += '</div>';
       h += '<div class="proc-card-s">';
-      h += '<b>Duración estimada:</b> ' + dur + setup + '<br>';
+      h += '<b>Tiempo de operación (por pieza):</b> ' + dur + setup + '<br>';
       h += '<b>Maq. ideal:</b> ' + escapeHtml(p.maquina_ideal_id ? mN(p.maquina_ideal_id) : (p.maquina_ideal_nombre ? p.maquina_ideal_nombre + ' (otra)' : '— ninguna —')) + (supMaqs ? ' · <b>Suplentes:</b> ' + escapeHtml(supMaqs) : '') + '<br>';
       h += '<b>Op. ideal:</b> ' + escapeHtml(p.operario_ideal_id ? opN(p.operario_ideal_id) : '—') + (supOps ? ' · <b>Suplentes:</b> ' + escapeHtml(supOps) : '');
       if (p.trabajo_a_realizar) {
@@ -5935,10 +5949,16 @@ function showProcesoForm(procesoId, ctx) {
   h += '<div class="ef-help">Sera lo que se muestra en el bloque del tablero junto al item.</div></div>';
 
   h += '<div class="row">';
-  h += '<div class="ef" style="flex:1"><div class="ef-l">Duracion estimada (min) <span style="color:#A32D2D">*</span></div>';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Tiempo de operación (min) <span style="color:#A32D2D">*</span></div>';
   h += '<input type="number" class="ef-i" id="p-dur" value="' + (proceso ? proceso.duracion_estimada_min : '') + '" min="10" step="10" placeholder="Ej. 240"></div>';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Tiempo de setup (min)</div>';
+  h += '<input type="number" class="ef-i" id="p-setup" value="' + (proceso && proceso.duracion_operario_min != null ? proceso.duracion_operario_min : 0) + '" min="0" step="5" placeholder="0"></div>';
+  h += '</div>';
+  h += '<div class="ef-help" style="margin-top:-6px;margin-bottom:10px;font-size:10px">El <b>tiempo de operación</b> es por pieza (incluye sacar la terminada y poner la siguiente). El <b>tiempo de setup</b> es el seteo de la máquina, una sola vez. Para varias unidades: setup + cantidad × operación.</div>';
+  h += '<div class="row">';
   h += '<div class="ef" style="flex:1"><div class="ef-l">Margen (min)</div>';
   h += '<input type="number" class="ef-i" id="p-margen" value="' + (proceso && proceso.duracion_margen_min ? proceso.duracion_margen_min : 0) + '" min="0" step="10"></div>';
+  h += '<div class="ef" style="flex:1"></div>';
   h += '</div>';
 
   // Tipo de proceso: 3 opciones (manual / semi-automatica / automatica)
@@ -5962,13 +5982,6 @@ function showProcesoForm(procesoId, ctx) {
   if (isPlanificada) {
     h += '<div id="p-tipo-warn" style="display:none;background:#FEF0F0;color:#A32D2D;padding:8px 12px;border-radius:5px;margin-bottom:10px;font-size:11px;border:1px solid #FEDADA"><b>⚠ Atencion:</b> esta actividad ya esta planificada en el tablero. Cambiar el tipo modifica como se comporta el bloque y puede desplazar otras actividades.</div>';
   }
-
-  // Setup wrap visible para semi y automatica
-  const showSetup = (tipo === 'semi_automatica' || tipo === 'automatica');
-  h += '<div class="ef" id="p-setup-wrap" style="' + (showSetup ? '' : 'display:none') + '">';
-  h += '<div class="ef-l">Duracion del setup (min) <span style="color:#A32D2D">*</span></div>';
-  h += '<input type="number" class="ef-i" id="p-setup" value="' + (proceso && proceso.duracion_operario_min ? proceso.duracion_operario_min : '') + '" min="0" step="5" placeholder="Ej. 30">';
-  h += '<div class="ef-help">Tiempo que el operario esta atado a la maquina al inicio.</div></div>';
 
   h += '<div class="ef"><div class="ef-l">Maquina ideal <span style="color:#A32D2D">*</span></div>';
   h += '<select class="ef-i" id="p-maq-ideal" onchange="toggleMaqOtra()">';
@@ -6111,13 +6124,10 @@ async function _saveProcesoImpl(procesoId) {
     maqIdealId = parseInt(maqVal);
   }
   const opIdeal = parseInt(document.getElementById('p-op-ideal').value);
-  let setup = null;
-  if (tipo === 'automatica' || tipo === 'semi_automatica') {
-    const v = document.getElementById('p-setup').value.trim();
-    if (!v) { toast('Para ' + (tipo === 'automatica' ? 'automaticas' : 'semi-automaticas') + ', ingresa la duracion del setup', true); return; }
-    setup = parseInt(v);
-  }
-  if (!dur || dur < 10) { toast('Duracion estimada minima: 10 min', true); return; }
+  // v70 Fase 7: el tiempo de setup aplica a todos los procesos. Default 0.
+  let setup = parseInt(document.getElementById('p-setup').value);
+  if (isNaN(setup) || setup < 0) setup = 0;
+  if (!dur || dur < 10) { toast('El tiempo de operación mínimo es 10 min', true); return; }
   if (!opIdeal) { toast('Elegi operario ideal', true); return; }
 
   const supMaqs = [...chipState.maq];
@@ -6300,11 +6310,6 @@ async function confirmDeleteProceso(procesoId) {
 // la advertencia si la actividad esta planificada y se esta cambiando el tipo.
 function onTipoChange() {
   const sel = document.querySelector('input[name="p-tipo"]:checked');
-  const wrap = document.getElementById('p-setup-wrap');
-  if (sel && wrap) {
-    const v = sel.value;
-    wrap.style.display = (v === 'automatica' || v === 'semi_automatica') ? '' : 'none';
-  }
   // Repintar borde/fondo de cada label segun el radio seleccionado
   document.querySelectorAll('input[name="p-tipo"]').forEach(r => {
     const label = r.closest('label');
