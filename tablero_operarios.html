@@ -244,7 +244,12 @@ function mT(m){return String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).
 function pL(m){return Math.max(0,(m-360)/660*100)}
 function pW(d){return d/660*100}
 function opC(id){const o=ops.find(x=>x.id===id);return o?o.color_borde:'#888'}
-function opN(id){const o=ops.find(x=>x.id===id);return o?o.nombre:'?'}
+function opN(id){
+  const o=ops.find(x=>x.id===id);
+  if(!o)return'?';
+  const ap=(o.apellido||'').trim();
+  return ap?(o.nombre+' '+ap.charAt(0).toUpperCase()+'.'):(o.nombre||'?');
+}
 function opI(name){const o=ops.find(x=>x.nombre===name);return o?o.id:null}
 function clN(id){const c=cls.find(x=>x.id===id);return c?c.nombre:'?'}
 function mN(id){const m=maq.find(x=>x.id===id);return m?m.nombre:'?'}
@@ -5046,7 +5051,10 @@ window.testMotor = function(verbose) {
 // ========== INIT ==========
 async function init() {
   const { data: mD } = await sb.from('maquinas').select('id,nombre'); maq = mD || [];
-  const { data: oD } = await sb.from('operarios').select('*'); ops = oD || [];
+  // v70 Fase 9: solo se planifican en el tablero las personas marcadas con
+  // en_tablero. El resto (administración, dirección) queda fuera.
+  const { data: oD } = await sb.from('operarios').select('*');
+  ops = (oD || []).filter(o => o.en_tablero !== false && o.activo !== false);
   const { data: cD } = await sb.from('clientes').select('*'); cls = cD || [];
   const { data: aD } = await sb.from('actividades_tablero').select('*'); acts = aD || [];
   // Cleanup: eliminar de la DB cualquier activ con proceso_eliminado=true que
