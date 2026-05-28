@@ -408,8 +408,8 @@ function toast(m){const t=document.getElementById('to');t.textContent=m;t.classL
 function updU(){const b=document.getElementById('bu');if(!b)return;b.disabled=uStack.length===0;document.getElementById('uc').textContent=uStack.length>0?uStack.length+' cambio(s)':''}
 function canPlace(act,machId){if(!act.maquina_ideal_id)return true;if(mN(machId)==='Otra')return true;return act.maquina_ideal_id===machId||(act.maquinas_suplentes_ids||[]).includes(machId)}
 function nwd(ds){const d=new Date(ds+'T12:00:00');do{d.setDate(d.getDate()+1)}while(d.getDay()===0);return dK(d)}
-function sS(opId){const o=ops.find(x=>x.id===opId);return o?tM(o.horario_inicio||'06:00'):360}
-function sE(opId,ds){const o=ops.find(x=>x.id===opId);if(!o)return 1020;const d=new Date(ds+'T12:00:00');return d.getDay()===6?tM(o.horario_sabado_fin||'12:00'):tM(o.horario_fin||'15:00')}
+function sS(opId){const o=ops.find(x=>x.id===opId);return o?tM(o.horario_entrada||o.horario_inicio||'06:00'):360}
+function sE(opId,ds){const o=ops.find(x=>x.id===opId);if(!o)return 1020;const d=new Date(ds+'T12:00:00');return d.getDay()===6?tM(o.horario_sabado_fin||'12:00'):tM(o.horario_salida||o.horario_fin||'15:00')}
 
 // ========== VISUAL BLOCKS (multi-day aware) ==========
 // Splits each activity across days according to operator's shift schedule.
@@ -2428,8 +2428,12 @@ function render() {
   const days = getDays();
   const vBlocks = computeVB();
 
-  // Resolve operator IDs (silently skip any name missing from DB)
-  const colOps = OP_ORDER.map(name => ({ name, id: opI(name) })).filter(o => o.id !== null);
+  // v70 Fase 9: las columnas son los operarios con en_tablero=true (ya
+  // filtrados al cargar `ops`), ordenados alfabéticamente por nombre de
+  // display. Antes la lista estaba hardcodeada y se rompía al cambiar nombres.
+  const colOps = ops.slice()
+    .sort((a, b) => opN(a.id).localeCompare(opN(b.id)))
+    .map(o => ({ name: opN(o.id), id: o.id }));
 
   // Assign tracks ONCE across all days so multi-day activities keep their track
   const maxStackByDayOp = assignTracksAcrossDays(vBlocks);

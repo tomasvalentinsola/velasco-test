@@ -6098,7 +6098,11 @@ function showProcesoForm(procesoId, ctx) {
   ).join('') +
   '<option value="OTRA"' + (maqSelected === 'OTRA' ? ' selected' : '') + '>Otra (especificar)</option>' +
   '<option value="NINGUNA"' + (maqSelected === 'NINGUNA' ? ' selected' : '') + '>Ninguna (sin maquina)</option>';
-  const opOpts = operarios.map(o => '<option value="' + o.id + '"' + (proceso && proceso.operario_ideal_id === o.id ? ' selected' : '') + '>' + escapeHtml(opDisplayName(o)) + '</option>').join('');
+  // v70 Fase 9: opción vacía al inicio para que el autocompletado por
+  // proceso/máquina funcione (si no, el select arranca con el primer operario
+  // y nunca queda "vacío" para autocompletar).
+  const opOpts = '<option value="">— Operario ideal —</option>' +
+    operarios.map(o => '<option value="' + o.id + '"' + (proceso && proceso.operario_ideal_id === o.id ? ' selected' : '') + '>' + escapeHtml(opDisplayName(o)) + '</option>').join('');
   // Suplentes: actividades_tablero los guarda en _ids; productos_matriz_procesos sin sufijo.
   const supMaqIds = proceso ? ((proceso.maquinas_suplentes_ids || proceso.maquinas_suplentes || []).map(x => parseInt(x))) : [];
   const supOpIds = proceso ? ((proceso.operarios_suplentes_ids || proceso.operarios_suplentes || []).map(x => parseInt(x))) : [];
@@ -6174,7 +6178,7 @@ function showProcesoForm(procesoId, ctx) {
   h += '<div class="chip-wrap" id="chips-maq" onclick="document.getElementById(\'chip-add-maq\').focus()"></div></div>';
 
   h += '<div class="ef"><div class="ef-l">Operario ideal <span style="color:#A32D2D">*</span></div>';
-  h += '<select class="ef-i" id="p-op-ideal">' + opOpts + '</select></div>';
+  h += '<select class="ef-i" id="p-op-ideal" onchange="_onOpIdealChange()">' + opOpts + '</select></div>';
 
   h += '<div class="ef"><div class="ef-l">Operarios suplentes</div>';
   h += '<div class="chip-wrap" id="chips-op" onclick="document.getElementById(\'chip-add-op\').focus()"></div></div>';
@@ -6617,6 +6621,19 @@ function _opIdPorNombre(busqueda) {
 // operario ideal/suplentes de la tabla `procesos`. Si lleva máquina, no
 // hace nada acá: el operario lo define la máquina (ver aplicarAutocompletarPorMaquina).
 // Solo autocompleta si el campo de operario ideal está vacío.
+// v70 Fase 9: cuando se elige un operario ideal, se lo quita de los
+// suplentes (no puede estar en los dos a la vez).
+function _onOpIdealChange() {
+  const sel = document.getElementById('p-op-ideal');
+  if (!sel) return;
+  const idealId = parseInt(sel.value);
+  if (!idealId) return;
+  if (chipState.op && chipState.op.has(idealId)) {
+    chipState.op.delete(idealId);
+    renderChips('chips-op', _operariosSuplenteLista || operarios, 'op');
+  }
+}
+
 function aplicarAutocompletarPorProceso(procNombre) {
   if (!procNombre) return;
   const cfg = procConfig(procNombre);
@@ -6629,9 +6646,11 @@ function aplicarAutocompletarPorProceso(procNombre) {
   if (sel && !sel.value && cfg.operario_ideal_id) {
     sel.value = cfg.operario_ideal_id;
   }
-  // Suplentes por defecto del proceso (si no hay suplentes ya elegidos).
+  // Suplentes por defecto del proceso (si no hay suplentes ya elegidos),
+  // excluyendo al que es operario ideal para que no salga duplicado.
   if (chipState.op.size === 0 && cfg.operarios_suplentes && cfg.operarios_suplentes.length) {
-    buildChips('chips-op', operarios, cfg.operarios_suplentes, 'op');
+    const supl = cfg.operarios_suplentes.filter(id => id !== cfg.operario_ideal_id);
+    buildChips('chips-op', operarios, supl, 'op');
   }
 }
 
@@ -6650,7 +6669,8 @@ function aplicarAutocompletarPorMaquina(maqIdRaw) {
     sel.value = maq.operario_ideal_id;
   }
   if (chipState.op.size === 0 && maq.operarios_suplentes && maq.operarios_suplentes.length) {
-    buildChips('chips-op', operarios, maq.operarios_suplentes, 'op');
+    const supl = maq.operarios_suplentes.filter(id => id !== maq.operario_ideal_id);
+    buildChips('chips-op', operarios, supl, 'op');
   }
 }
 
@@ -6716,6 +6736,13 @@ function addChipFromInput(kind) {
   const list = kind === 'maq' ? maquinas : (_operariosSuplenteLista || operarios);
   const it = list.find(x => _chipLabel(x, kind).toLowerCase() === val.toLowerCase());
   if (!it) { toast('No se encontro: ' + val, true); input.value = ''; return; }
+  // v70 Fase 9: no permitir como suplente al operario que ya es ideal.
+  if (kind === 'op') {
+    const selIdeal = document.getElementById('p-op-ideal');
+    if (selIdeal && parseInt(selIdeal.value) === it.id) {
+      toast('Ese operario ya es el ideal', true); input.value = ''; return;
+    }
+  }
   if (chipState[kind].has(it.id)) { input.value = ''; return; }
   chipState[kind].add(it.id);
   input.value = '';
@@ -14009,6 +14036,9 @@ const _NE_EMISOR = {
 };
 // Prefijo fijo de la numeración. Solo incrementan los 8 dígitos de la derecha.
 const _NE_PREFIJO = '0002';
+// v70 Fase 9b: prefijo fijo del número IMPRESO (PDF/Word). El usuario carga
+// los últimos 4 dígitos a mano para seguir la numeración del Drive.
+const _NE_PREFIJO_IMPRESO = '0001-0000';
 
 const _NE_MESES = ['enero','febrero','marzo','abril','mayo','junio','julio',
   'agosto','septiembre','octubre','noviembre','diciembre'];
@@ -14224,7 +14254,8 @@ function editarNotaEnvio(notaId) {
     datos: {
       nombre: n.cliente_nombre || '', razon: n.cliente_razon_social || '', cuit: n.cliente_cuit || '',
       contacto: n.cliente_contacto || '', direccion: n.cliente_direccion || '',
-      fecha: n.fecha || '', observaciones: n.observaciones || '', pedido: n.pedido_nro || ''
+      fecha: n.fecha || '', observaciones: n.observaciones || '', pedido: n.pedido_nro || '',
+      numeroImpreso: _neExtraerImpreso(n.numero_impreso)
     },
     items: Array.isArray(n.items) ? n.items.map(it => ({
       refKey: it.refKey || null,
@@ -14296,6 +14327,16 @@ function _neRenderModal(cfg) {
   // --- Fecha ---
   h += '<div class="ef"><div class="ef-l">Fecha</div>';
   h += '<input type="date" class="ef-i" id="ne-fecha" value="' + escapeHtml(d.fecha) + '" style="max-width:200px"></div>';
+
+  // --- Número impreso (a mano) --- v70 Fase 9b
+  // El número interno es correlativo automático; el impreso lo carga el
+  // usuario para seguir la numeración del Drive. Prefijo fijo "0001-0000".
+  h += '<div class="ef"><div class="ef-l">Número impreso (para PDF y Word)</div>';
+  h += '<div style="display:flex;align-items:center;gap:4px">';
+  h += '<span style="font-size:14px;font-weight:600;color:#5F5E5A;white-space:nowrap">' + _NE_PREFIJO_IMPRESO + '</span>';
+  h += '<input type="text" class="ef-i" id="ne-numimp" value="' + escapeHtml(d.numeroImpreso || '') + '" placeholder="Ej. 1234" maxlength="4" style="max-width:120px" inputmode="numeric">';
+  h += '</div>';
+  h += '<div class="ef-help" style="font-size:10px">Cargá los últimos 4 dígitos para seguir la numeración del Drive. El interno (' + _NE_PREFIJO + '-...) se asigna solo.</div></div>';
 
   // --- Items ---
   h += '<div class="section-t" style="margin-top:14px"><span>Ítems de la nota</span>';
@@ -14444,6 +14485,14 @@ async function _neReservarNumero() {
   return _NE_PREFIJO + '-' + String(nuevo).padStart(8, '0');
 }
 
+// v70 Fase 9b: extrae los 4 dígitos editables de un número impreso guardado
+// ("0001-00001234" → "1234"). Si no hay, devuelve ''.
+function _neExtraerImpreso(numImp) {
+  if (!numImp) return '';
+  const s = String(numImp);
+  return s.startsWith(_NE_PREFIJO_IMPRESO) ? s.slice(_NE_PREFIJO_IMPRESO.length) : s;
+}
+
 // Genera (modo nuevo) o guarda (modo editar) la nota y abre el PDF.
 async function generarNotaEnvio() {
   _neSyncItems();
@@ -14459,12 +14508,14 @@ async function generarNotaEnvio() {
   const fecha = getV('ne-fecha');
   const obs = getV('ne-obs');
   const pedido = getV('ne-pedido');
+  // v70 Fase 9b: número impreso (4 dígitos a mano → "0001-0000XXXX").
+  const numImpDigits = getV('ne-numimp').replace(/\D/g, '');
+  const numeroImpreso = numImpDigits ? (_NE_PREFIJO_IMPRESO + numImpDigits) : null;
 
   const itemsClean = _neState.items
     .filter(it => (it.descripcion || '').trim() !== '')
     .map(it => {
       const o = { cantidad: it.cantidad || 0, descripcion: (it.descripcion || '').trim() };
-      // refKey: vínculo con el item/conjunto del proyecto (para contar remitidos).
       if (it.refKey) o.refKey = it.refKey;
       return o;
     });
@@ -14480,6 +14531,7 @@ async function generarNotaEnvio() {
       cliente_nombre: nombre || null, cliente_razon_social: razon || null,
       cliente_cuit: cuit || null, cliente_contacto: contacto || null,
       cliente_direccion: direccion || null, observaciones: obs || null,
+      numero_impreso: numeroImpreso,
       items: itemsClean
     };
     const { error } = await sb.from('notas_envio').insert(payload);
@@ -14492,6 +14544,7 @@ async function generarNotaEnvio() {
       cliente_nombre: nombre || null, cliente_razon_social: razon || null,
       cliente_cuit: cuit || null, cliente_contacto: contacto || null,
       cliente_direccion: direccion || null, observaciones: obs || null,
+      numero_impreso: numeroImpreso,
       items: itemsClean, updated_at: new Date().toISOString()
     };
     const { error } = await sb.from('notas_envio').update(payload).eq('id', _neState.notaId);
@@ -14500,7 +14553,8 @@ async function generarNotaEnvio() {
   }
 
   await loadAll();
-  _neAbrirPdf({ numero: numero, nombre, razon, cuit, contacto, direccion, fecha, obs, pedido, items: itemsClean });
+  // El PDF/Word usa el número impreso si existe; si no, el interno.
+  _neAbrirPdf({ numero: numeroImpreso || numero, nombre, razon, cuit, contacto, direccion, fecha, obs, pedido, items: itemsClean });
 
   const modal = document.getElementById('ne-modal');
   if (modal) modal.remove();
@@ -14516,7 +14570,7 @@ function _neVerPdf(notaId) {
   const n = notasEnvio.find(x => x.id === notaId);
   if (!n) { toast('Nota no encontrada', true); return; }
   _neAbrirPdf({
-    numero: n.numero, nombre: n.cliente_nombre, razon: n.cliente_razon_social,
+    numero: n.numero_impreso || n.numero, nombre: n.cliente_nombre, razon: n.cliente_razon_social,
     cuit: n.cliente_cuit, contacto: n.cliente_contacto, direccion: n.cliente_direccion,
     fecha: n.fecha, obs: n.observaciones, pedido: n.pedido_nro,
     items: Array.isArray(n.items) ? n.items : []
@@ -15403,7 +15457,7 @@ async function descargarNotaEnvioWord(notaId) {
 
   try {
     const doc = _neBuildDocx(docx, {
-      numero: n.numero, fecha: _neFmtFechaLarga(n.fecha),
+      numero: n.numero_impreso || n.numero, fecha: _neFmtFechaLarga(n.fecha),
       nombre: n.cliente_nombre, razon: n.cliente_razon_social, cuit: n.cliente_cuit,
       contacto: n.cliente_contacto, direccion: n.cliente_direccion,
       obs: n.observaciones, pedido: n.pedido_nro,
