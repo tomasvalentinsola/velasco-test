@@ -2317,6 +2317,30 @@ async function moveActOp(actId, newOpId, fecha, dropMin) {
     return;
   }
   console.log('[drop] calcInsertTimeForOp returned=' + mT(rawStart) + ' adjusted=' + mT(startTime));
+
+  // v70 Fase 9c: chequeo extra de máquina. La grilla del tablero es por
+  // operario, pero la MÁQUINA puede estar ocupada por una semi/auto del
+  // mismo (o de otro) operario aunque su carril de operario se vea libre
+  // (porque el operario quedó libre tras el setup). Si la posición elegida
+  // solapa con la ocupación real de la máquina, reposicionar al fin de la
+  // otra + GAP. Después el motor decide si hay cascada.
+  const incomingDur = D(act);
+  const incomingEnd = startTime + incomingDur;
+  const machBlocks = dayBlocks(act.maquina_id, fecha, actId);
+  for (const mb of machBlocks) {
+    const solapa = !(incomingEnd <= mb.s || startTime >= mb.e);
+    if (solapa) {
+      // Reposicionar al final del bloque solapado + GAP.
+      const ajuste = mb.e + GAP;
+      console.log('[drop] machine overlap with ' + (mb.act ? mb.act.descripcion : '?') + ' [' + mT(mb.s) + '-' + mT(mb.e) + '] → ajuste a ' + mT(ajuste));
+      // Si el ajuste cae fuera de jornada, lo limita el motor más adelante.
+      startTime = ajuste;
+      break;
+    }
+  }
+  // Si bajamos startTime, hay que asegurar que sigue dentro del turno.
+  if (startTime < opStart) startTime = opStart;
+
   // If dragging within the SAME operator's column, the user's intent is
   // explicit: they want to reorder within this operator's timeline. Skip
   // the operator-conflict dialog (it would block obvious valid rearrangements
@@ -4237,15 +4261,23 @@ function _simCascadeOp(state, anchors) {
 // Activs ancladas no se mueven.
 function _simPushMach(state, anchors) {
   let movedAny = false;
+  // v70 Fase 9c: agrupar por máquina, NO solo por fecha de inicio. Una
+  // actividad puede empezar el día X y terminar el X+1; debe compararse
+  // contra cualquier otra actividad en la misma máquina cuyos rangos
+  // ocupen días que se solapan con los suyos.
   const byMach = new Map();
   state.forEach(it => {
     if (!it.maquina_id) return;
-    const key = it.maquina_id + '|' + it.fecha;
+    const key = String(it.maquina_id);
     if (!byMach.has(key)) byMach.set(key, []);
     byMach.get(key).push(it);
   });
   byMach.forEach(arr => {
     arr.sort((a, b) => {
+      // v70 Fase 9c: ordenar por fecha+hora juntas (antes solo por hora,
+      // asumiendo mismo día).
+      if (a.fecha < b.fecha) return -1;
+      if (a.fecha > b.fecha) return 1;
       const td = tM(a.hora_inicio) - tM(b.hora_inicio);
       if (td !== 0) return td;
       if (anchors.has(a.id)) return -1;
