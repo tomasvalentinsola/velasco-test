@@ -2422,10 +2422,19 @@ function onContactoComboChange() {
   const sel = document.getElementById('f-contacto');
   if (!sel) return;
   if (sel.value === '__nuevo__') {
-    const cliId = parseInt(document.getElementById('f-cliente').value);
-    if (!cliId) { toast('Elegí un cliente primero', true); sel.value = ''; return; }
-    // Restaurar el select a vacío para no quedar trabado en "+ Nuevo"
+    // Intentar obtener el cliente_id del campo hidden; si no existe (form
+    // raro) fallback al proyecto actual via nav.
+    let cliId = null;
+    const cliInput = document.getElementById('f-cliente');
+    if (cliInput && cliInput.value) cliId = parseInt(cliInput.value);
+    if (!cliId && nav && nav.view === 'project' && nav.projectId) {
+      const proj = getProject(nav.projectId);
+      if (proj && proj.cliente_id) cliId = proj.cliente_id;
+    }
+    // Reset INMEDIATO del select para que el navegador no quede mostrando
+    // "+ Nuevo contacto" como texto seleccionado.
     sel.value = '';
+    if (!cliId) { toast('No se pudo determinar el cliente del proyecto', true); return; }
     showContactoForm(null, cliId);
     return;
   }
@@ -2797,7 +2806,12 @@ function renderProjectDetail() {
   // duplicar un proyecto donde el cliente real es otro).
   const clienteBloqueado = ['Pedido', 'Cerrado', 'Anulado'].includes(proj.estado);
   if (clienteBloqueado) {
-    h += '<div class="ef" style="flex:2"><div class="ef-l">Cliente</div><input type="text" class="ef-i" value="' + escapeHtml(clN(proj.cliente_id)) + '" disabled title="No se puede cambiar mientras el proyecto este en ' + proj.estado + '"></div>';
+    h += '<div class="ef" style="flex:2"><div class="ef-l">Cliente</div>';
+    h += '<input type="text" class="ef-i" value="' + escapeHtml(clN(proj.cliente_id)) + '" disabled title="No se puede cambiar mientras el proyecto este en ' + proj.estado + '">';
+    // v70: input hidden para que otras funciones (ej. + Nuevo contacto) puedan
+    // leer el cliente_id del proyecto aunque el campo esté bloqueado.
+    h += '<input type="hidden" id="f-cliente" value="' + (proj.cliente_id || '') + '">';
+    h += '</div>';
   } else {
     // Combo buscable (mismo patron que en el form de creacion)
     h += '<div class="ef" style="flex:2"><div class="ef-l">Cliente</div>';
@@ -16667,6 +16681,29 @@ function makeModalDraggable(modalEl) {
     }
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
+  });
+  // v70 Fase 10: forzar foco al primer campo editable apenas el modal se
+  // muestra. Esto resuelve el bug intermitente de "no puedo escribir hasta
+  // que cambio de pestaña y vuelvo" — el navegador pierde el foco cuando
+  // se crea el modal dinámicamente y nunca lo recupera.
+  requestAnimationFrame(() => {
+    // Si algún campo del modal ya está enfocado (porque el código que lo
+    // abrió ya hizo focus), no hacer nada.
+    if (modalEl.contains(document.activeElement) && document.activeElement !== document.body) return;
+    // Buscar el primer input/textarea/select editable y no deshabilitado.
+    const candidatos = modalEl.querySelectorAll(
+      'input:not([type="hidden"]):not([disabled]):not([readonly]),' +
+      'textarea:not([disabled]):not([readonly]),' +
+      'select:not([disabled]),' +
+      '[contenteditable="true"]'
+    );
+    for (const el of candidatos) {
+      // Solo enfocar si está visible (tiene tamaño).
+      if (el.offsetWidth > 0 && el.offsetHeight > 0) {
+        try { el.focus(); } catch (e) {}
+        break;
+      }
+    }
   });
 }
 // Watch for new modals being added to the DOM
