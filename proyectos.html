@@ -904,6 +904,7 @@ function procStateColor(estado) {
     case 'Planificación Pendiente': return { bg: '#FFF4D5', fg: '#854F0B' };  // yellow
     case 'Planificado': return { bg: '#E6F1FB', fg: '#0C447C' };  // blue
     case 'Cerrado': return { bg: '#E5F5E1', fg: '#1B6B1B' };  // green
+    case 'Realizado': return { bg: '#28A745', fg: '#fff' };  // verde fuerte: completado y anclado
     default: return { bg: '#fff', fg: '#000' };
   }
 }
@@ -5607,6 +5608,14 @@ function renderItemDetail() {
         const trabHtml = /[<>]/.test(p.descripcion_trabajo) ? sanitizeRichHtml(p.descripcion_trabajo) : escapeHtml(p.descripcion_trabajo);
         h += '<br><b>Trabajo:</b> ' + trabHtml;
       }
+      // v70 Fase 10b: si el proceso está marcado como hecho, mostrar los
+      // tiempos reales además de los planificados.
+      if (p.estado === 'completada') {
+        const fr = p.fecha_real || '(sin fecha real)';
+        const hri = p.hora_real_inicio ? p.hora_real_inicio.substring(0, 5) : '?';
+        const hrf = p.hora_real_fin ? p.hora_real_fin.substring(0, 5) : '?';
+        h += '<div style="margin-top:4px;padding:4px 8px;background:#E5F5E1;border-radius:3px;font-size:11px;color:#155724"><b>✓ Realizado:</b> ' + escapeHtml(fr) + ' · ' + hri + ' a ' + hrf + '</div>';
+      }
       // Predecesores
       h += '<br><b>Predecesores:</b> ';
       if (myPreds.length === 0) h += '<span style="color:#888780;font-style:italic">ninguno</span> ';
@@ -5626,6 +5635,12 @@ function renderItemDetail() {
       h += '<button class="b b-icon" ' + (idx === procesos.length - 1 ? 'disabled' : 'onclick="moveProceso(' + p.id + ',1)"') + ' title="Bajar">▼</button>';
       h += '</div>';
       h += '<button class="b b-icon" onclick="showProcesoForm(' + p.id + ')">Editar</button>';
+      // v70 Fase 10b: marcar como hecho / desanclar.
+      if (p.estado === 'completada') {
+        h += '<button class="b b-icon" style="background:#FFF4E0;border-color:#E0A800;color:#854F0B" onclick="desanclarProceso(' + p.id + ')" title="Volver a planificable">🔓 Desanclar</button>';
+      } else {
+        h += '<button class="b b-icon" style="background:#D4EDDA;border-color:#28A745;color:#155724" onclick="marcarProcesoHecho(' + p.id + ')" title="Anclar como completado">✓ Hecho</button>';
+      }
       h += '<button class="b b-icon b-d" onclick="confirmDeleteProceso(' + p.id + ')">Eliminar</button>';
       h += '</div></div>';
     });
@@ -6466,6 +6481,127 @@ async function _saveProcesoImpl(procesoId) {
   await loadAll();
   document.getElementById('proc-modal').remove();
   render();
+}
+
+// =====================================================================
+// v70 Fase 10b - MARCAR PROCESO COMO HECHO / DESANCLAR
+// =====================================================================
+
+// Abre el modal para anclar un proceso como completado, con tiempos reales
+// pre-rellenados con los planificados. Al confirmar, pasa a estado
+// 'completada' y queda fijo en el tablero (no se mueve por cascadeos).
+function marcarProcesoHecho(procesoId) {
+  const p = actividades.find(a => a.id === procesoId);
+  if (!p) { toast('Proceso no encontrado', true); return; }
+  if (p.estado === 'completada') { toast('Ya está marcado como hecho', true); return; }
+
+  // Pre-rellenar con lo planificado si lo hay. Si no, con la fecha de hoy.
+  const estaPlanificado = p.estado && p.estado !== 'sin_planificar' && p.fecha !== '1900-01-01';
+  const hoyIso = new Date().toISOString().slice(0, 10);
+  const fechaPre = estaPlanificado ? p.fecha : hoyIso;
+  const horaIniPre = estaPlanificado ? (p.hora_inicio || '06:00').substring(0, 5) : '';
+  // Calcular hora_fin planificada: hora_inicio + duracion_planificador_min.
+  let horaFinPre = '';
+  if (estaPlanificado && p.hora_inicio && p.duracion_planificador_min) {
+    const [hh, mm] = p.hora_inicio.split(':').map(x => parseInt(x));
+    const totalMin = hh * 60 + mm + p.duracion_planificador_min;
+    const fh = Math.floor(totalMin / 60) % 24, fm = totalMin % 60;
+    horaFinPre = String(fh).padStart(2, '0') + ':' + String(fm).padStart(2, '0');
+  }
+
+  const prev = document.getElementById('hecho-modal');
+  if (prev) prev.remove();
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'hecho-modal';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '440px';
+
+  let h = '<div class="md-t">Marcar proceso como hecho</div>';
+  h += '<div style="font-size:12px;color:#5F5E5A;margin-bottom:10px">' + escapeHtml(p.proceso || p.descripcion || '') + '</div>';
+  if (!estaPlanificado) {
+    h += '<div style="background:#FFF8E1;color:#854F0B;padding:7px 11px;border-radius:5px;margin-bottom:10px;font-size:11px;border:1px solid #FFE5A0">Este proceso no estaba planificado. Podés dejar los tiempos en blanco si no los conocés.</div>';
+  } else {
+    h += '<div style="background:#E6F1FB;color:#0C447C;padding:7px 11px;border-radius:5px;margin-bottom:10px;font-size:11px;border:1px solid #A8C8E8">Los campos vienen con los tiempos planificados. Ajustá si la realidad fue distinta.</div>';
+  }
+
+  h += '<div class="ef"><div class="ef-l">Fecha real</div>';
+  h += '<input type="date" class="ef-i" id="mph-fecha" value="' + escapeHtml(fechaPre) + '"></div>';
+  h += '<div class="row">';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Hora de inicio</div>';
+  h += '<input type="time" class="ef-i" id="mph-hini" value="' + escapeHtml(horaIniPre) + '"></div>';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Hora de fin</div>';
+  h += '<input type="time" class="ef-i" id="mph-hfin" value="' + escapeHtml(horaFinPre) + '"></div>';
+  h += '</div>';
+
+  h += '<div class="actions" style="margin-top:14px">';
+  h += '<button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button>';
+  h += '<button class="b b-p" onclick="_mphGuardar(' + procesoId + ')">Marcar como hecho</button></div>';
+
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
+}
+
+async function _mphGuardar(procesoId) {
+  const fechaReal = document.getElementById('mph-fecha').value || null;
+  const horaIni = document.getElementById('mph-hini').value || null;
+  const horaFin = document.getElementById('mph-hfin').value || null;
+  // Si hay hora_fin y hora_inicio, fin debe ser >= inicio (asumiendo mismo día).
+  if (horaIni && horaFin && horaFin < horaIni) {
+    toast('La hora de fin no puede ser anterior a la de inicio', true);
+    return;
+  }
+  showSpinner('Marcando como hecho...');
+  try {
+    const payload = {
+      estado: 'completada',
+      estado_proceso: 'Realizado',
+      fecha_real: fechaReal,
+      hora_real_inicio: horaIni,
+      hora_real_fin: horaFin
+    };
+    const { error } = await sb.from('actividades_tablero').update(payload).eq('id', procesoId);
+    if (error) { toast('Error: ' + error.message, true); return; }
+    await loadAll();
+    toast('Proceso marcado como hecho');
+    const modal = document.getElementById('hecho-modal');
+    if (modal) modal.remove();
+    render();
+  } finally {
+    hideSpinner();
+  }
+}
+
+// Devuelve un proceso completado al estado planificado. Limpia los tiempos
+// reales. Si estaba en el tablero, queda en la misma posición (estado pasa
+// a 'planificado' si tenía fecha real útil, o a 'sin_planificar' si no).
+function desanclarProceso(procesoId) {
+  const p = actividades.find(a => a.id === procesoId);
+  if (!p) { toast('Proceso no encontrado', true); return; }
+  if (p.estado !== 'completada') { toast('No está anclado', true); return; }
+  confirmModal({
+    titulo: 'Desanclar proceso',
+    mensaje: 'El proceso vuelve a ser planificable y deja de aparecer como histórico. Los tiempos reales se borran. ¿Continuar?',
+    textoConfirmar: 'Desanclar',
+    onConfirm: async () => {
+      showSpinner('Desanclando...');
+      try {
+        // ¿Quedaba como planificado o sin planificar? Si tenía fecha y hora
+        // antes de marcarlo como hecho, las mantenemos como planificación.
+        const teniaPlanificacion = p.fecha && p.fecha !== '1900-01-01' && p.hora_inicio;
+        const payload = {
+          estado: teniaPlanificacion ? 'planificado' : 'sin_planificar',
+          estado_proceso: 'Planificación Pendiente',
+          fecha_real: null,
+          hora_real_inicio: null,
+          hora_real_fin: null
+        };
+        const { error } = await sb.from('actividades_tablero').update(payload).eq('id', procesoId);
+        if (error) { toast('Error: ' + error.message, true); return; }
+        await loadAll();
+        toast('Proceso desanclado');
+        render();
+      } finally {
+        hideSpinner();
+      }
+    }
+  });
 }
 
 async function confirmDeleteProceso(procesoId) {
