@@ -3356,17 +3356,15 @@ async function confirmDeleteProject() {
 // ========== PROJECT STATE CHANGE MODAL ==========
 // Reglas de transicion:
 // - Proyectando -> Pedido, Perdido (NO se puede ir directo a Cerrado/Anulado)
-// - Pedido -> Cerrado, Anulado, Perdido (cualquiera con pedido)
-// - Cerrado -> ningun cambio (estado final)
-// - Anulado -> ningun cambio (estado final)
-// - Perdido -> Pedido (si se reactivara)
-// La regla "para llegar a Cerrado o Anulado, el proyecto tiene que estar
-// actualmente en Pedido" se implementa filtrando las opciones del select.
+// - Pedido -> Cerrado, Anulado, Perdido
+// - Cerrado -> Pedido (reabrir; v70 Fase 10)
+// - Anulado -> Pedido (reabrir; v70 Fase 10)
+// - Perdido -> Pedido (reactivar)
 function _allowedNextStates(currentEstado) {
   if (currentEstado === 'Proyectando') return ['Proyectando', 'Pedido', 'Perdido'];
   if (currentEstado === 'Pedido') return ['Pedido', 'Cerrado', 'Anulado', 'Perdido'];
-  if (currentEstado === 'Cerrado') return ['Cerrado'];  // estado final
-  if (currentEstado === 'Anulado') return ['Anulado'];  // estado final
+  if (currentEstado === 'Cerrado') return ['Cerrado', 'Pedido'];   // reabrir
+  if (currentEstado === 'Anulado') return ['Anulado', 'Pedido'];   // reabrir
   if (currentEstado === 'Perdido') return ['Perdido', 'Pedido'];
   return PROJ_STATES.slice();
 }
@@ -3437,13 +3435,23 @@ async function saveProjectState(projectId) {
   // Pedido inline: tomar lo escrito si el campo se mostro
   const pedidoEl = document.getElementById('ps-pedido');
   const pedidoNew = (pedidoEl && pedidoEl.style.display !== 'none' && pedidoEl.value.trim()) ? pedidoEl.value.trim() : null;
-  // Verificar si el wrap del pedido esta visible (puede pasar que el input
-  // exista pero el wrap este oculto si el proyecto ya tenia pedido).
   const pedidoWrap = document.getElementById('ps-pedido-wrap');
   const pedidoVisible = pedidoWrap && pedidoWrap.style.display === 'block';
 
-  // Si el estado nuevo requiere pedido y el proyecto NO tiene, y el campo
-  // estaba visible y vacio, mostrar advertencia (no bloqueante).
+  // Función que termina de aplicar el cambio (se llama desde varios caminos).
+  const aplicarCambioEstado = async () => {
+    const payload = {
+      estado: newEstado, sub_estado_cerrado: newSub, observaciones_anulacion: newObs
+    };
+    if (pedidoNew) payload.pedido_nro = pedidoNew;
+    await sb.from('proyectos').update(payload).eq('id', projectId);
+    await loadAll();
+    const modal = document.getElementById('state-modal');
+    if (modal) modal.remove();
+    toast('Estado actualizado');
+    render();
+  };
+
   if (PROJ_STATES_REQUIRE_PEDIDO.has(newEstado) && !proj.pedido_nro && pedidoVisible && !pedidoNew) {
     confirmModal({
       titulo: 'Sin número de pedido',
@@ -3451,30 +3459,197 @@ async function saveProjectState(projectId) {
       textoConfirmar: 'Continuar',
       peligroso: false,
       onConfirm: async () => {
-        const payload2 = {
-          estado: newEstado, sub_estado_cerrado: newSub, observaciones_anulacion: newObs
-        };
-        if (pedidoNew) payload2.pedido_nro = pedidoNew;
-        await sb.from('proyectos').update(payload2).eq('id', projectId);
-        await loadAll();
-        document.getElementById('state-modal').remove();
-        toast('Estado actualizado');
-        render();
+        if (newEstado === 'Cerrado') {
+          // Cerrar el modal de estado y arrancar el de procesos abiertos.
+          const modal = document.getElementById('state-modal');
+          if (modal) modal.remove();
+          _abrirModalCerrarProyecto(projectId, aplicarCambioEstado);
+        } else {
+          await aplicarCambioEstado();
+        }
       }
     });
     return;
   }
 
-  const payload = {
-    estado: newEstado, sub_estado_cerrado: newSub, observaciones_anulacion: newObs
-  };
-  if (pedidoNew) payload.pedido_nro = pedidoNew;
+  // v70 Fase 10c: si se está cerrando el proyecto, primero resolver los
+  // procesos abiertos.
+  if (newEstado === 'Cerrado') {
+    const modal = document.getElementById('state-modal');
+    if (modal) modal.remove();
+    _abrirModalCerrarProyecto(projectId, aplicarCambioEstado);
+    return;
+  }
 
-  await sb.from('proyectos').update(payload).eq('id', projectId);
-  await loadAll();
-  document.getElementById('state-modal').remove();
-  toast('Estado actualizado');
-  render();
+  await aplicarCambioEstado();
+}
+
+// =====================================================================
+// v70 Fase 10c - MODAL "CERRAR PROYECTO" con resolución de procesos abiertos
+// =====================================================================
+
+// Acciones disponibles por proceso al cerrar el proyecto:
+//   'hecho_plan'   : marca como completada con los tiempos planificados.
+//   'hecho_sintp'  : marca como completada sin tiempos reales (para sin_planificar).
+//   'cancelar'     : elimina la actividad.
+//   'abierta'      : la deja como está (raro pero posible).
+const _CIERRE_ACCIONES = {
+  hecho_plan:  { label: 'Marcar como hecho (con tiempos planificados)', color: '#1B6B1B' },
+  hecho_sintp: { label: 'Marcar como hecho (sin tiempos)',              color: '#1B6B1B' },
+  cancelar:    { label: 'Cancelar y eliminar',                          color: '#A32D2D' },
+  abierta:     { label: 'Dejar abierta',                                color: '#5F5E5A' }
+};
+
+// Estado del modal de cierre: por cada actividad id, la acción elegida.
+let _cierreState = null;
+
+function _abrirModalCerrarProyecto(projectId, onConfirmar) {
+  const proj = getProject(projectId);
+  if (!proj) return;
+  // Buscar todas las actividades del proyecto que NO están completadas.
+  const itemIds = items.filter(it => it.proyecto_id === projectId).map(it => it.id);
+  const abiertas = actividades.filter(a => itemIds.includes(a.item_id) && a.estado !== 'completada');
+  if (abiertas.length === 0) {
+    // Nada que resolver, aplicar el cambio directamente.
+    onConfirmar();
+    return;
+  }
+  // Setear acción por defecto por cada una: si está planificada, "hecho_plan";
+  // si está sin planificar, "hecho_sintp".
+  _cierreState = { projectId: projectId, acciones: {}, onConfirmar: onConfirmar };
+  abiertas.forEach(a => {
+    const planificada = a.estado && a.estado !== 'sin_planificar' && a.fecha !== '1900-01-01';
+    _cierreState.acciones[a.id] = planificada ? 'hecho_plan' : 'hecho_sintp';
+  });
+
+  const prev = document.getElementById('cierre-modal');
+  if (prev) prev.remove();
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'cierre-modal';
+  const m = document.createElement('div'); m.className = 'md';
+  m.style.maxWidth = '720px'; m.style.maxHeight = '92vh'; m.style.overflowY = 'auto';
+
+  let h = '<div class="md-t">Cerrar proyecto: procesos abiertos</div>';
+  h += '<div style="font-size:12px;color:#5F5E5A;margin-bottom:10px">Hay <b>' + abiertas.length + ' proceso(s)</b> sin completar. Decidí qué hacer con cada uno antes de cerrar.</div>';
+  // Botón rápido "todos hecho_plan / hecho_sintp según corresponda"
+  h += '<div style="display:flex;gap:6px;margin-bottom:10px">';
+  h += '<button class="b" onclick="_cierreSetTodos(\'auto\')">Marcar todos como hechos</button>';
+  h += '<button class="b" onclick="_cierreSetTodos(\'abierta\')">Dejar todos abiertos</button>';
+  h += '</div>';
+  h += '<div id="cierre-lista">' + _cierreListaHtml(abiertas) + '</div>';
+  h += '<div class="actions" style="margin-top:14px">';
+  h += '<button class="b" onclick="_cierreCancelar()">Cancelar</button>';
+  h += '<button class="b b-p" onclick="_cierreConfirmar()">Aplicar y cerrar proyecto</button></div>';
+
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
+}
+
+function _cierreListaHtml(abiertas) {
+  let h = '';
+  abiertas.forEach(a => {
+    const item = items.find(it => it.id === a.item_id);
+    const itDesc = item ? item.descripcion : '?';
+    const proc = a.proceso || a.descripcion || '?';
+    const planificada = a.estado && a.estado !== 'sin_planificar' && a.fecha !== '1900-01-01';
+    h += '<div style="display:flex;gap:10px;align-items:center;padding:7px 10px;background:#fff;border:1px solid #E8E6DF;border-radius:4px;margin-bottom:5px">';
+    h += '<div style="flex:1;font-size:12px">';
+    h += '<b>' + escapeHtml(proc) + '</b> — ' + escapeHtml(itDesc);
+    h += '<div style="font-size:10px;color:#5F5E5A">' + (planificada ? ('Planificado: ' + a.fecha + ' ' + (a.hora_inicio || '').substring(0,5)) : 'No planificado en el tablero') + '</div>';
+    h += '</div>';
+    h += '<select class="ef-i" style="width:280px;font-size:11px" onchange="_cierreSetAccion(' + a.id + ', this.value)">';
+    // Si está planificada, ofrecer hecho_plan; si no, hecho_sintp.
+    if (planificada) {
+      h += '<option value="hecho_plan"' + (_cierreState.acciones[a.id] === 'hecho_plan' ? ' selected' : '') + '>Marcar como hecho (tiempos planificados)</option>';
+    } else {
+      h += '<option value="hecho_sintp"' + (_cierreState.acciones[a.id] === 'hecho_sintp' ? ' selected' : '') + '>Marcar como hecho (sin tiempos)</option>';
+    }
+    h += '<option value="cancelar"' + (_cierreState.acciones[a.id] === 'cancelar' ? ' selected' : '') + '>Cancelar y eliminar</option>';
+    h += '<option value="abierta"' + (_cierreState.acciones[a.id] === 'abierta' ? ' selected' : '') + '>Dejar abierta</option>';
+    h += '</select>';
+    h += '</div>';
+  });
+  return h;
+}
+
+function _cierreSetAccion(actId, accion) {
+  if (!_cierreState) return;
+  _cierreState.acciones[actId] = accion;
+}
+
+function _cierreSetTodos(modo) {
+  if (!_cierreState) return;
+  const ids = Object.keys(_cierreState.acciones).map(x => parseInt(x));
+  ids.forEach(id => {
+    const a = actividades.find(x => x.id === id);
+    if (!a) return;
+    if (modo === 'auto') {
+      const planificada = a.estado && a.estado !== 'sin_planificar' && a.fecha !== '1900-01-01';
+      _cierreState.acciones[id] = planificada ? 'hecho_plan' : 'hecho_sintp';
+    } else {
+      _cierreState.acciones[id] = 'abierta';
+    }
+  });
+  // Re-render de la lista.
+  const itemIds = items.filter(it => it.proyecto_id === _cierreState.projectId).map(it => it.id);
+  const abiertas = actividades.filter(a => itemIds.includes(a.item_id) && a.estado !== 'completada');
+  const list = document.getElementById('cierre-lista');
+  if (list) list.innerHTML = _cierreListaHtml(abiertas);
+}
+
+function _cierreCancelar() {
+  _cierreState = null;
+  const modal = document.getElementById('cierre-modal');
+  if (modal) modal.remove();
+}
+
+async function _cierreConfirmar() {
+  if (!_cierreState) return;
+  const onConfirmar = _cierreState.onConfirmar;
+  const acciones = _cierreState.acciones;
+  showSpinner('Aplicando cambios...');
+  try {
+    for (const idStr of Object.keys(acciones)) {
+      const id = parseInt(idStr);
+      const act = actividades.find(a => a.id === id);
+      if (!act) continue;
+      const accion = acciones[idStr];
+      if (accion === 'hecho_plan') {
+        // Calcular hora fin a partir de planificador.
+        let horaFin = null;
+        if (act.hora_inicio && act.duracion_planificador_min) {
+          const [hh, mm] = act.hora_inicio.split(':').map(x => parseInt(x));
+          const totalMin = hh * 60 + mm + act.duracion_planificador_min;
+          const fh = Math.floor(totalMin / 60) % 24, fm = totalMin % 60;
+          horaFin = String(fh).padStart(2, '0') + ':' + String(fm).padStart(2, '0') + ':00';
+        }
+        await sb.from('actividades_tablero').update({
+          estado: 'completada',
+          estado_proceso: 'Realizado',
+          fecha_real: act.fecha,
+          hora_real_inicio: act.hora_inicio,
+          hora_real_fin: horaFin
+        }).eq('id', id);
+      } else if (accion === 'hecho_sintp') {
+        await sb.from('actividades_tablero').update({
+          estado: 'completada',
+          estado_proceso: 'Realizado',
+          fecha_real: null,
+          hora_real_inicio: null,
+          hora_real_fin: null
+        }).eq('id', id);
+      } else if (accion === 'cancelar') {
+        await sb.from('actividades_tablero').delete().eq('id', id);
+      }
+      // 'abierta': no se toca.
+    }
+    _cierreState = null;
+    const modal = document.getElementById('cierre-modal');
+    if (modal) modal.remove();
+    await onConfirmar();
+  } catch (e) {
+    toast('Error al aplicar los cambios: ' + (e.message || e), true);
+  } finally {
+    hideSpinner();
+  }
 }
 
 // ========== ITEM FORM ==========
@@ -6582,18 +6757,28 @@ function desanclarProceso(procesoId) {
     onConfirm: async () => {
       showSpinner('Desanclando...');
       try {
-        // ¿Quedaba como planificado o sin planificar? Si tenía fecha y hora
-        // antes de marcarlo como hecho, las mantenemos como planificación.
+        // Si el proceso tenía fecha y hora cuando se ancló, asumimos que ya
+        // estaba en el tablero ("pendiente"). Si no, vuelve a "sin_planificar".
         const teniaPlanificacion = p.fecha && p.fecha !== '1900-01-01' && p.hora_inicio;
         const payload = {
-          estado: teniaPlanificacion ? 'planificado' : 'sin_planificar',
-          estado_proceso: 'Planificación Pendiente',
+          estado: teniaPlanificacion ? 'pendiente' : 'sin_planificar',
+          estado_proceso: teniaPlanificacion ? 'Planificado' : 'Planificación Pendiente',
           fecha_real: null,
           hora_real_inicio: null,
           hora_real_fin: null
         };
         const { error } = await sb.from('actividades_tablero').update(payload).eq('id', procesoId);
-        if (error) { toast('Error: ' + error.message, true); return; }
+        if (error) {
+          // Traducir los errores más comunes a algo legible.
+          let msg = error.message || '';
+          if (/check constraint/i.test(msg) && /estado/i.test(msg)) {
+            msg = 'No se pudo cambiar el estado del proceso. Es posible que el valor "' + (teniaPlanificacion ? 'pendiente' : 'sin_planificar') + '" no esté permitido por la base de datos.';
+          } else {
+            msg = 'No se pudo desanclar el proceso. Detalle técnico: ' + msg;
+          }
+          toast(msg, true);
+          return;
+        }
         await loadAll();
         toast('Proceso desanclado');
         render();

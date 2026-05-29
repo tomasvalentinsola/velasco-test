@@ -3153,6 +3153,11 @@ function showEdit(act, bl) {
     }
     extraBtns += '<button class="b" id="ed-ignore-ot" style="background:#fff;color:#5F5E5A;border-color:#C8C6BE">Ignorar</button>';
   }
+  // v70 Fase 10c: si la actividad está anclada (completada), agregar el
+  // botón Desanclar para volverla al estado planificable.
+  if (act.estado === 'completada') {
+    extraBtns += '<button class="b" id="ed-desanclar" style="background:#FFF4E0;color:#854F0B;border-color:#E0A800">🔓 Desanclar</button>';
+  }
 
   m.innerHTML =
     '<button class="md-x" onclick="this.closest(\'.mo\').remove()">&times;</button>' +
@@ -3171,6 +3176,39 @@ function showEdit(act, bl) {
 
   document.getElementById('ed-save').onclick = () => { saveEdit(act.id); bd.remove(); };
   document.getElementById('ed-remove').onclick = () => { removeAct(act.id); bd.remove(); };
+  // v70 Fase 10c: desanclar una actividad completada (vuelve a planificable).
+  const desBtn = document.getElementById('ed-desanclar');
+  if (desBtn) {
+    desBtn.onclick = async () => {
+      if (!confirm('La actividad vuelve a ser planificable y deja de ser histórico. Los tiempos reales se borran. ¿Continuar?')) return;
+      // Si tenía fecha y hora cuando se ancló, vuelve a "pendiente"; si no,
+      // a "sin_planificar".
+      const teniaPlan = act.fecha && act.fecha !== '1900-01-01' && act.hora_inicio;
+      const payload = {
+        estado: teniaPlan ? 'pendiente' : 'sin_planificar',
+        estado_proceso: teniaPlan ? 'Planificado' : 'Planificación Pendiente',
+        fecha_real: null,
+        hora_real_inicio: null,
+        hora_real_fin: null
+      };
+      const { error } = await sb.from('actividades_tablero').update(payload).eq('id', act.id);
+      if (error) {
+        let msg = error.message || '';
+        if (/check constraint/i.test(msg)) {
+          msg = 'No se pudo desanclar el proceso. La base de datos rechazó el cambio de estado.';
+        } else {
+          msg = 'Error al desanclar: ' + msg;
+        }
+        toast(msg, true);
+        return;
+      }
+      bd.remove();
+      // Recargar y re-render.
+      const { data: aD } = await sb.from('actividades_tablero').select('*'); acts = aD || [];
+      toast('Proceso desanclado');
+      render();
+    };
+  }
   const applyBtn = document.getElementById('ed-apply-ot');
   if (applyBtn) {
     applyBtn.onclick = async () => {
