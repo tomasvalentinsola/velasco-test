@@ -14467,12 +14467,14 @@ function _neRenderModal(cfg) {
   // --- Número impreso (a mano) --- v70 Fase 9b
   // El número interno es correlativo automático; el impreso lo carga el
   // usuario para seguir la numeración del Drive. Prefijo fijo "0001-0000".
-  h += '<div class="ef"><div class="ef-l">Número impreso (para PDF y Word)</div>';
+  // Resaltado visualmente porque sin este número no se permite imprimir.
+  h += '<div class="ef" style="background:#FFF4D5;border:2px solid #E0A800;border-radius:6px;padding:10px 12px">';
+  h += '<div class="ef-l" style="color:#854F0B;display:flex;align-items:center;gap:6px">⚠️ Número impreso (obligatorio para imprimir/Word)</div>';
   h += '<div style="display:flex;align-items:center;gap:4px">';
   h += '<span style="font-size:14px;font-weight:600;color:#5F5E5A;white-space:nowrap">' + _NE_PREFIJO_IMPRESO + '</span>';
-  h += '<input type="text" class="ef-i" id="ne-numimp" value="' + escapeHtml(d.numeroImpreso || '') + '" placeholder="Ej. 1234" maxlength="4" style="max-width:120px" inputmode="numeric">';
+  h += '<input type="text" class="ef-i" id="ne-numimp" value="' + escapeHtml(d.numeroImpreso || '') + '" placeholder="Ej. 1234" maxlength="4" style="max-width:120px;border-color:#E0A800;background:#fff" inputmode="numeric">';
   h += '</div>';
-  h += '<div class="ef-help" style="font-size:10px">Cargá los últimos 4 dígitos para seguir la numeración del Drive. El interno (' + _NE_PREFIJO + '-...) se asigna solo.</div></div>';
+  h += '<div class="ef-help" style="font-size:10px;color:#854F0B">Cargá los últimos 4 dígitos siguiendo la numeración del Drive. El interno (' + _NE_PREFIJO + '-...) se asigna solo.</div></div>';
 
   // --- Items ---
   h += '<div class="section-t" style="margin-top:14px"><span>Ítems de la nota</span>';
@@ -14689,8 +14691,12 @@ async function generarNotaEnvio() {
   }
 
   await loadAll();
-  // El PDF/Word usa el número impreso si existe; si no, el interno.
-  _neAbrirPdf({ numero: numeroImpreso || numero, nombre, razon, cuit, contacto, direccion, fecha, obs, pedido, items: itemsClean });
+  // v70: solo abre el PDF si se cargó el número impreso. Si no, avisa.
+  if (numeroImpreso) {
+    _neAbrirPdf({ numero: numeroImpreso, nombre, razon, cuit, contacto, direccion, fecha, obs, pedido, items: itemsClean });
+  } else {
+    toast('Nota guardada. Cargá el número impreso para imprimir o generar Word.');
+  }
 
   const modal = document.getElementById('ne-modal');
   if (modal) modal.remove();
@@ -14705,8 +14711,13 @@ async function generarNotaEnvio() {
 function _neVerPdf(notaId) {
   const n = notasEnvio.find(x => x.id === notaId);
   if (!n) { toast('Nota no encontrada', true); return; }
+  // v70: requerir número impreso para poder imprimir.
+  if (!n.numero_impreso) {
+    toast('Falta cargar el número impreso. Editá la nota y cargalo.', true);
+    return;
+  }
   _neAbrirPdf({
-    numero: n.numero_impreso || n.numero, nombre: n.cliente_nombre, razon: n.cliente_razon_social,
+    numero: n.numero_impreso, nombre: n.cliente_nombre, razon: n.cliente_razon_social,
     cuit: n.cliente_cuit, contacto: n.cliente_contacto, direccion: n.cliente_direccion,
     fecha: n.fecha, obs: n.observaciones, pedido: n.pedido_nro,
     items: Array.isArray(n.items) ? n.items : []
@@ -15352,15 +15363,24 @@ function _neListaHtml() {
   h += '<div style="width:90px">Pedido</div><div style="width:54px;text-align:center">Ítems</div><div style="width:392px"></div></div>';
   rows.forEach(n => {
     const cant = Array.isArray(n.items) ? n.items.length : 0;
-    h += '<div style="display:flex;gap:10px;align-items:center;padding:7px 12px;background:#fff;border:1px solid #E8E6DF;border-radius:4px;margin-bottom:5px">';
-    h += '<div style="width:130px;font-weight:700;font-size:12px">' + escapeHtml(n.numero || '') + '</div>';
+    // v70: notas sin número impreso se resaltan en amarillo y bloquean PDF/Word.
+    const faltaImp = !n.numero_impreso;
+    const bgRow = faltaImp ? '#FFF8E1' : '#fff';
+    const bordRow = faltaImp ? '#E0A800' : '#E8E6DF';
+    h += '<div style="display:flex;gap:10px;align-items:center;padding:7px 12px;background:' + bgRow + ';border:1px solid ' + bordRow + ';border-radius:4px;margin-bottom:5px">';
+    h += '<div style="width:130px;font-weight:700;font-size:12px">' + escapeHtml(n.numero_impreso || n.numero || '');
+    if (faltaImp) h += '<div style="font-size:9px;font-weight:600;color:#854F0B;background:#FFE5A0;border-radius:3px;padding:1px 4px;display:inline-block;margin-top:2px">FALTA Nº IMPRESO</div>';
+    h += '</div>';
     h += '<div style="width:96px;font-size:12px">' + escapeHtml(_neFmtFechaCorta(n.fecha)) + '</div>';
     h += '<div style="flex:1;min-width:0;font-size:12px">' + escapeHtml(n.cliente_nombre || clN(n.cliente_id) || '—') + '</div>';
     h += '<div style="width:90px;font-size:12px">' + escapeHtml(n.pedido_nro || '—') + '</div>';
     h += '<div style="width:54px;text-align:center;font-size:12px">' + cant + '</div>';
     h += '<div style="width:392px;display:flex;gap:3px;justify-content:flex-end">';
-    h += '<button class="b b-icon" onclick="_neVerPdf(' + n.id + ')" title="Abrir el PDF">Ver PDF</button>';
-    h += '<button class="b b-icon" onclick="descargarNotaEnvioWord(' + n.id + ')" title="Descargar en formato Word">Word</button>';
+    const disStyle = faltaImp ? ' style="opacity:0.4;cursor:not-allowed"' : '';
+    const disAttr = faltaImp ? ' disabled' : '';
+    const tipImp = faltaImp ? ' (falta número impreso)' : '';
+    h += '<button class="b b-icon"' + disAttr + disStyle + ' onclick="_neVerPdf(' + n.id + ')" title="Abrir el PDF' + tipImp + '">Ver PDF</button>';
+    h += '<button class="b b-icon"' + disAttr + disStyle + ' onclick="descargarNotaEnvioWord(' + n.id + ')" title="Descargar en formato Word' + tipImp + '">Word</button>';
     h += '<button class="b b-icon" onclick="showEtiquetaModalNota(' + n.id + ')" title="Generar etiqueta de envío con esta nota">🏷</button>';
     h += (n.proyecto_id ? '<button class="b b-icon" onclick="navigate({view:\'project\',projectId:' + n.proyecto_id + '})" title="Ir al proyecto enlazado">Proyecto</button>' : '');
     h += '<button class="b b-icon" onclick="editarNotaEnvio(' + n.id + ')" title="Editar">Editar</button>';
@@ -15586,6 +15606,11 @@ function _descargarBlob(blob, nombreArchivo) {
 async function descargarNotaEnvioWord(notaId) {
   const n = notasEnvio.find(x => x.id === notaId);
   if (!n) { toast('Nota no encontrada', true); return; }
+  // v70: requerir número impreso.
+  if (!n.numero_impreso) {
+    toast('Falta cargar el número impreso. Editá la nota y cargalo.', true);
+    return;
+  }
   toast('Generando Word...');
   let docx;
   try { docx = await _cargarDocxLib(); }
@@ -15593,14 +15618,20 @@ async function descargarNotaEnvioWord(notaId) {
 
   try {
     const doc = _neBuildDocx(docx, {
-      numero: n.numero_impreso || n.numero, fecha: _neFmtFechaLarga(n.fecha),
+      numero: n.numero_impreso, fecha: _neFmtFechaLarga(n.fecha),
       nombre: n.cliente_nombre, razon: n.cliente_razon_social, cuit: n.cliente_cuit,
       contacto: n.cliente_contacto, direccion: n.cliente_direccion,
       obs: n.observaciones, pedido: n.pedido_nro,
       items: Array.isArray(n.items) ? n.items : []
     });
     const blob = await docx.Packer.toBlob(doc);
-    _descargarBlob(blob, 'Nota de envío ' + (n.numero || '') + '.docx');
+    // v70: nombre del archivo "N-XXXX - Cliente.docx" (XXXX = 4 dígitos del
+    // número impreso). Se sanitizan los caracteres que rompen nombres de
+    // archivo en Windows/Mac/Linux.
+    const xxxx = _neExtraerImpreso(n.numero_impreso) || '';
+    const cli = (n.cliente_nombre || clN(n.cliente_id) || 'Cliente').toString();
+    const cliSane = cli.replace(/[<>:"/\\|?*]+/g, '').trim() || 'Cliente';
+    _descargarBlob(blob, 'N-' + xxxx + ' - ' + cliSane + '.docx');
     toast('Word descargado');
   } catch (e) {
     toast('Error al generar el Word: ' + e.message, true);
@@ -15611,7 +15642,7 @@ async function descargarNotaEnvioWord(notaId) {
 // Tamaños de fuente en "half-points" (22 = 11pt).
 function _neBuildDocx(docx, d) {
   const { Document, Paragraph, TextRun, Table, TableRow, TableCell,
-          WidthType, BorderStyle, AlignmentType, ImageRun } = docx;
+          WidthType, BorderStyle, AlignmentType, ImageRun, Footer } = docx;
   const esc = s => (s == null ? '' : String(s));
   const ROJO = 'C0392B';
   const noB = { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' };
@@ -15681,17 +15712,32 @@ function _neBuildDocx(docx, d) {
     par(txt(''), { spacing: { after: 140 } }),
     clienteTable,
     par(txt(''), { spacing: { after: 180 } }),
-    itemsTable,
-    par(txt(''), { spacing: { after: 240 } })
+    itemsTable
   ];
-  if (d.obs) cuerpo.push(par([txt('Observaciones: ', { bold: true, size: 29 }), txt(esc(d.obs), { size: 29 })]));
-  cuerpo.push(par([txt('Corresponde a: ', { bold: true, size: 29 }), txt('Pedido ' + esc(d.pedido), { size: 29 })]));
-  cuerpo.push(par(txt('"Recibí conforme las mercaderías en las cantidades indicadas"', { size: 29 })));
-  cuerpo.push(par(txt('Fecha:', { size: 29 })));
-  cuerpo.push(par(txt('.......................................', { size: 29 }), { alignment: AlignmentType.RIGHT, spacing: { before: 700 } }));
-  cuerpo.push(par(txt('Firma, Aclaración y DNI', { size: 29 }), { alignment: AlignmentType.RIGHT }));
 
-  return new Document({ sections: [{ properties: {}, children: cuerpo }] });
+  // v70: el pie va anclado al fondo de la página vía el Footer de la
+  // sección. Así el cuerpo (items) puede crecer hacia abajo y el pie queda
+  // siempre pegado al borde inferior.
+  const footerChildren = [];
+  if (d.obs) footerChildren.push(par([txt('Observaciones: ', { bold: true, size: 29 }), txt(esc(d.obs), { size: 29 })]));
+  footerChildren.push(par([txt('Corresponde a: ', { bold: true, size: 29 }), txt('Pedido ' + esc(d.pedido), { size: 29 })]));
+  footerChildren.push(par(txt('"Recibí conforme las mercaderías en las cantidades indicadas"', { size: 29 })));
+  footerChildren.push(par(txt('Fecha:', { size: 29 })));
+  footerChildren.push(par(txt('.......................................', { size: 29 }), { alignment: AlignmentType.RIGHT, spacing: { before: 400 } }));
+  footerChildren.push(par(txt('Firma, Aclaración y DNI', { size: 29 }), { alignment: AlignmentType.RIGHT }));
+
+  // Márgenes uniformes de 1,27 cm en los 4 lados (1 cm = 567 twips → 720).
+  const sectionProps = {
+    page: { margin: { top: 720, right: 720, bottom: 720, left: 720, header: 360, footer: 360 } }
+  };
+
+  return new Document({
+    sections: [{
+      properties: sectionProps,
+      footers: { default: new Footer({ children: footerChildren }) },
+      children: cuerpo
+    }]
+  });
 }
 
 // =====================================================================
