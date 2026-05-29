@@ -1962,6 +1962,12 @@ function showAffectedActivitiesModalMotor(placedActId, applyPlan, affectedItems,
     if (desc.endsWith(sufijo)) return desc.substring(0, desc.length - sufijo.length);
     return desc;
   }
+  // v70: ordenar por fecha+hora "Actual" ascendente (más antiguas arriba).
+  affectedItems.sort((a, b) => {
+    const ka = (a.oldFecha || '') + ' ' + (a.oldHora || '');
+    const kb = (b.oldFecha || '') + ' ' + (b.oldHora || '');
+    return ka.localeCompare(kb);
+  });
   affectedItems.forEach(it => {
     const oldStr = fmtDate(it.oldFecha) + ' ' + (it.oldHora ? it.oldHora.substring(0,5) : '');
     const newStr = it._deleted ? '<span style="color:#A32D2D;font-weight:600">SE ELIMINA</span>' : (fmtDate(it.newFecha) + ' ' + (it.newHora ? it.newHora.substring(0,5) : ''));
@@ -2097,6 +2103,12 @@ function showAffectedActivitiesModal(actId, machId, fecha, startTime, newOpId, s
   h += '<table style="width:100%;border-collapse:collapse;font-size:12px">';
   h += '<thead><tr style="background:#F5F3EC"><th style="padding:6px 8px;text-align:left;border-bottom:1px solid #C8C6BE">Actividad</th><th style="padding:6px 8px;text-align:left;border-bottom:1px solid #C8C6BE">Cliente</th><th style="padding:6px 8px;text-align:left;border-bottom:1px solid #C8C6BE">Actual</th><th style="padding:6px 8px;text-align:left;border-bottom:1px solid #C8C6BE">Nuevo</th></tr></thead><tbody>';
   // Rows for affected (shifted) activities
+  // v70: ordenar por fecha+hora "Actual" ascendente (más antiguas arriba).
+  affectedItems.sort((a, b) => {
+    const ka = (a.oldFecha || '') + ' ' + (a.oldHora || '');
+    const kb = (b.oldFecha || '') + ' ' + (b.oldHora || '');
+    return ka.localeCompare(kb);
+  });
   affectedItems.forEach(it => {
     const oldStr = fmtDate(it.oldFecha) + ' ' + it.oldHora.substring(0,5);
     const newStr = fmtDate(it.newFecha) + ' ' + it.newHora.substring(0,5);
