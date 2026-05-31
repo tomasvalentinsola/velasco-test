@@ -5906,10 +5906,16 @@ function renderProductoMatrizDetail() {
       // Suplentes: en producto matriz se llaman maquinas_suplentes / operarios_suplentes
       const supMaqs = (p.maquinas_suplentes || []).map(id => mN(parseInt(id))).join(', ');
       const supOps = (p.operarios_suplentes || []).map(id => opN(parseInt(id))).join(', ');
-      h += '<div class="proc-card"><div class="proc-card-body">';
+      // v70 Fase 11a: si el proceso está marcado para dividirse, la tarjeta
+      // se destaca con fondo y borde distintos.
+      const dividido = p.dividir_en_subprocesos === true;
+      const cardStyle = dividido ? ' style="background:#EFF5FB;border-left:4px solid #4787C9"' : '';
+      h += '<div class="proc-card"' + cardStyle + '><div class="proc-card-body">';
       h += '<div class="proc-card-t"><span style="color:#888780;font-weight:400;margin-right:6px">' + (idx + 1) + '.</span>' + escapeHtml(p.proceso || p.descripcion || '') + tag;
+      if (dividido) h += ' <span style="display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;background:#4787C9;color:#fff;font-weight:700;margin-left:4px">DIVIDIDO EN SUB-PROCESOS</span>';
       h += '</div>';
       h += '<div class="proc-card-s">';
+      if (dividido) h += '<div style="font-weight:600;color:#0C447C;margin-bottom:3px">Al importar a un proyecto, se crea un proceso por cada pieza.</div>';
       h += '<b>Tiempo de operación (por pieza):</b> ' + dur + setup + '<br>';
       h += '<b>Maq. ideal:</b> ' + escapeHtml(p.maquina_ideal_id ? mN(p.maquina_ideal_id) : (p.maquina_ideal_nombre ? p.maquina_ideal_nombre + ' (otra)' : '— ninguna —')) + (supMaqs ? ' · <b>Suplentes:</b> ' + escapeHtml(supMaqs) : '') + '<br>';
       h += '<b>Op. ideal:</b> ' + escapeHtml(p.operario_ideal_id ? opN(p.operario_ideal_id) : '—') + (supOps ? ' · <b>Suplentes:</b> ' + escapeHtml(supOps) : '');
@@ -6371,6 +6377,19 @@ function showProcesoForm(procesoId, ctx) {
     h += '<div id="p-tipo-warn" style="display:none;background:#FEF0F0;color:#A32D2D;padding:8px 12px;border-radius:5px;margin-bottom:10px;font-size:11px;border:1px solid #FEDADA"><b>⚠ Atencion:</b> esta actividad ya esta planificada en el tablero. Cambiar el tipo modifica como se comporta el bloque y puede desplazar otras actividades.</div>';
   }
 
+  // v70 Fase 11a: checkbox "Dividir en sub-procesos". Solo en matriz y solo
+  // para tipos automática / semi-automática. La explosión real se hace en la
+  // 11b al "Agregar desde matriz".
+  if (procCtx.tipo === 'matriz') {
+    const divActual = proceso && proceso.dividir_en_subprocesos === true;
+    const tipoDivOk = tipo === 'automatica' || tipo === 'semi_automatica';
+    h += '<div id="p-dividir-wrap" class="ef" style="background:#F5F3EC;border:1px solid #C8C6BE;border-radius:5px;padding:9px 11px;margin-bottom:10px;' + (tipoDivOk ? '' : 'display:none') + '">';
+    h += '<label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">';
+    h += '<input type="checkbox" id="p-dividir"' + (divActual ? ' checked' : '') + ' style="margin-top:2px">';
+    h += '<div style="flex:1"><div style="font-weight:600;font-size:12px">Dividir en sub-procesos al importar</div>';
+    h += '<div style="font-size:10px;color:#5F5E5A">Al agregar este producto a un proyecto, se crea un proceso por cada pieza (en lugar de uno con cantidad escalada). Incluí el tiempo de "sacar y poner" dentro del tiempo de operación.</div></div></label></div>';
+  }
+
   h += '<div class="ef"><div class="ef-l">Maquina ideal <span style="color:#A32D2D">*</span></div>';
   h += '<select class="ef-i" id="p-maq-ideal" onchange="toggleMaqOtra()">';
   if (isNew) h += '<option value="">— elegir —</option>';
@@ -6566,7 +6585,12 @@ async function _saveProcesoImpl(procesoId) {
       operario_ideal_id: opIdeal,
       maquinas_suplentes: supMaqs.length ? supMaqs : null,
       operarios_suplentes: supOps.length ? supOps : null,
-      trabajo_a_realizar: trabajo
+      trabajo_a_realizar: trabajo,
+      // v70 Fase 11a: bandera del checkbox "Dividir en sub-procesos".
+      // Solo válido para automática/semi; en manual queda false.
+      dividir_en_subprocesos: (tipo === 'automatica' || tipo === 'semi_automatica')
+        ? !!(document.getElementById('p-dividir') && document.getElementById('p-dividir').checked)
+        : false
     };
     if (procesoId) {
       const { error } = await sb.from('productos_matriz_procesos').update(payload).eq('id', procesoId);
@@ -6884,6 +6908,18 @@ function onTipoChange() {
     if (original && sel && sel.value !== original) warn.style.display = 'block';
     else warn.style.display = 'none';
   }
+  // v70 Fase 11a: el checkbox "Dividir en sub-procesos" solo aplica para
+  // tipos automática / semi-automática. Si se cambia a manual, se oculta
+  // y se desmarca para que no quede activo "por accidente".
+  const divWrap = document.getElementById('p-dividir-wrap');
+  if (divWrap && sel) {
+    const ok = sel.value === 'automatica' || sel.value === 'semi_automatica';
+    divWrap.style.display = ok ? 'block' : 'none';
+    if (!ok) {
+      const cb = document.getElementById('p-dividir');
+      if (cb) cb.checked = false;
+    }
+  }
 }
 function toggleSetupField() { onTipoChange(); }
 // Cuando cambia el proceso seleccionado:
@@ -6996,9 +7032,9 @@ function aplicarAutocompletarPorMaquina(maqIdRaw) {
   if (!maqIdRaw || maqIdRaw === 'OTRA' || maqIdRaw === 'NINGUNA') return;
   const maq = maquinas.find(m => m.id === parseInt(maqIdRaw));
   if (!maq) return;
-  // Acotar los operarios suplentes ofrecidos a los de la máquina.
-  const permitidos = _operariosDeMaquina(maq);
-  _filtrarSuplentesOperario(permitidos);
+  // Recalcular suplentes permitidos: unión de operarios de la máquina ideal
+  // y los de las máquinas suplentes elegidas.
+  _recalcularSuplentesPermitidos();
   const sel = document.getElementById('p-op-ideal');
   if (sel && !sel.value && maq.operario_ideal_id) {
     sel.value = maq.operario_ideal_id;
@@ -7007,6 +7043,29 @@ function aplicarAutocompletarPorMaquina(maqIdRaw) {
     const supl = maq.operarios_suplentes.filter(id => id !== maq.operario_ideal_id);
     buildChips('chips-op', operarios, supl, 'op');
   }
+}
+
+// v70 Fase 10: recalcula la lista de operarios permitidos como suplentes,
+// uniendo los de la máquina ideal con los de cada máquina suplente
+// seleccionada en los chips. Se llama cuando cambia el ideal o cuando se
+// agregan/quitan máquinas suplentes.
+function _recalcularSuplentesPermitidos() {
+  const idsSet = new Set();
+  // Máquina ideal (del select)
+  const maqSel = document.getElementById('p-maquina');
+  if (maqSel && maqSel.value && maqSel.value !== 'OTRA' && maqSel.value !== 'NINGUNA') {
+    const m = maquinas.find(x => x.id === parseInt(maqSel.value));
+    if (m) _operariosDeMaquina(m).forEach(id => idsSet.add(id));
+  }
+  // Máquinas suplentes (de los chips)
+  if (chipState.maq) {
+    chipState.maq.forEach(maqId => {
+      const m = maquinas.find(x => x.id === maqId);
+      if (m) _operariosDeMaquina(m).forEach(id => idsSet.add(id));
+    });
+  }
+  const permitidos = [...idsSet];
+  _filtrarSuplentesOperario(permitidos);
 }
 
 // IDs de operarios asociados a un proceso sin máquina (ideal + suplentes).
@@ -7082,12 +7141,17 @@ function addChipFromInput(kind) {
   chipState[kind].add(it.id);
   input.value = '';
   renderChips(kind === 'maq' ? 'chips-maq' : 'chips-op', list, kind);
+  // v70 Fase 10: si agregué una máquina suplente, recalcular los operarios
+  // permitidos como suplentes (unión de la ideal + todas las suplentes).
+  if (kind === 'maq') _recalcularSuplentesPermitidos();
   document.getElementById('chip-add-' + kind).focus();
 }
 function removeChip(kind, id) {
   chipState[kind].delete(id);
   const list = kind === 'maq' ? maquinas : (_operariosSuplenteLista || operarios);
   renderChips(kind === 'maq' ? 'chips-maq' : 'chips-op', list, kind);
+  // v70 Fase 10: si quité una máquina suplente, recalcular permitidos.
+  if (kind === 'maq') _recalcularSuplentesPermitidos();
 }
 
 // Slot de foto:
