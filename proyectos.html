@@ -5953,7 +5953,17 @@ function renderItemDetail() {
         if (!predAct) return;
         const predItem = items.find(x => x.id === predAct.item_id);
         const predProj = predItem ? proyectos.find(p2 => p2.id === predItem.proyecto_id) : null;
-        const label = (predItem ? predItem.descripcion + ' / ' : '') + (predAct.proceso || '?') + (predProj && predProj.pedido_nro ? ' (Ped. ' + predProj.pedido_nro + ')' : '');
+        // v70 Fase 11c: si el predecesor es un sub-proceso de un grupo dividido,
+        // indicar "Pieza N/M" para que se distinga de sus hermanos.
+        let piezaSuffix = '';
+        if (predAct.grupo_division_id) {
+          const grupo = actividades.filter(x => x.grupo_division_id === predAct.grupo_division_id)
+            .sort((a, b) => (a.orden || 0) - (b.orden || 0) || a.id - b.id);
+          const n = grupo.findIndex(x => x.id === predAct.id) + 1;
+          const m = grupo.length;
+          if (n > 0 && m > 1) piezaSuffix = ' [Pieza ' + n + '/' + m + ']';
+        }
+        const label = (predItem ? predItem.descripcion + ' / ' : '') + (predAct.proceso || '?') + piezaSuffix + (predProj && predProj.pedido_nro ? ' (Ped. ' + predProj.pedido_nro + ')' : '');
         h += '<span style="display:inline-flex;align-items:center;gap:4px;background:#E6F1FB;color:#0C447C;padding:1px 6px;border-radius:3px;font-size:10px;font-weight:500;margin-right:3px;margin-bottom:2px">↶ ' + escapeHtml(label) + ' <span onclick="removeCorrelatividad(' + c.id + ')" style="cursor:pointer;font-weight:700;opacity:.6" title="Quitar predecesor">×</span></span>';
       });
       h += '<button class="b" style="padding:2px 6px;font-size:10px;margin-left:4px" onclick="showAddPredecesorModal(' + p.id + ')">+ Predecesor</button>';
@@ -6110,7 +6120,16 @@ function renderPredsChipsHtml(actId) {
     if (!predAct) return '';
     const predItem = items.find(x => x.id === predAct.item_id);
     const predProj = predItem ? proyectos.find(p => p.id === predItem.proyecto_id) : null;
-    const label = (predItem ? predItem.descripcion + ' / ' : '') + (predAct.proceso || '?') + (predProj && predProj.pedido_nro ? ' (Ped. ' + predProj.pedido_nro + ')' : '');
+    // v70 Fase 11c: "Pieza N/M" si el predecesor es parte de un grupo dividido.
+    let piezaSuffix = '';
+    if (predAct.grupo_division_id) {
+      const grupo = actividades.filter(x => x.grupo_division_id === predAct.grupo_division_id)
+        .sort((a, b) => (a.orden || 0) - (b.orden || 0) || a.id - b.id);
+      const n = grupo.findIndex(x => x.id === predAct.id) + 1;
+      const m = grupo.length;
+      if (n > 0 && m > 1) piezaSuffix = ' [Pieza ' + n + '/' + m + ']';
+    }
+    const label = (predItem ? predItem.descripcion + ' / ' : '') + (predAct.proceso || '?') + piezaSuffix + (predProj && predProj.pedido_nro ? ' (Ped. ' + predProj.pedido_nro + ')' : '');
     return '<span style="display:inline-flex;align-items:center;gap:4px;background:#E6F1FB;color:#0C447C;padding:2px 6px;border-radius:3px;font-size:11px;font-weight:500">↶ ' + escapeHtml(label) + ' <span onclick="removeCorrelatividad(' + c.id + ')" style="cursor:pointer;font-weight:700;opacity:.6" title="Quitar">×</span></span>';
   }).join('');
 }
@@ -6274,7 +6293,17 @@ function renderPredecesorList() {
       const itLabel = it ? it.descripcion : '?';
       const projLabel = pr ? (pr.descripcion || ('P.' + pr.id)) : '?';
       const pedLabel = pr && pr.pedido_nro ? pr.pedido_nro : '-';
-      const procLabel = a.proceso || a.descripcion || '?';
+      // v70 Fase 11c: si pertenece a un grupo dividido, agregar "Pieza N/M"
+      // para distinguirlo de sus hermanos.
+      let piezaSuffix = '';
+      if (a.grupo_division_id) {
+        const grupo = actividades.filter(x => x.grupo_division_id === a.grupo_division_id)
+          .sort((x1, x2) => (x1.orden || 0) - (x2.orden || 0) || x1.id - x2.id);
+        const n = grupo.findIndex(x => x.id === a.id) + 1;
+        const m = grupo.length;
+        if (n > 0 && m > 1) piezaSuffix = ' [Pieza ' + n + '/' + m + ']';
+      }
+      const procLabel = (a.proceso || a.descripcion || '?') + piezaSuffix;
       const searchable = (itLabel + ' ' + projLabel + ' ' + pedLabel + ' ' + procLabel).toLowerCase();
       return { a, it, pr, itLabel, projLabel, pedLabel, procLabel, searchable };
     })

@@ -3737,7 +3737,16 @@ function opSelectorItem(a, opId, fecha) {
       const pa = acts.find(x => x.id === pid);
       if (pa && (pa.estado_proceso || 'Planificación Pendiente') === 'Planificación Pendiente') {
         const pi = items.find(x => x.id === pa.item_id);
-        pendingPreds.push((pi ? pi.descripcion + ' / ' : '') + (pa.proceso || '?'));
+        // v70 Fase 11c: "Pieza N/M" si el predecesor es de un grupo dividido.
+        let piezaSuffix = '';
+        if (pa.grupo_division_id) {
+          const grupo = acts.filter(x => x.grupo_division_id === pa.grupo_division_id)
+            .sort((x1, x2) => (x1.orden || 0) - (x2.orden || 0) || x1.id - x2.id);
+          const n = grupo.findIndex(x => x.id === pa.id) + 1;
+          const m = grupo.length;
+          if (n > 0 && m > 1) piezaSuffix = ' [Pieza ' + n + '/' + m + ']';
+        }
+        pendingPreds.push((pi ? pi.descripcion + ' / ' : '') + (pa.proceso || '?') + piezaSuffix);
       }
     });
   }
