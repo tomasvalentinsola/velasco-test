@@ -6517,17 +6517,33 @@ function showProcesoForm(procesoId, ctx) {
     h += '<div id="p-tipo-warn" style="display:none;background:#FEF0F0;color:#A32D2D;padding:8px 12px;border-radius:5px;margin-bottom:10px;font-size:11px;border:1px solid #FEDADA"><b>⚠ Atencion:</b> esta actividad ya esta planificada en el tablero. Cambiar el tipo modifica como se comporta el bloque y puede desplazar otras actividades.</div>';
   }
 
-  // v70 Fase 11a: checkbox "Dividir en sub-procesos". Solo en matriz y solo
-  // para tipos automática / semi-automática. La explosión real se hace en la
-  // 11b al "Agregar desde matriz".
+  // v70 Fase 11a/c: checkbox "Dividir en sub-procesos".
+  // - En matriz ('producto'): siempre visible (edición y creación) si tipo auto/semi.
+  // - En proyecto ('item'): solo si es proceso nuevo (no edición) y cantidad del item > 1,
+  //   y tipo auto/semi. No se persiste; afecta la creación inmediata.
+  let mostrarCheckboxDiv = false;
+  let divActual = false;
+  let cantItemForDiv = 1;
   if (procCtx.tipo === 'producto') {
-    const divActual = proceso && proceso.dividir_en_subprocesos === true;
+    mostrarCheckboxDiv = true;
+    divActual = proceso && proceso.dividir_en_subprocesos === true;
+  } else if (procCtx.tipo === 'item' && isNew) {
+    const _it = items.find(i => i.id === procCtx.parentId);
+    cantItemForDiv = (_it && _it.cantidad) ? _it.cantidad : 1;
+    if (cantItemForDiv > 1) mostrarCheckboxDiv = true;
+  }
+  if (mostrarCheckboxDiv) {
     const tipoDivOk = tipo === 'automatica' || tipo === 'semi_automatica';
     h += '<div id="p-dividir-wrap" class="ef" style="background:#F5F3EC;border:1px solid #C8C6BE;border-radius:5px;padding:9px 11px;margin-bottom:10px;' + (tipoDivOk ? '' : 'display:none') + '">';
     h += '<label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">';
     h += '<input type="checkbox" id="p-dividir"' + (divActual ? ' checked' : '') + ' style="margin-top:2px">';
-    h += '<div style="flex:1"><div style="font-weight:600;font-size:12px">Dividir en sub-procesos al importar</div>';
-    h += '<div style="font-size:10px;color:#5F5E5A">Al agregar este producto a un proyecto, se crea un proceso por cada pieza (en lugar de uno con cantidad escalada). Incluí el tiempo de "sacar y poner" dentro del tiempo de operación.</div></div></label></div>';
+    h += '<div style="flex:1"><div style="font-weight:600;font-size:12px">Dividir en sub-procesos</div>';
+    if (procCtx.tipo === 'producto') {
+      h += '<div style="font-size:10px;color:#5F5E5A">Al agregar este producto a un proyecto, se crea un proceso por cada pieza (en lugar de uno con cantidad escalada). Incluí el tiempo de "sacar y poner" dentro del tiempo de operación.</div>';
+    } else {
+      h += '<div style="font-size:10px;color:#5F5E5A">Se crearán <b>' + cantItemForDiv + ' sub-procesos</b> (uno por pieza del item), encadenados entre sí. Incluí el tiempo de "sacar y poner" dentro del tiempo de operación.</div>';
+    }
+    h += '</div></label></div>';
   }
 
   h += '<div class="ef"><div class="ef-l">Maquina ideal <span style="color:#A32D2D">*</span></div>';
@@ -6815,21 +6831,86 @@ async function _saveProcesoImpl(procesoId) {
     const sameItem = actividades.filter(a => a.item_id === procCtx.parentId && !a.proceso_eliminado)
       .sort((a, b) => (a.orden || 999999) - (b.orden || 999999));
     const maxOrden = sameItem.reduce((mx, a) => Math.max(mx, a.orden || 0), 0);
-    payload.orden = maxOrden + 1;
     payload.estado = 'sin_planificar';
     payload.fecha = '1900-01-01';
     payload.hora_inicio = '06:00:00';
-    payload.duracion_planificador_min = dur + margen;
     payload.estado_proceso = 'Planificación Pendiente';
-    const { data: newAct, error: insErr } = await sb.from('actividades_tablero').insert(payload).select().single();
-    if (insErr) { toast('Error: ' + insErr.message, true); return; }
-    if (sameItem.length > 0) {
-      const prev = sameItem[sameItem.length - 1];
-      await sb.from('correlatividades').insert({
-        predecesor_id: prev.id, sucesor_id: newAct.id
-      });
+
+    // v70 Fase 11c: si el usuario tildó "Dividir en sub-procesos", explotar
+    // en N actividades (una por pieza), encadenadas entre sí. Solo aplica si
+    // tipo es auto/semi y la cantidad del item > 1.
+    const divCb = document.getElementById('p-dividir');
+    const querSubprocesos = !!(divCb && divCb.checked)
+      && (tipo === 'automatica' || tipo === 'semi_automatica')
+      && _cantItem > 1;
+
+    if (!querSubprocesos) {
+      // Comportamiento original: 1 actividad con tiempos escalados.
+      payload.orden = maxOrden + 1;
+      payload.duracion_planificador_min = _durTotal + margen;
+      const { data: newAct, error: insErr } = await sb.from('actividades_tablero').insert(payload).select().single();
+      if (insErr) { toast('Error: ' + insErr.message, true); return; }
+      if (sameItem.length > 0) {
+        const prev = sameItem[sameItem.length - 1];
+        await sb.from('correlatividades').insert({
+          predecesor_id: prev.id, sucesor_id: newAct.id
+        });
+      }
+      toast('Proceso agregado');
+    } else {
+      // Caso dividido: N actividades de 1 pieza cada una, con setup completo,
+      // compartiendo grupo_division_id. Cadena interna pieza-1 → ... → pieza-N.
+      // El predecesor externo (último proceso del item, si lo hay) queda como
+      // predecesor común de las N piezas.
+      const _durUna = Math.round((setup + dur) * 100) / 100;
+      const grupoId = 'gd_' + Date.now() + '_n' + procCtx.parentId;
+      const inserts = [];
+      for (let pieza = 1; pieza <= _cantItem; pieza++) {
+        inserts.push(Object.assign({}, payload, {
+          duracion_estimada_min: _durUna,
+          duracion_planificador_min: _durUna + margen,
+          orden: maxOrden + pieza,
+          grupo_division_id: grupoId
+        }));
+      }
+      const { data: actsData, error: insErr } = await sb.from('actividades_tablero').insert(inserts).select('id');
+      if (insErr) { toast('Error: ' + insErr.message, true); return; }
+      const nuevasIds = (actsData || []).map(x => x.id);
+      const corrInserts = [];
+      // Cadena interna entre las nuevas piezas.
+      for (let i = 0; i < nuevasIds.length - 1; i++) {
+        corrInserts.push({ predecesor_id: nuevasIds[i], sucesor_id: nuevasIds[i + 1] });
+      }
+      // Predecesor externo: el último proceso pre-existente del item.
+      // Regla: si el predecesor externo también es un grupo dividido del
+      // mismo tamaño, se conecta pieza-a-pieza; si no, queda como común.
+      if (sameItem.length > 0) {
+        const prev = sameItem[sameItem.length - 1];
+        if (prev.grupo_division_id) {
+          // Buscar todas las piezas del grupo previo, ordenadas.
+          const grupoPrev = actividades.filter(x => x.grupo_division_id === prev.grupo_division_id)
+            .sort((a, b) => (a.orden || 0) - (b.orden || 0) || a.id - b.id);
+          if (grupoPrev.length === nuevasIds.length) {
+            // Pieza-a-pieza.
+            for (let i = 0; i < grupoPrev.length; i++) {
+              corrInserts.push({ predecesor_id: grupoPrev[i].id, sucesor_id: nuevasIds[i] });
+            }
+          } else {
+            // Producto cartesiano (diferentes tamaños).
+            grupoPrev.forEach(p => {
+              nuevasIds.forEach(s => corrInserts.push({ predecesor_id: p.id, sucesor_id: s }));
+            });
+          }
+        } else {
+          // Predecesor no dividido → cada pieza del sucesor lo tiene como común.
+          nuevasIds.forEach(s => corrInserts.push({ predecesor_id: prev.id, sucesor_id: s }));
+        }
+      }
+      if (corrInserts.length > 0) {
+        await sb.from('correlatividades').insert(corrInserts);
+      }
+      toast('Proceso agregado en ' + _cantItem + ' sub-procesos');
     }
-    toast('Proceso agregado');
   }
   await loadAll();
   document.getElementById('proc-modal').remove();
