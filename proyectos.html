@@ -2131,6 +2131,12 @@ function showNewProjectItemForm(idx) {
   if (existing) existing.remove();
   const isNew = idx === null || idx === undefined;
   const it = isNew ? { cantidad: 1, estado: 'Espera MP' } : Object.assign({}, newProjectItemsBuffer[idx]);
+  // v70: si el item es nuevo y el form del proyecto ya tiene fecha de entrega
+  // cargada, usarla como default para "Fecha de fin estipulada" del item.
+  if (isNew && !it.fecha_fin_estipulada) {
+    const fpEl = document.getElementById('f-fechaentrega');
+    if (fpEl && fpEl.value) it.fecha_fin_estipulada = fpEl.value;
+  }
   const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'np-item-modal';
   const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '700px'; m.style.maxHeight = '90vh'; m.style.overflowY = 'auto';
   let h = '<div class="md-t">' + (isNew ? 'Nuevo item' : 'Editar item') + '</div>';
@@ -2474,6 +2480,9 @@ function selectClienteCombo(id, nombre) {
 // Captura/restaura valores del form de Nuevo Proyecto (excepto los del primer item
 // que se reconstruyen desde newProjectMatrizSelection si aplica).
 function _newProjectCaptureFormValues() {
+  // v70: leer observaciones del editor enriquecido si existe.
+  let obsMailV = '';
+  try { obsMailV = readRichEditor('f-obs-mail') || ''; } catch (e) { obsMailV = ''; }
   return {
     cliente: document.getElementById('f-cliente') ? document.getElementById('f-cliente').value : '',
     clienteSearch: document.getElementById('f-cliente-search') ? document.getElementById('f-cliente-search').value : '',
@@ -2484,7 +2493,10 @@ function _newProjectCaptureFormValues() {
     estado: document.getElementById('f-estado') ? document.getElementById('f-estado').value : '',
     fechaIng: document.getElementById('f-fechaing') ? document.getElementById('f-fechaing').value : '',
     fechaEnt: document.getElementById('f-fechaentrega') ? document.getElementById('f-fechaentrega').value : '',
-    projFoto: (document.getElementById('photo-url-proj') || { value: '' }).value
+    projFoto: (document.getElementById('photo-url-proj') || { value: '' }).value,
+    // v70: campos que antes se perdían al re-renderizar al agregar/eliminar items.
+    contacto: document.getElementById('f-contacto') ? document.getElementById('f-contacto').value : '',
+    obsMail: obsMailV
   };
 }
 function _newProjectRestoreFormValues(v) {
@@ -2502,6 +2514,19 @@ function _newProjectRestoreFormValues(v) {
   if (document.getElementById('f-fechaing')) document.getElementById('f-fechaing').value = v.fechaIng || '';
   if (document.getElementById('f-fechaentrega')) document.getElementById('f-fechaentrega').value = v.fechaEnt || '';
   if (document.getElementById('photo-url-proj')) document.getElementById('photo-url-proj').value = v.projFoto || '';
+  // v70: restaurar contacto y observaciones. El combo de contacto puede no
+  // estar poblado todavía (depende del cliente); si el cliente está, lo
+  // poblamos antes de setear el valor.
+  if (v.cliente && typeof setupContactoCombo === 'function') {
+    try { setupContactoCombo(parseInt(v.cliente)); } catch (e) {}
+  }
+  if (document.getElementById('f-contacto') && v.contacto) {
+    document.getElementById('f-contacto').value = v.contacto;
+  }
+  if (v.obsMail) {
+    const ed = document.getElementById('f-obs-mail');
+    if (ed) ed.innerHTML = v.obsMail;
+  }
 }
 function closeClienteCombo() {
   const list = document.getElementById('f-cliente-list');
@@ -3797,7 +3822,13 @@ function _renderItemModal(item, proj) {
     material_id: item ? (item.material_id || '') : '',
     material_label: item && item.material_id ? (materiales.find(x => x.id === item.material_id) || {}).nombre || '' : '',
     presentacion: item ? (item.presentacion_mat_prima || '') : '',
-    fechaFin: item && item.fecha_fin_estipulada ? item.fecha_fin_estipulada : '',
+    // v70: si es item nuevo y el proyecto tiene fecha de entrega, usarla
+    // como default. Si ya existe el item, respetar su valor (aunque sea vacío).
+    fechaFin: item && item.fecha_fin_estipulada
+      ? item.fecha_fin_estipulada
+      : (!item && nav && nav.projectId
+          ? ((getProject(nav.projectId) || {}).fecha_entrega || '')
+          : ''),
     foto_url: item ? (item.foto_url || '') : '',
     estado: item ? (item.estado || 'Espera MP') : 'Espera MP',
     obs_anulacion: (item && item.observaciones_anulacion) || ''
