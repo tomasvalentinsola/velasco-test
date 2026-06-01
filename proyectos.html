@@ -14031,6 +14031,15 @@ async function copyProjectForMail(projectId) {
   html += line('Descripción', proj.descripcion || '');
   if (projItems.length === 1) {
     html += line('Cantidad', String(projItems[0].cantidad || ''));
+  } else if (projItems.length > 1) {
+    // v70: cuando hay varios items, listar descripción + cantidad de cada uno.
+    let lista = '';
+    projItems.forEach(it => {
+      const desc = (it.descripcion || '').trim() || '(sin descripción)';
+      const cant = it.cantidad ? it.cantidad : '?';
+      lista += '<div style="margin-left:8px">• ' + escapeHtml(desc) + ': <b>' + escapeHtml(String(cant)) + '</b></div>';
+    });
+    html += '<p style="margin:6px 0 2px 0"><b>Cantidad:</b></p>' + lista;
   } else {
     html += line('Cantidad', '');
   }
@@ -14572,7 +14581,15 @@ body { font-family: Arial, sans-serif; font-size: 11px; color: #000; }
     <div class="wm-wrap"><table class="proc-table">
       <thead><tr><th>Nº</th><th>PROCESO</th><th>RESPONSABLE</th><th>REALIZADO</th></tr></thead>
       <tbody>`;
-  procesos.forEach((p, idx) => {
+  // v70 Fase 11: una sola fila por grupo dividido (igual que en las órdenes).
+  const _gruposVistosTabla = new Set();
+  const procesosParaTabla = procesos.filter(p => {
+    if (!p.grupo_division_id) return true;
+    if (_gruposVistosTabla.has(p.grupo_division_id)) return false;
+    _gruposVistosTabla.add(p.grupo_division_id);
+    return true;
+  });
+  procesosParaTabla.forEach((p, idx) => {
     const cls = idx % 2 === 1 ? ' class="shade"' : '';
     // Responsable: ideal + suplentes concatenados con " / "
     const respIds = [];
@@ -14597,13 +14614,23 @@ body { font-family: Arial, sans-serif; font-size: 11px; color: #000; }
   html += `</div>`;
 
   // ============= ORDENES DE TRABAJO (2 por hoja) =============
-  for (let i = 0; i < procesos.length; i += 2) {
-    const p1 = procesos[i];
-    const p2 = procesos[i + 1];
+  // v70 Fase 11: si un proceso está dividido en sub-procesos (grupo_division_id),
+  // se imprime UNA sola orden por grupo (la primera pieza del grupo). Los
+  // procesos sin grupo se imprimen normalmente.
+  const _gruposVistos = new Set();
+  const procesosParaOT = procesos.filter(p => {
+    if (!p.grupo_division_id) return true;
+    if (_gruposVistos.has(p.grupo_division_id)) return false;
+    _gruposVistos.add(p.grupo_division_id);
+    return true;
+  });
+  for (let i = 0; i < procesosParaOT.length; i += 2) {
+    const p1 = procesosParaOT[i];
+    const p2 = procesosParaOT[i + 1];
     html += `<div class="page ot-page">`;
-    html += renderOT(p1, i + 1, procesos.length, item, meta, clienteDisplay);
+    html += renderOT(p1, i + 1, procesosParaOT.length, item, meta, clienteDisplay);
     html += `<div class="ot-cut"></div>`;
-    if (p2) html += renderOT(p2, i + 2, procesos.length, item, meta, clienteDisplay);
+    if (p2) html += renderOT(p2, i + 2, procesosParaOT.length, item, meta, clienteDisplay);
     else html += `<div style="flex:1"></div>`;
     html += `</div>`;
   }
