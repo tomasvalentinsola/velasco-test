@@ -1751,6 +1751,12 @@ function _runMotorAndApply(changes, options) {
     return;
   }
 
+  // v70 Fase 10f: filtro de invariantes. Si hay violaciones, mostrar modal
+  // rojo bloqueante y NO aplicar nada.
+  if (!commitInvariantesOk(simResult)) {
+    return;
+  }
+
   // Pulmones eliminados por la simulacion (estan en acts pero no en state)
   const pulmonesPisados = [];
   acts.forEach(a => {
@@ -4628,6 +4634,224 @@ function _simBuildResult(state, anchors) {
   });
   return { ok: true, state, affected, applyPlan };
 }
+
+// =====================================================================
+// v70 Fase 10f - FILTRO DE INVARIANTES
+// =====================================================================
+//
+// Antes de aplicar cualquier resultado de simulateChange a la base, este
+// filtro detecta violaciones de invariantes físicas y bloquea la escritura.
+//
+// Invariantes verificadas (en estado FINAL del simulador):
+//   1) No hay solapamiento de máquina entre actividades activas.
+//   2) Ancladas (estado='completada') no se mueven respecto al estado actual.
+//   3) Sucesora no empieza antes del fin de máquina de su predecesora.
+//
+// Política para solapamientos preexistentes:
+//   Modo B (confirmado): solo se bloquea si el cambio INTRODUCE un solapamiento
+//   nuevo. Solapamientos que ya existían en `acts` antes del cambio se ignoran
+//   (no bloquean nuevos cambios, pero quedan listados aparte por si querés
+//   verlos).
+//
+// Devuelve un array de violaciones. Vacío = OK.
+function _validarInvariantesEnState(state, _applyPlan) {
+  const violaciones = [];
+
+  // --- Helper: calcular pares solapados en máquina dentro de un set de items.
+  // Devuelve [{aId, bId, machId, ...}] con info para mostrar.
+  function paresSolapadosMaquina(itemsArr) {
+    const pares = [];
+    // Agrupar por máquina.
+    const porMaq = new Map();
+    itemsArr.forEach(it => {
+      if (!it.maquina_id) return;
+      const key = String(it.maquina_id);
+      if (!porMaq.has(key)) porMaq.set(key, []);
+      porMaq.get(key).push(it);
+    });
+    porMaq.forEach((arr, machIdStr) => {
+      // Ordenar por fecha+hora.
+      arr.sort((a, b) => {
+        if (a.fecha < b.fecha) return -1;
+        if (a.fecha > b.fecha) return 1;
+        return tM(a.hora_inicio) - tM(b.hora_inicio);
+      });
+      for (let i = 0; i < arr.length; i++) {
+        const A = arr[i];
+        const aEnd = _simEndMach(A);
+        for (let j = i + 1; j < arr.length; j++) {
+          const B = arr[j];
+          // B empieza antes de que A termine? (B.fecha+B.hora < aEnd)
+          if (B.fecha < aEnd.date || (B.fecha === aEnd.date && tM(B.hora_inicio) < aEnd.time)) {
+            pares.push({ aId: A.id, bId: B.id, machId: parseInt(machIdStr) });
+          } else {
+            break;  // ordenadas: si esta no solapa, las que siguen tampoco con A.
+          }
+        }
+      }
+    });
+    return pares;
+  }
+
+  // --- 1) Solapamiento de máquina ---
+  // Calculamos solapamientos AHORA (state) y antes (acts originales).
+  // Solo bloqueamos los que sean nuevos.
+  const stateArr = Array.from(state.values());
+  const solapNuevos = paresSolapadosMaquina(stateArr);
+  // Solapamientos preexistentes (en `acts` con activ activas).
+  const actsActivas = acts.filter(a => a.estado !== 'sin_planificar' && a.fecha !== '1900-01-01')
+    .map(a => _simBuildStateItem(a));
+  const solapViejos = paresSolapadosMaquina(actsActivas);
+  // Un solapamiento es "preexistente" si los mismos dos IDs ya se solapaban
+  // antes (sin importar máquina exacta).
+  const claveViejos = new Set(solapViejos.map(s => {
+    const lo = Math.min(s.aId, s.bId), hi = Math.max(s.aId, s.bId);
+    return lo + '-' + hi;
+  }));
+  solapNuevos.forEach(s => {
+    const lo = Math.min(s.aId, s.bId), hi = Math.max(s.aId, s.bId);
+    if (!claveViejos.has(lo + '-' + hi)) {
+      const A = state.get(s.aId), B = state.get(s.bId);
+      const aEnd = _simEndMach(A);
+      violaciones.push({
+        tipo: 'solapamiento_maquina',
+        actA: { id: A.id, descripcion: A.descripcion, fecha: A.fecha, hora: A.hora_inicio, finFecha: aEnd.date, finHora: aEnd.time },
+        actB: { id: B.id, descripcion: B.descripcion, fecha: B.fecha, hora: B.hora_inicio },
+        maquina_id: s.machId
+      });
+    }
+  });
+
+  // --- 2) Ancladas no se mueven ---
+  // Una anclada (estado='completada' en `acts`) no debe haber cambiado
+  // fecha/hora/máquina/operario en el state. (Si fue eliminada del state,
+  // también es violación.)
+  acts.forEach(a => {
+    if (a.estado !== 'completada') return;
+    const sim = state.get(a.id);
+    if (!sim) {
+      violaciones.push({ tipo: 'anclada_eliminada', act: { id: a.id, descripcion: a.descripcion } });
+      return;
+    }
+    const movida = (sim.fecha !== a.fecha) ||
+      (sim.hora_inicio !== a.hora_inicio) ||
+      (sim.maquina_id !== a.maquina_id) ||
+      (sim.operario_id !== a.operario_id);
+    if (movida) {
+      violaciones.push({
+        tipo: 'anclada_movida',
+        act: {
+          id: a.id, descripcion: a.descripcion,
+          oldFecha: a.fecha, oldHora: a.hora_inicio,
+          newFecha: sim.fecha, newHora: sim.hora_inicio
+        }
+      });
+    }
+  });
+
+  // --- 3) Sucesora no antes del fin de máquina de su predecesora ---
+  // Solo controlamos correlatividades donde ambas estén activas en el state.
+  if (typeof corrs !== 'undefined' && corrs && corrs.length) {
+    corrs.forEach(c => {
+      const pred = state.get(c.predecesor_id);
+      const suc = state.get(c.sucesor_id);
+      if (!pred || !suc) return;
+      const predEnd = _simEndMach(pred);
+      // suc.fecha+suc.hora >= predEnd ?
+      if (suc.fecha < predEnd.date ||
+        (suc.fecha === predEnd.date && tM(suc.hora_inicio) < predEnd.time)) {
+        // Solo reportar si NO era violación preexistente.
+        const predA = acts.find(x => x.id === c.predecesor_id);
+        const sucA = acts.find(x => x.id === c.sucesor_id);
+        let eraViolacionAntes = false;
+        if (predA && sucA && predA.estado !== 'sin_planificar' && sucA.estado !== 'sin_planificar') {
+          const predAItem = _simBuildStateItem(predA);
+          const predAEnd = _simEndMach(predAItem);
+          if (sucA.fecha < predAEnd.date ||
+            (sucA.fecha === predAEnd.date && tM(sucA.hora_inicio) < predAEnd.time)) {
+            eraViolacionAntes = true;
+          }
+        }
+        if (!eraViolacionAntes) {
+          violaciones.push({
+            tipo: 'correlatividad_violada',
+            pred: { id: pred.id, descripcion: pred.descripcion, finFecha: predEnd.date, finHora: predEnd.time },
+            suc: { id: suc.id, descripcion: suc.descripcion, fecha: suc.fecha, hora: suc.hora_inicio }
+          });
+        }
+      }
+    });
+  }
+
+  return violaciones;
+}
+
+// Muestra un modal bloqueante con la lista de violaciones. Sin opción de
+// forzar (modo A confirmado). El cambio NO se aplica.
+function _mostrarModalViolaciones(violaciones) {
+  const prev = document.getElementById('inv-modal');
+  if (prev) prev.remove();
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'inv-modal';
+  const m = document.createElement('div'); m.className = 'md';
+  m.style.maxWidth = '640px';
+  m.style.maxHeight = '88vh';
+  m.style.overflowY = 'auto';
+  m.style.borderTop = '4px solid #A32D2D';
+
+  let h = '<div class="md-t" style="color:#A32D2D">⚠ No se puede aplicar el cambio</div>';
+  h += '<div style="font-size:12px;color:#5F5E5A;margin-bottom:10px">El cambio propuesto rompe reglas del tablero. Ningún cambio se aplicó. Revisá y volvé a intentar.</div>';
+  // Agrupar por tipo para mostrar más prolijo.
+  const porTipo = {};
+  violaciones.forEach(v => {
+    if (!porTipo[v.tipo]) porTipo[v.tipo] = [];
+    porTipo[v.tipo].push(v);
+  });
+  const titulos = {
+    solapamiento_maquina:   'Solapamiento en máquina',
+    anclada_movida:         'Actividad anclada que se movería',
+    anclada_eliminada:      'Actividad anclada que se eliminaría',
+    correlatividad_violada: 'Predecesor que no termina a tiempo'
+  };
+  Object.keys(porTipo).forEach(tipo => {
+    h += '<div style="margin-bottom:10px;background:#FEF0F0;border:1px solid #FEDADA;border-radius:5px;padding:8px 11px">';
+    h += '<div style="font-weight:700;font-size:12px;color:#A32D2D;margin-bottom:5px">' + (titulos[tipo] || tipo) + ' (' + porTipo[tipo].length + ')</div>';
+    porTipo[tipo].forEach(v => {
+      h += '<div style="font-size:11px;color:#5F5E5A;padding:3px 0;border-top:1px solid #FEDADA">';
+      if (tipo === 'solapamiento_maquina') {
+        const maqName = (typeof mN === 'function') ? mN(v.maquina_id) : ('maq #' + v.maquina_id);
+        h += '<b>' + escapeHtml(v.actA.descripcion || '?') + '</b> termina el ' + v.actA.finFecha + ' a las ' + mT(v.actA.finHora) + ' en ' + escapeHtml(maqName) + ', pero <b>' + escapeHtml(v.actB.descripcion || '?') + '</b> arrancaría el ' + v.actB.fecha + ' a las ' + (v.actB.hora || '').substring(0,5);
+      } else if (tipo === 'anclada_movida') {
+        h += '<b>' + escapeHtml(v.act.descripcion || '?') + '</b> está marcada como hecha el ' + v.act.oldFecha + ' a las ' + (v.act.oldHora || '').substring(0,5) + ', pero el cambio la movería al ' + v.act.newFecha + ' a las ' + (v.act.newHora || '').substring(0,5);
+      } else if (tipo === 'anclada_eliminada') {
+        h += '<b>' + escapeHtml(v.act.descripcion || '?') + '</b> está marcada como hecha y el cambio la eliminaría';
+      } else if (tipo === 'correlatividad_violada') {
+        h += '<b>' + escapeHtml(v.pred.descripcion || '?') + '</b> termina el ' + v.pred.finFecha + ' a las ' + mT(v.pred.finHora) + ', pero <b>' + escapeHtml(v.suc.descripcion || '?') + '</b> arrancaría antes (' + v.suc.fecha + ' ' + (v.suc.hora || '').substring(0,5) + ')';
+      }
+      h += '</div>';
+    });
+    h += '</div>';
+  });
+  h += '<div class="actions">';
+  h += '<button class="b b-p" onclick="this.closest(\'.mo\').remove()" autofocus>Entendido</button></div>';
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
+}
+
+// Helper para los puntos de aplicación de simulateChange:
+// recibe el resultado del simulador y devuelve true si se puede aplicar,
+// false si hay violaciones (y muestra el modal).
+function commitInvariantesOk(simResult) {
+  if (!simResult || !simResult.state) return true;  // nada que validar
+  const viol = _validarInvariantesEnState(simResult.state, simResult.applyPlan);
+  if (viol.length > 0) {
+    _mostrarModalViolaciones(viol);
+    return false;
+  }
+  return true;
+}
+
+// Exponer para testing.
+window.validarInvariantes = _validarInvariantesEnState;
+window.commitInvariantesOk = commitInvariantesOk;
 
 // Exponer en window para testing desde consola
 window.simulateChange = simulateChange;
