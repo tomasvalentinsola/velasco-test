@@ -1883,9 +1883,13 @@ function renderNewProjectForm() {
     _newProjectRestoreFormValues(newProjectDraft);
   }
   // v63: si tras restaurar hay cliente seleccionado, llenar el combo de contacto.
+  // v70: el contacto seleccionado se preserva del draft si existe.
   const cliEl = document.getElementById('f-cliente');
   const cliId = cliEl && cliEl.value ? parseInt(cliEl.value) : null;
-  _llenarComboContactoProj(cliId, null);
+  const contactoPreservar = (newProjectDraft && newProjectDraft.contacto)
+    ? parseInt(newProjectDraft.contacto)
+    : null;
+  _llenarComboContactoProj(cliId, contactoPreservar);
 }
 
 // Render del buffer de items pendientes (lista plana en v56; vista anidada en v57).
@@ -2514,15 +2518,8 @@ function _newProjectRestoreFormValues(v) {
   if (document.getElementById('f-fechaing')) document.getElementById('f-fechaing').value = v.fechaIng || '';
   if (document.getElementById('f-fechaentrega')) document.getElementById('f-fechaentrega').value = v.fechaEnt || '';
   if (document.getElementById('photo-url-proj')) document.getElementById('photo-url-proj').value = v.projFoto || '';
-  // v70: restaurar contacto y observaciones. El combo de contacto puede no
-  // estar poblado todavía (depende del cliente); si el cliente está, lo
-  // poblamos antes de setear el valor.
-  if (v.cliente && typeof setupContactoCombo === 'function') {
-    try { setupContactoCombo(parseInt(v.cliente)); } catch (e) {}
-  }
-  if (document.getElementById('f-contacto') && v.contacto) {
-    document.getElementById('f-contacto').value = v.contacto;
-  }
+  // v70: el contacto y observaciones se restauran después del render principal,
+  // junto con _llenarComboContactoProj. Acá solo restauramos lo demás.
   if (v.obsMail) {
     const ed = document.getElementById('f-obs-mail');
     if (ed) ed.innerHTML = v.obsMail;
@@ -5464,11 +5461,22 @@ function _mostrarModalImportar(opts) {
   }
 
   // Campos a completar al importar
+  // v70: fecha por default = fecha de entrega del proyecto. Funciona tanto en
+  // proyecto nuevo (lee el input f-fechaentrega) como en proyecto existente
+  // (lee del proyecto guardado vía nav.projectId).
+  let _fechaDefault = '';
+  const _fpEl = document.getElementById('f-fechaentrega');
+  if (_fpEl && _fpEl.value) {
+    _fechaDefault = _fpEl.value;
+  } else if (typeof nav !== 'undefined' && nav.projectId) {
+    const _pr = getProject(nav.projectId);
+    if (_pr && _pr.fecha_entrega) _fechaDefault = _pr.fecha_entrega;
+  }
   h += '<div class="row">';
   h += '<div class="ef" style="flex:1"><div class="ef-l">Cantidad <span style="color:#A32D2D">*</span></div>';
   h += '<input type="number" class="ef-i" id="imp-cant" value="1" min="1" step="1"></div>';
   h += '<div class="ef" style="flex:1"><div class="ef-l">Fecha de fin estipulada <span style="color:#A32D2D">*</span></div>';
-  h += '<input type="date" class="ef-i" id="imp-fechafin"></div>';
+  h += '<input type="date" class="ef-i" id="imp-fechafin" value="' + escapeHtml(_fechaDefault) + '"></div>';
   h += '</div>';
 
   // Presentación: default la del producto matriz, editable.
