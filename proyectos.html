@@ -6483,16 +6483,19 @@ function showProcesoForm(procesoId, ctx) {
   const tipo = proceso ? proceso.tipo : 'manual';
   // v70 Fase 7: el campo "Tiempo de operación" muestra el tiempo POR PIEZA.
   // En la matriz, duracion_estimada_min ya es por pieza. En un proceso de
-  // proyecto, duracion_estimada_min es el total (setup + cant*operación), así
-  // que recuperamos la operación: (total - setup) / cantidad.
+  // proyecto NO dividido, duracion_estimada_min es el total (setup + cant*op),
+  // así que recuperamos la operación: (total - setup) / cantidad.
+  // v70 Fase 11: en un proceso de proyecto DIVIDIDO (grupo_division_id),
+  // cada actividad ya representa UNA pieza, así que la operación es
+  // (total - setup) / 1, sin escalar.
   let _operacionMostrar = proceso ? (proceso.duracion_estimada_min || 0) : '';
   if (proceso && procCtx.tipo === 'item') {
     const _it = items.find(i => i.id === proceso.item_id);
-    const _cant = (_it && _it.cantidad) ? _it.cantidad : 1;
+    const _cantTotal = (_it && _it.cantidad) ? _it.cantidad : 1;
+    const _esDividido = !!proceso.grupo_division_id;
+    const _divisor = _esDividido ? 1 : _cantTotal;
     const _setupProc = proceso.duracion_operario_min || 0;
-    // Operación por pieza = (total - setup) / cantidad. Puede ser decimal.
-    const _op = ((proceso.duracion_estimada_min || 0) - _setupProc) / _cant;
-    // Redondeo a 2 decimales para no arrastrar errores de coma flotante.
+    const _op = ((proceso.duracion_estimada_min || 0) - _setupProc) / _divisor;
     _operacionMostrar = _op > 0 ? Math.round(_op * 100) / 100 : 0;
   }
   // Solo en contexto 'item' tiene sentido "isPlanificada"
@@ -6630,7 +6633,7 @@ function showProcesoForm(procesoId, ctx) {
   h += '<div class="ef"><div class="ef-l">Operarios suplentes</div>';
   h += '<div class="chip-wrap" id="chips-op" onclick="document.getElementById(\'chip-add-op\').focus()"></div></div>';
 
-  if (!isNew) {
+  if (!isNew && procCtx.tipo === 'item') {
     const procEstado = proceso.estado_proceso || 'Planificación Pendiente';
     const peColor = procStateColor(procEstado);
     h += '<div class="ef" style="background:' + peColor.bg + ';padding:8px 10px;border-radius:5px;border:1px solid ' + peColor.fg + '"><div class="ef-l" style="color:' + peColor.fg + '">Estado del proceso</div>';
@@ -6854,8 +6857,12 @@ async function _saveProcesoImpl(procesoId) {
   // v70 Fase 7: en un proceso de proyecto, p-dur es el tiempo de operación
   // POR PIEZA. El total de la actividad se calcula con la cantidad del item:
   //   total = setup + cantidad * operación   (el margen se suma aparte)
+  // v70 Fase 11: si es un sub-proceso dividido (existing.grupo_division_id),
+  // cada actividad representa UNA pieza. No se escala por cantidad.
   const _cantItem = (item && item.cantidad) ? item.cantidad : 1;
-  const _durTotal = Math.round((setup + _cantItem * dur) * 100) / 100;
+  const _esDividido = existing && !!existing.grupo_division_id;
+  const _multiplicador = _esDividido ? 1 : _cantItem;
+  const _durTotal = Math.round((setup + _multiplicador * dur) * 100) / 100;
 
   const payload = {
     item_id: procCtx.parentId,
