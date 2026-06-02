@@ -210,6 +210,9 @@ function hasPredecessorsReady(actId) {
   for (const pid of preds) {
     const pa = acts.find(a => a.id === pid);
     if (!pa) continue;  // missing — treat as not blocking
+    // v70 Fase 10: una actividad marcada como hecha (completada) NO bloquea
+    // a sus sucesores, sin importar dónde esté planificada.
+    if (pa.estado === 'completada') continue;
     const ps = pa.estado_proceso || 'Planificación Pendiente';
     if (ps === 'Planificación Pendiente') return false;
   }
@@ -1407,6 +1410,8 @@ function checkCorrelatividadConflict(actId, fecha, startTime) {
   for (const pid of predIds) {
     const pa = acts.find(a => a.id === pid);
     if (!pa) continue;
+    // v70 Fase 10: predecesor marcado como hecho no bloquea.
+    if (pa.estado === 'completada') continue;
     const ps = pa.estado_proceso || 'Planificación Pendiente';
     // A Cerrado predecessor doesn't constrain
     if (ps === 'Cerrado') continue;
@@ -1462,6 +1467,9 @@ function latestPredecessorEnd(actId) {
   for (const pid of predIds) {
     const pa = acts.find(a => a.id === pid);
     if (!pa) continue;
+    // v70 Fase 10: una actividad completada no impone constraint sobre el fin
+    // de los sucesores — ya pasó.
+    if (pa.estado === 'completada') continue;
     const ps = pa.estado_proceso || 'Planificación Pendiente';
     if (ps === 'Cerrado') continue;
     // Skip predecessors that aren't placed yet
@@ -3359,8 +3367,35 @@ let opSelectorState = {
   filterMachines: [],       // array of machine ids (empty = all)
   filterUrgency: 'all',     // 'all' | 'urgente' | 'alta' | 'media' | 'baja'
   sortBy: 'urgencia',       // 'urgencia' | 'maquina'
-  ddOpen: null              // which dropdown is open: 'maq' | null
+  ddOpen: null,             // which dropdown is open: 'maq' | null
+  // v70 Fase 10: filtros adicionales (texto libre, búsqueda parcial).
+  filterCliente: '',        // matchea cliente_id name + cliente_final
+  filterDesc: '',           // matchea descripcion del proyecto o de los items
+  filterProceso: '',        // matchea proceso (Torneado, Fresado, etc.)
+  filterPedido: ''          // matchea pedido_nro
 };
+
+// v70 Fase 10: helper para inputs de texto del selector. Actualiza el state,
+// re-renderiza, y restaura el foco al input correspondiente al final.
+function _opSelInput(key, value) {
+  opSelectorState[key] = value;
+  // Mapeo key → id del input para restaurar el foco.
+  const inputIds = {
+    filterCliente: 'opsel-f-cliente',
+    filterDesc:    'opsel-f-desc',
+    filterProceso: 'opsel-f-proc',
+    filterPedido:  'opsel-f-pedido'
+  };
+  renderOpSelector();
+  const id = inputIds[key];
+  if (id) {
+    const el = document.getElementById(id);
+    if (el) {
+      el.focus();
+      try { el.setSelectionRange(value.length, value.length); } catch (e) {}
+    }
+  }
+}
 
 // ========== PULMONES ==========
 function createPulmonInFreeSlot(opId, fecha) {
@@ -3597,7 +3632,7 @@ async function resolvePulmonDecision(action, actId, machId, fecha, startTime, ne
 }
 
 function showOpSelector(opId, opName, fecha) {
-  opSelectorState = { opId, opName, fecha, filterMachines: [], filterUrgency: 'all', sortBy: 'urgencia', ddOpen: null };
+  opSelectorState = { opId, opName, fecha, filterMachines: [], filterUrgency: 'all', sortBy: 'urgencia', ddOpen: null, filterCliente: '', filterDesc: '', filterProceso: '', filterPedido: '' };
   const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'op-selector-modal';
   bd.addEventListener('click', e => { if (e.target === bd) bd.remove() });
   const m = document.createElement('div'); m.className = 'md'; m.style.minWidth = '540px'; m.style.maxWidth = '620px';
@@ -3678,12 +3713,24 @@ function renderOpSelector() {
   h += '</div>';
 
   // ROW 2: Sort
-  h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">';
+  h += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">';
   h += '<div style="flex:1;min-width:110px"><div style="font-size:10px;color:#888780;margin-bottom:3px">Ordenar por</div>';
   h += '<select onchange="opSelectorState.sortBy=this.value;renderOpSelector()" style="width:100%;padding:5px;border:1px solid #C8C6BE;border-radius:4px;font-size:12px">';
   h += '<option value="urgencia"' + (S.sortBy === 'urgencia' ? ' selected' : '') + '>Urgencia</option>';
   h += '<option value="maquina"' + (S.sortBy === 'maquina' ? ' selected' : '') + '>Maquina principal</option>';
   h += '</select></div>';
+  h += '</div>';
+
+  // v70 Fase 10: ROW 3 — filtros de texto libre (cliente, descripción, proceso, pedido).
+  h += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">';
+  h += '<div style="flex:1;min-width:130px"><div style="font-size:10px;color:#888780;margin-bottom:3px">Cliente</div>';
+  h += '<input id="opsel-f-cliente" type="text" value="' + escapeHtml(S.filterCliente) + '" placeholder="Buscar..." oninput="_opSelInput(\'filterCliente\', this.value)" style="width:100%;padding:5px;border:1px solid #C8C6BE;border-radius:4px;font-size:12px"></div>';
+  h += '<div style="flex:1;min-width:130px"><div style="font-size:10px;color:#888780;margin-bottom:3px">Descripción</div>';
+  h += '<input id="opsel-f-desc" type="text" value="' + escapeHtml(S.filterDesc) + '" placeholder="Proyecto o item..." oninput="_opSelInput(\'filterDesc\', this.value)" style="width:100%;padding:5px;border:1px solid #C8C6BE;border-radius:4px;font-size:12px"></div>';
+  h += '<div style="flex:1;min-width:120px"><div style="font-size:10px;color:#888780;margin-bottom:3px">Proceso</div>';
+  h += '<input id="opsel-f-proc" type="text" value="' + escapeHtml(S.filterProceso) + '" placeholder="Torneado, Fresado..." oninput="_opSelInput(\'filterProceso\', this.value)" style="width:100%;padding:5px;border:1px solid #C8C6BE;border-radius:4px;font-size:12px"></div>';
+  h += '<div style="flex:1;min-width:90px"><div style="font-size:10px;color:#888780;margin-bottom:3px">Nº Pedido</div>';
+  h += '<input id="opsel-f-pedido" type="text" value="' + escapeHtml(S.filterPedido) + '" placeholder="Pedido..." oninput="_opSelInput(\'filterPedido\', this.value)" style="width:100%;padding:5px;border:1px solid #C8C6BE;border-radius:4px;font-size:12px"></div>';
   h += '</div>';
 
   // Apply filters
@@ -3695,6 +3742,35 @@ function renderOpSelector() {
     });
   }
   if (S.filterUrgency !== 'all') list = list.filter(a => a.urgencia === S.filterUrgency);
+  // v70 Fase 10: filtros de texto (case-insensitive, parcial).
+  const _norm = s => (s || '').toString().toLowerCase().trim();
+  const fCli = _norm(S.filterCliente);
+  const fDesc = _norm(S.filterDesc);
+  const fProc = _norm(S.filterProceso);
+  const fPed = _norm(S.filterPedido);
+  if (fCli) {
+    list = list.filter(a => {
+      // Cliente: nombre del cliente + cliente_final guardado en la actividad.
+      const cliNm = _norm(typeof clN === 'function' ? clN(a.cliente_id) : '');
+      const cliFinal = _norm(a.cliente_final);
+      return cliNm.includes(fCli) || cliFinal.includes(fCli);
+    });
+  }
+  if (fDesc) {
+    list = list.filter(a => {
+      // Descripción del proyecto + descripción del item de esa actividad.
+      const descProj = _norm(a.descripcion_proyecto);
+      const item = items.find(it => it.id === a.item_id);
+      const descItem = _norm(item ? item.descripcion : '');
+      return descProj.includes(fDesc) || descItem.includes(fDesc);
+    });
+  }
+  if (fProc) {
+    list = list.filter(a => _norm(a.proceso).includes(fProc));
+  }
+  if (fPed) {
+    list = list.filter(a => _norm(a.pedido_nro).includes(fPed));
+  }
 
   const urgOrder = { urgente: 0, alta: 1, media: 2, baja: 3 };
   list.sort((a, b) => {
@@ -4386,6 +4462,11 @@ function _simEnforceCorrs(state, anchors) {
     const suc = state.get(corr.sucesor_id);
     if (!suc) continue; // sucesor borrado/no planificado, no aplica
     if (!pred) {
+      // v70 Fase 10: si el predecesor está marcado como 'completada' (hecho)
+      // pero no está en el state (porque tiene fecha='1900-01-01' o similar),
+      // no debe bloquear — ya se hizo, no hay nada que esperar.
+      const predAct = acts.find(a => a.id === corr.predecesor_id);
+      if (predAct && predAct.estado === 'completada') continue;
       // Sucesor planificado pero predecesor no existe en state: bloqueo.
       return { ok: false, error: 'predecesor_no_planificado', detail: { sucesor_id: corr.sucesor_id, predecesor_id: corr.predecesor_id } };
     }
