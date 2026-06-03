@@ -204,6 +204,24 @@ function isActAvailableForPlanning(a) {
 // Returns true when ALL predecessors are either Planificado (in board) or Cerrado.
 // If any predecessor is still in 'Planificación Pendiente', this activity should
 // appear greyed out in the "+" picker.
+// v70 Fase 12: helper que devuelve el sufijo " [Pieza N/M]" si la actividad
+// pertenece a un grupo de división. Vacío en caso contrario.
+function piezaSuffix(act) {
+  if (!act || !act.grupo_division_id) return '';
+  const grupo = acts.filter(x => x.grupo_division_id === act.grupo_division_id)
+    .sort((a, b) => (a.orden || 0) - (b.orden || 0) || a.id - b.id);
+  const n = grupo.findIndex(x => x.id === act.id) + 1;
+  const m = grupo.length;
+  if (n <= 0 || m <= 1) return '';
+  return ' [Pieza ' + n + '/' + m + ']';
+}
+
+// Devuelve la descripción de la actividad con el sufijo de pieza si aplica.
+function descConPieza(act) {
+  if (!act) return '';
+  return (act.descripcion || '') + piezaSuffix(act);
+}
+
 function hasPredecessorsReady(actId) {
   const preds = corrs.filter(c => c.sucesor_id === actId).map(c => c.predecesor_id);
   if (preds.length === 0) return true;
@@ -1991,7 +2009,10 @@ function showAffectedActivitiesModalMotor(placedActId, applyPlan, affectedItems,
     const newStr = it._deleted ? '<span style="color:#A32D2D;font-weight:600">SE ELIMINA</span>' : (fmtDate(it.newFecha) + ' ' + (it.newHora ? it.newHora.substring(0,5) : ''));
     const icon = it.es_pulmon ? '🫁 ' : '';
     const desc = _stripProc(it.descripcion, it.proceso);
-    h += '<tr><td style="padding:5px 8px;border-bottom:1px solid #F5F3EC">' + icon + escapeHtml(desc) + '</td>' +
+    // v70 Fase 12: agregar sufijo "[Pieza N/M]" si la actividad es de un grupo.
+    const _itAct = acts.find(a => a.id === it.id);
+    const _pSfx = _itAct ? piezaSuffix(_itAct) : '';
+    h += '<tr><td style="padding:5px 8px;border-bottom:1px solid #F5F3EC">' + icon + escapeHtml(desc) + escapeHtml(_pSfx) + '</td>' +
          '<td style="padding:5px 8px;border-bottom:1px solid #F5F3EC">' + escapeHtml(it.cliente || '') + '</td>' +
          '<td style="padding:5px 8px;border-bottom:1px solid #F5F3EC">' + escapeHtml(mN(it.maquina_id) || '—') + '</td>' +
          '<td style="padding:5px 8px;border-bottom:1px solid #F5F3EC">' + escapeHtml(opN(it.operario_id) || '—') + '</td>' +
@@ -2131,7 +2152,10 @@ function showAffectedActivitiesModal(actId, machId, fecha, startTime, newOpId, s
     const oldStr = fmtDate(it.oldFecha) + ' ' + it.oldHora.substring(0,5);
     const newStr = fmtDate(it.newFecha) + ' ' + it.newHora.substring(0,5);
     const icon = it.es_pulmon ? '🫁 ' : '';
-    h += '<tr><td style="padding:5px 8px;border-bottom:1px solid #F5F3EC">' + icon + escapeHtml(it.descripcion) + '</td>' +
+    // v70 Fase 12: agregar "[Pieza N/M]" si la activ es de un grupo dividido.
+    const _itAct2 = acts.find(a => a.id === it.id);
+    const _pSfx2 = _itAct2 ? piezaSuffix(_itAct2) : '';
+    h += '<tr><td style="padding:5px 8px;border-bottom:1px solid #F5F3EC">' + icon + escapeHtml(it.descripcion) + escapeHtml(_pSfx2) + '</td>' +
          '<td style="padding:5px 8px;border-bottom:1px solid #F5F3EC">' + escapeHtml(it.cliente) + '</td>' +
          '<td style="padding:5px 8px;border-bottom:1px solid #F5F3EC;color:#888780">' + oldStr + '</td>' +
          '<td style="padding:5px 8px;border-bottom:1px solid #F5F3EC;color:#0C447C;font-weight:600">' + newStr + '</td></tr>';
@@ -2688,6 +2712,21 @@ function render() {
             // Fallback: no separator → render as before (whole text bold)
             titleDiv.textContent = fullDesc;
           }
+          // v70 Fase 12: badge "Pieza N/M" si la actividad es parte de un
+          // grupo dividido. Pequeño, a la derecha del título.
+          const _pSfx = piezaSuffix(act);
+          if (_pSfx) {
+            const piezaSpan = document.createElement('span');
+            piezaSpan.style.fontWeight = '700';
+            piezaSpan.style.fontSize = '9px';
+            piezaSpan.style.background = 'rgba(0,0,0,0.18)';
+            piezaSpan.style.color = '#fff';
+            piezaSpan.style.padding = '0 4px';
+            piezaSpan.style.borderRadius = '3px';
+            piezaSpan.style.marginLeft = '4px';
+            piezaSpan.textContent = _pSfx.trim().replace(/^\[|\]$/g, '');
+            titleDiv.appendChild(piezaSpan);
+          }
           tx.appendChild(titleDiv);
           tx.appendChild(Object.assign(document.createElement('div'), { className: 'bs', textContent: clN(act.cliente_id) }));
           tx.appendChild(Object.assign(document.createElement('div'), { className: 'bm', textContent: mT(bl.startMin) + '-' + mT(bE) }));
@@ -3179,7 +3218,7 @@ function showEdit(act, bl) {
 
   m.innerHTML =
     '<button class="md-x" onclick="this.closest(\'.mo\').remove()">&times;</button>' +
-    '<div class="md-t">' + act.descripcion + '</div>' +
+    '<div class="md-t">' + descConPieza(act) + '</div>' +
     infoHtml +
     otHtml +
     editHtml +
@@ -3991,7 +4030,7 @@ function showAutoInsertOptions(actId, opId, machId, fecha) {
   dayActs.sort((a, b) => a.endMin - b.endMin);
 
   let h = '<button class="md-x" onclick="this.closest(\'.mo\').remove()">&times;</button>';
-  h += '<div class="md-t">Donde insertar <b>' + act.descripcion + '</b>?</div>';
+  h += '<div class="md-t">Donde insertar <b>' + descConPieza(act) + '</b>?</div>';
   h += '<div style="font-size:12px;color:#5F5E5A;margin-bottom:14px">Ped. ' + (act.pedido_nro || '-') + ' — ' + opN(opId) + ' — ' + mN(machId) + ' — ' + fDn(fecha) + '</div>';
   h += '<div style="font-size:11px;color:#5F5E5A;margin-bottom:10px">' + opN(opId) + ' tiene el dia completo. Elegi donde colocar esta actividad automatica (su tiempo manual es ' + Dop(act) + ' min):</div>';
 
@@ -4006,7 +4045,7 @@ function showAutoInsertOptions(actId, opId, machId, fecha) {
   dayActs.forEach(({ act: a, endMin }) => {
     const afterMin = endMin + GAP;
     h += '<div class="ao" onclick="assignAutoAt(' + actId + ',' + opId + ',' + machId + ',\'' + fecha + '\',' + afterMin + ')">';
-    h += '<div class="ao-t">Despues de <b>' + a.descripcion + '</b> — Ped. ' + (a.pedido_nro || '-') + '</div>';
+    h += '<div class="ao-t">Despues de <b>' + descConPieza(a) + '</b> — Ped. ' + (a.pedido_nro || '-') + '</div>';
     h += '<div class="ao-s">Arranca a las ' + mT(afterMin) + '</div>';
     h += '</div>';
   });
