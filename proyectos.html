@@ -1357,7 +1357,20 @@ function renderItemsListBody(filteredProjects) {
     const urg = proyecto.urgencia ? '<span class="urg urg-' + proyecto.urgencia + '">' + proyecto.urgencia + '</span>' : '';
     const stBadge = '<span style="display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-weight:700;background:' + stColors.bg + ';color:' + stColors.fg + ';margin-left:6px">' + proyecto.estado + '</span>';
     const itemEstado = item.estado || 'Espera MP';
-    const itemEstadoBadge = '<span style="display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-weight:700;background:#E8F2FC;color:#0C447C;margin-left:6px">' + escapeHtml(itemEstado) + '</span>';
+    // v70 Fase 10: si el item está en "Proceso", el badge muestra el siguiente
+    // proceso pendiente (orden ascendente, primer no completado), en lugar
+    // del genérico "Proceso". Si todos están hechos, muestra "Proceso" como
+    // fallback (caso raro). Para sub-procesos divididos solo se muestra el
+    // nombre del proceso, sin indicador de pieza.
+    let itemEstadoTxt = itemEstado;
+    if (itemEstado === 'Proceso') {
+      const procsItem = actividades
+        .filter(a => a.item_id === item.id && !a.proceso_eliminado)
+        .sort((a, b) => (a.orden || 999999) - (b.orden || 999999));
+      const pendiente = procsItem.find(a => a.estado !== 'completada');
+      if (pendiente) itemEstadoTxt = pendiente.proceso || itemEstado;
+    }
+    const itemEstadoBadge = '<span style="display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-weight:700;background:#E8F2FC;color:#0C447C;margin-left:6px">' + escapeHtml(itemEstadoTxt) + '</span>';
     const isExpanded = expandedItems.has(item.id);
     const arrow = isExpanded ? '▼' : '▶';
     h += '<div class="card-wrap" style="margin-bottom:8px">';
@@ -7105,6 +7118,68 @@ async function _mphGuardar(procesoId) {
     toast('Proceso marcado como hecho');
     const modal = document.getElementById('hecho-modal');
     if (modal) modal.remove();
+    // v70 Fase 10: si era el último proceso pendiente del item, ofrecer
+    // cambiar el estado del item.
+    const procActual = actividades.find(a => a.id === procesoId);
+    if (procActual && procActual.item_id) {
+      const procsHermanos = actividades.filter(a => a.item_id === procActual.item_id && !a.proceso_eliminado);
+      const pendientes = procsHermanos.filter(a => a.estado !== 'completada');
+      const itemActual = items.find(i => i.id === procActual.item_id);
+      // Solo si: todos completados Y el item NO está ya en un estado "final".
+      const yaFinalizado = itemActual && ['Terminado', 'Stockeado', 'Enviado', 'Anulado'].includes(itemActual.estado);
+      if (pendientes.length === 0 && itemActual && !yaFinalizado) {
+        _mostrarModalFinalizarItem(itemActual);
+      } else {
+        render();
+      }
+    } else {
+      render();
+    }
+  } finally {
+    hideSpinner();
+  }
+}
+
+// v70 Fase 10: modal que aparece cuando se completa el último proceso de un
+// item. Pide elegir el nuevo estado entre Terminado / Stockeado / Enviado.
+function _mostrarModalFinalizarItem(item) {
+  const prev = document.getElementById('finitem-modal');
+  if (prev) prev.remove();
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'finitem-modal';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '420px';
+  let h = '<div class="md-t">Item con todos los procesos hechos</div>';
+  h += '<div style="font-size:12px;color:#5F5E5A;margin-bottom:12px"><b>' + escapeHtml(item.descripcion || '(sin descripción)') + '</b><br>Se completó el último proceso pendiente. ¿Qué estado le ponés al item?</div>';
+  const opciones = [
+    { val: 'Terminado', label: 'Terminado', desc: 'El item está listo, pendiente de envío o stockeo.' },
+    { val: 'Stockeado', label: 'Stockeado', desc: 'El item quedó guardado en stock.' },
+    { val: 'Enviado',   label: 'Enviado',   desc: 'El item ya se entregó al cliente.' }
+  ];
+  opciones.forEach((op, i) => {
+    h += '<label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;padding:10px 12px;border:1px solid #C8C6BE;border-radius:5px;margin-bottom:6px;background:#fff">';
+    h += '<input type="radio" name="finitem-estado" value="' + op.val + '"' + (i === 0 ? ' checked' : '') + ' style="margin-top:2px">';
+    h += '<div style="flex:1"><div style="font-weight:600;font-size:13px">' + op.label + '</div>';
+    h += '<div style="font-size:11px;color:#5F5E5A">' + op.desc + '</div></div></label>';
+  });
+  h += '<div class="actions" style="margin-top:14px">';
+  h += '<button class="b" onclick="document.getElementById(\'finitem-modal\').remove(); render();">Dejar como está</button>';
+  h += '<button class="b b-p" onclick="_finalizarItemGuardar(' + item.id + ')">Aplicar</button>';
+  h += '</div>';
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
+}
+
+async function _finalizarItemGuardar(itemId) {
+  const radios = document.querySelectorAll('input[name="finitem-estado"]');
+  let nuevo = null;
+  radios.forEach(r => { if (r.checked) nuevo = r.value; });
+  if (!nuevo) { toast('Elegí un estado', true); return; }
+  showSpinner('Actualizando estado del item...');
+  try {
+    const { error } = await sb.from('items').update({ estado: nuevo }).eq('id', itemId);
+    if (error) { toast('Error: ' + error.message, true); return; }
+    await loadAll();
+    const modal = document.getElementById('finitem-modal');
+    if (modal) modal.remove();
+    toast('Item actualizado a "' + nuevo + '"');
     render();
   } finally {
     hideSpinner();
