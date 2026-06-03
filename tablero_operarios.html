@@ -3457,7 +3457,24 @@ function showPulmonModal(actId, opId, opName, fecha, startMin) {
   else horaInicio = '08:00';
   h += '<input type="time" class="ef-i" id="pul-hora" value="' + horaInicio + '" step="600"></div>';
   h += '<div class="ef" style="flex:1"><div class="ef-l">Duracion (minutos) <span style="color:#A32D2D">*</span></div>';
-  const dur = a ? (a.duracion_planificador_min || a.duracion_estimada_min) : 60;
+  // v70 Fase 10: si es pulmón nuevo, calcular duración por default que llene
+  // el hueco desde startMin hasta la próxima actividad del operario (o fin
+  // del día, 17:00 = 1020 min).
+  let dur;
+  if (a) {
+    dur = a.duracion_planificador_min || a.duracion_estimada_min || 60;
+  } else if (typeof startMin === 'number') {
+    const FIN_DIA = 17 * 60;
+    // Próxima actividad del operario en este día con inicio > startMin.
+    const sigInicio = acts
+      .filter(x => x.operario_id === opId && x.fecha === fecha && x.estado !== 'sin_planificar' && tM(x.hora_inicio) > startMin)
+      .map(x => tM(x.hora_inicio))
+      .sort((a, b) => a - b)[0];
+    const tope = sigInicio !== undefined ? sigInicio : FIN_DIA;
+    dur = Math.max(10, tope - startMin);
+  } else {
+    dur = 60;
+  }
   h += '<input type="number" class="ef-i" id="pul-dur" value="' + dur + '" min="10" step="10"></div>';
   h += '</div>';
   h += '<div class="actions">';
