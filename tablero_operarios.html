@@ -422,10 +422,14 @@ function sE(opId,ds){const o=ops.find(x=>x.id===opId);if(!o)return 1020;const d=
 // se "evaporan" porque la maquina no necesita operario).
 function computeVB() {
   const vb = [];
-  acts.filter(a => a.estado !== 'sin_planificar' && a.fecha !== '1900-01-01' && !a.es_pulmon).forEach(act => {
+  // v70 Fase 10: los pulmones se dibujan como bloques manuales (ocupan al
+  // operario en un horario fijo). Antes estaban excluidos.
+  acts.filter(a => a.estado !== 'sin_planificar' && a.fecha !== '1900-01-01').forEach(act => {
     if (!act.operario_id) return;
 
-    if (is247(act) && effSetup(act) !== null && effSetup(act) !== undefined) {
+    // v70 Fase 10: los pulmones siempre se dibujan como manual (ocupan al
+    // operario en un horario fijo). El branch is247 no aplica para ellos.
+    if (!act.es_pulmon && is247(act) && effSetup(act) !== null && effSetup(act) !== undefined) {
       // === AUTO 24/7 ===
       // Generar partes visibles en el tablero. La numeracion de partes es
       // CONTINUA: parte 1, 2, 3, etc., sin importar si es del setup o de la
