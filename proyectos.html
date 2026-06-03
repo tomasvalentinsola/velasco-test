@@ -3734,7 +3734,7 @@ async function _cierreConfirmar() {
         }
         await sb.from('actividades_tablero').update({
           estado: 'completada',
-          estado_proceso: 'Realizado',
+          estado_proceso: 'Cerrado',
           fecha_real: act.fecha,
           hora_real_inicio: act.hora_inicio,
           hora_real_fin: horaFin
@@ -3742,7 +3742,7 @@ async function _cierreConfirmar() {
       } else if (accion === 'hecho_sintp') {
         await sb.from('actividades_tablero').update({
           estado: 'completada',
-          estado_proceso: 'Realizado',
+          estado_proceso: 'Cerrado',
           fecha_real: null,
           hora_real_inicio: null,
           hora_real_fin: null
@@ -5979,10 +5979,19 @@ function renderItemDetail() {
       // v70 Fase 10b: si el proceso está marcado como hecho, mostrar los
       // tiempos reales además de los planificados.
       if (p.estado === 'completada') {
-        const fr = p.fecha_real || '(sin fecha real)';
+        const fr = p.fecha_real || null;
+        const ffin = p.fecha_real_fin || fr;
         const hri = p.hora_real_inicio ? p.hora_real_inicio.substring(0, 5) : '?';
         const hrf = p.hora_real_fin ? p.hora_real_fin.substring(0, 5) : '?';
-        h += '<div style="margin-top:4px;padding:4px 8px;background:#E5F5E1;border-radius:3px;font-size:11px;color:#155724"><b>✓ Realizado:</b> ' + escapeHtml(fr) + ' · ' + hri + ' a ' + hrf + '</div>';
+        let textoReal;
+        if (!fr && !p.hora_real_inicio) {
+          textoReal = '(sin tiempos reales)';
+        } else if (fr === ffin || !ffin) {
+          textoReal = escapeHtml(fr || '(sin fecha)') + ' · ' + hri + ' a ' + hrf;
+        } else {
+          textoReal = escapeHtml(fr) + ' ' + hri + ' → ' + escapeHtml(ffin) + ' ' + hrf;
+        }
+        h += '<div style="margin-top:4px;padding:4px 8px;background:#E5F5E1;border-radius:3px;font-size:11px;color:#155724"><b>✓ Hecho:</b> ' + textoReal + '</div>';
       }
       // Predecesores
       h += '<br><b>Predecesores:</b> ';
@@ -7007,21 +7016,29 @@ function marcarProcesoHecho(procesoId) {
   // Pre-rellenar con lo planificado si lo hay. Si no, con la fecha de hoy.
   const estaPlanificado = p.estado && p.estado !== 'sin_planificar' && p.fecha !== '1900-01-01';
   const hoyIso = new Date().toISOString().slice(0, 10);
-  const fechaPre = estaPlanificado ? p.fecha : hoyIso;
+  const fechaIniPre = estaPlanificado ? p.fecha : hoyIso;
   const horaIniPre = estaPlanificado ? (p.hora_inicio || '06:00').substring(0, 5) : '';
-  // Calcular hora_fin planificada: hora_inicio + duracion_planificador_min.
+  // Calcular fecha y hora fin planificadas: inicio + duracion_planificador_min.
+  let fechaFinPre = fechaIniPre;
   let horaFinPre = '';
   if (estaPlanificado && p.hora_inicio && p.duracion_planificador_min) {
     const [hh, mm] = p.hora_inicio.split(':').map(x => parseInt(x));
-    const totalMin = hh * 60 + mm + p.duracion_planificador_min;
-    const fh = Math.floor(totalMin / 60) % 24, fm = totalMin % 60;
+    const totalMinAbs = hh * 60 + mm + p.duracion_planificador_min;
+    const diasExtra = Math.floor(totalMinAbs / (24 * 60));
+    const minDelDiaFin = totalMinAbs % (24 * 60);
+    const fh = Math.floor(minDelDiaFin / 60), fm = minDelDiaFin % 60;
     horaFinPre = String(fh).padStart(2, '0') + ':' + String(fm).padStart(2, '0');
+    if (diasExtra > 0) {
+      const baseDate = new Date(p.fecha + 'T00:00:00');
+      baseDate.setDate(baseDate.getDate() + diasExtra);
+      fechaFinPre = baseDate.toISOString().slice(0, 10);
+    }
   }
 
   const prev = document.getElementById('hecho-modal');
   if (prev) prev.remove();
   const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'hecho-modal';
-  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '440px';
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '460px';
 
   let h = '<div class="md-t">Marcar proceso como hecho</div>';
   h += '<div style="font-size:12px;color:#5F5E5A;margin-bottom:10px">' + escapeHtml(p.proceso || p.descripcion || '') + '</div>';
@@ -7031,12 +7048,21 @@ function marcarProcesoHecho(procesoId) {
     h += '<div style="background:#E6F1FB;color:#0C447C;padding:7px 11px;border-radius:5px;margin-bottom:10px;font-size:11px;border:1px solid #A8C8E8">Los campos vienen con los tiempos planificados. Ajustá si la realidad fue distinta.</div>';
   }
 
-  h += '<div class="ef"><div class="ef-l">Fecha real</div>';
-  h += '<input type="date" class="ef-i" id="mph-fecha" value="' + escapeHtml(fechaPre) + '"></div>';
-  h += '<div class="row">';
-  h += '<div class="ef" style="flex:1"><div class="ef-l">Hora de inicio</div>';
+  // Inicio
+  h += '<div style="font-weight:600;font-size:11px;color:#5F5E5A;margin-bottom:4px">Inicio</div>';
+  h += '<div class="row" style="margin-bottom:10px">';
+  h += '<div class="ef" style="flex:2"><div class="ef-l">Fecha</div>';
+  h += '<input type="date" class="ef-i" id="mph-fecha-ini" value="' + escapeHtml(fechaIniPre) + '"></div>';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Hora</div>';
   h += '<input type="time" class="ef-i" id="mph-hini" value="' + escapeHtml(horaIniPre) + '"></div>';
-  h += '<div class="ef" style="flex:1"><div class="ef-l">Hora de fin</div>';
+  h += '</div>';
+
+  // Fin
+  h += '<div style="font-weight:600;font-size:11px;color:#5F5E5A;margin-bottom:4px">Fin</div>';
+  h += '<div class="row" style="margin-bottom:10px">';
+  h += '<div class="ef" style="flex:2"><div class="ef-l">Fecha</div>';
+  h += '<input type="date" class="ef-i" id="mph-fecha-fin" value="' + escapeHtml(fechaFinPre) + '"></div>';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Hora</div>';
   h += '<input type="time" class="ef-i" id="mph-hfin" value="' + escapeHtml(horaFinPre) + '"></div>';
   h += '</div>';
 
@@ -7048,21 +7074,29 @@ function marcarProcesoHecho(procesoId) {
 }
 
 async function _mphGuardar(procesoId) {
-  const fechaReal = document.getElementById('mph-fecha').value || null;
+  const fechaIni = document.getElementById('mph-fecha-ini').value || null;
   const horaIni = document.getElementById('mph-hini').value || null;
+  const fechaFin = document.getElementById('mph-fecha-fin').value || null;
   const horaFin = document.getElementById('mph-hfin').value || null;
-  // Si hay hora_fin y hora_inicio, fin debe ser >= inicio (asumiendo mismo día).
-  if (horaIni && horaFin && horaFin < horaIni) {
-    toast('La hora de fin no puede ser anterior a la de inicio', true);
-    return;
+  // Validación: si hay fecha y hora completas en ambos extremos, fin debe ser
+  // posterior (o igual) al inicio.
+  if (fechaIni && horaIni && fechaFin && horaFin) {
+    const dIni = new Date(fechaIni + 'T' + horaIni);
+    const dFin = new Date(fechaFin + 'T' + horaFin);
+    if (dFin < dIni) {
+      toast('El fin no puede ser anterior al inicio', true);
+      return;
+    }
   }
   showSpinner('Marcando como hecho...');
   try {
+    // v70 Fase 10: estado_proceso pasa a 'Cerrado' al marcar como hecho.
     const payload = {
       estado: 'completada',
-      estado_proceso: 'Realizado',
-      fecha_real: fechaReal,
+      estado_proceso: 'Cerrado',
+      fecha_real: fechaIni,
       hora_real_inicio: horaIni,
+      fecha_real_fin: fechaFin,
       hora_real_fin: horaFin
     };
     const { error } = await sb.from('actividades_tablero').update(payload).eq('id', procesoId);
@@ -7099,6 +7133,7 @@ function desanclarProceso(procesoId) {
           estado_proceso: teniaPlanificacion ? 'Planificado' : 'Planificación Pendiente',
           fecha_real: null,
           hora_real_inicio: null,
+          fecha_real_fin: null,
           hora_real_fin: null
         };
         const { error } = await sb.from('actividades_tablero').update(payload).eq('id', procesoId);
