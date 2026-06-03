@@ -3174,19 +3174,37 @@ function showEdit(act, bl) {
   editHtml += '<div class="ef" style="flex:1"><div class="ef-l">Hora de inicio</div><input type="time" class="ef-i" id="ed-h" value="' + act.hora_inicio.substring(0, 5) + '" step="600"></div>';
   editHtml += '<div class="ef" style="flex:1"><div class="ef-l">Urgencia</div><select class="ef-i" id="ed-u">' + urgOptionsHtml + '</select></div>';
   editHtml += '</div>';
-  // Operator-time (setup) field: shown for auto y semi-auto.
-  if (isAuto(act)) {
-    const currentOpMin = (act.duracion_operario_min !== null && act.duracion_operario_min !== undefined)
-      ? act.duracion_operario_min : '';
-    editHtml += '<div class="ef"><div class="ef-l">Setup / tiempo del operario (min)</div>';
-    editHtml += '<input type="number" class="ef-i" id="ed-dop" value="' + currentOpMin + '" min="0" step="5" placeholder="ej. 30"></div>';
-  }
-  // Duracion total (min): editable in todos los tipos.
-  // Stored in duracion_planificador_min. Defaults to estimada+margen if null.
-  const totalMin = act.duracion_planificador_min ||
-    ((act.duracion_estimada_min || 0) + (act.duracion_margen_min || 0));
-  editHtml += '<div class="ef"><div class="ef-l">Duracion total (min) <span style="color:#888780;font-weight:400">— ancho del bloque en el tablero</span></div>';
-  editHtml += '<input type="number" class="ef-i" id="ed-dur" value="' + totalMin + '" min="10" step="10"></div>';
+
+  // v70 Fase 10: tiempos consistentes con el modal de Proyectos > Item >
+  // Proceso. Mismos 3 campos:
+  //   - Tiempo de operación (por pieza)
+  //   - Setup / tiempo del operario
+  //   - Margen
+  // Al guardar se recalculan duracion_estimada_min y duracion_planificador_min
+  // con la misma fórmula que en proyectos: total = setup + cantidad * operación.
+  // Para sub-procesos divididos (grupo_division_id), cantidad efectiva = 1
+  // (la actividad representa 1 pieza).
+  const _actItem = (typeof items !== 'undefined') ? items.find(i => i.id === act.item_id) : null;
+  const _cantItemEd = (_actItem && _actItem.cantidad) ? _actItem.cantidad : 1;
+  const _esDivididoEd = !!act.grupo_division_id;
+  const _multEd = _esDivididoEd ? 1 : _cantItemEd;
+  const _setupEd = act.duracion_operario_min || 0;
+  const _opEd = _multEd > 0
+    ? Math.round((((act.duracion_estimada_min || 0) - _setupEd) / _multEd) * 100) / 100
+    : 0;
+  const _margenEd = act.duracion_margen_min || 0;
+  // Hint: "× N piezas" salvo dividido.
+  const _hintCant = _esDivididoEd
+    ? ' <span style="color:#888780;font-weight:400">(sub-proceso de 1 pieza)</span>'
+    : (_cantItemEd > 1 ? ' <span style="color:#888780;font-weight:400">(× ' + _cantItemEd + ' piezas)</span>' : '');
+  editHtml += '<div class="ef"><div class="ef-l">Tiempo de operación (min) <span style="color:#A32D2D">*</span>' + _hintCant + '</div>';
+  editHtml += '<input type="number" class="ef-i" id="ed-op-min" value="' + _opEd + '" min="0" step="0.1" placeholder="ej. 60"></div>';
+  editHtml += '<div style="display:flex;gap:10px">';
+  editHtml += '<div class="ef" style="flex:1"><div class="ef-l">Setup / tiempo del operario (min)</div>';
+  editHtml += '<input type="number" class="ef-i" id="ed-dop" value="' + _setupEd + '" min="0" step="5" placeholder="ej. 30"></div>';
+  editHtml += '<div class="ef" style="flex:1"><div class="ef-l">Margen (min)</div>';
+  editHtml += '<input type="number" class="ef-i" id="ed-margen" value="' + _margenEd + '" min="0" step="5"></div>';
+  editHtml += '</div>';
   editHtml += '</div>';
 
   // Botones extra para divergencia OT.
@@ -3328,30 +3346,41 @@ async function saveEdit(actId) {
   const newMqId = parseInt(document.getElementById('ed-mq').value);
   const newHora = document.getElementById('ed-h').value + ':00';
   const newUrg = document.getElementById('ed-u').value;
-  // Operator-time editable for auto y semi-auto
-  let newDopMin = act.duracion_operario_min;
-  if (isAuto(act)) {
-    const dopInput = document.getElementById('ed-dop');
-    if (dopInput) {
-      const v = dopInput.value.trim();
-      newDopMin = v === '' ? null : parseInt(v);
-      if (isNaN(newDopMin)) newDopMin = null;
-    }
-  }
-  // Duración total (planificador) editable in both manual and automatica
-  let newDurTotal = act.duracion_planificador_min;
-  const durInput = document.getElementById('ed-dur');
-  if (durInput) {
-    const v = parseInt(durInput.value);
-    if (!isNaN(v) && v >= 10) newDurTotal = v;
-  }
+
+  // v70 Fase 10: leer los 3 campos (operación por pieza, setup, margen)
+  // y recalcular duracion_estimada_min y duracion_planificador_min con la
+  // misma fórmula que proyectos.
+  const _opInput = document.getElementById('ed-op-min');
+  const _dopInput = document.getElementById('ed-dop');
+  const _marInput = document.getElementById('ed-margen');
+  let newOpPorPieza = (_opInput && _opInput.value !== '') ? parseFloat(_opInput.value) : null;
+  if (newOpPorPieza !== null && (isNaN(newOpPorPieza) || newOpPorPieza < 0)) newOpPorPieza = null;
+  let newSetup = (_dopInput && _dopInput.value !== '') ? parseInt(_dopInput.value) : null;
+  if (newSetup !== null && (isNaN(newSetup) || newSetup < 0)) newSetup = null;
+  let newMargen = (_marInput && _marInput.value !== '') ? parseInt(_marInput.value) : 0;
+  if (isNaN(newMargen) || newMargen < 0) newMargen = 0;
+
+  // Cantidad efectiva: 1 si la activ es sub-proceso dividido, sino cantidad del item.
+  const _itemAct = items.find(i => i.id === act.item_id);
+  const _cantItem = (_itemAct && _itemAct.cantidad) ? _itemAct.cantidad : 1;
+  const _esDividido = !!act.grupo_division_id;
+  const _mult = _esDividido ? 1 : _cantItem;
+
+  // duracion_estimada_min = setup + cantidad * operación
+  // (idéntica a la fórmula en _saveProcesoImpl de proyectos).
+  const _setupFinal = newSetup !== null ? newSetup : (act.duracion_operario_min || 0);
+  const _opFinal = newOpPorPieza !== null ? newOpPorPieza : 0;
+  const newDurEstimada = Math.round((_setupFinal + _mult * _opFinal) * 100) / 100;
+  const newDurTotal = Math.round((newDurEstimada + newMargen) * 100) / 100;
 
   const opChanged = newOpId !== act.operario_id;
   const mqChanged = newMqId !== act.maquina_id;
   const timeChanged = newHora !== act.hora_inicio;
   const urgChanged = newUrg !== act.urgencia;
-  const dopChanged = newDopMin !== act.duracion_operario_min;
-  const durChanged = newDurTotal !== act.duracion_planificador_min;
+  const setupChanged = _setupFinal !== (act.duracion_operario_min || 0);
+  const durEstChanged = newDurEstimada !== (act.duracion_estimada_min || 0);
+  const margenChanged = newMargen !== (act.duracion_margen_min || 0);
+  const totalChanged = newDurTotal !== (act.duracion_planificador_min || 0);
 
   // Urgencia se aplica directo sin cascada (no afecta tiempos)
   if (urgChanged) {
@@ -3359,8 +3388,13 @@ async function saveEdit(actId) {
     act.urgencia = newUrg;
   }
 
+  // Si solo cambió margen (no afecta posicionamiento de bloques porque el
+  // margen está al final), o solo urgencia, podemos aplicar directo sin motor.
+  // Pero margen sí afecta duracion_planificador_min (ancho del bloque), así
+  // que cualquier cambio de tiempos pasa por el motor.
+
   // Si NO hubo cambios de tamano/posicion/op/maq, refrescamos y salimos.
-  if (!opChanged && !mqChanged && !timeChanged && !dopChanged && !durChanged) {
+  if (!opChanged && !mqChanged && !timeChanged && !setupChanged && !durEstChanged && !margenChanged && !totalChanged) {
     if (urgChanged) toast('Urgencia actualizada');
     else toast('Sin cambios');
     render();
@@ -3375,8 +3409,20 @@ async function saveEdit(actId) {
     fecha: act.fecha,
     hora_inicio: timeChanged ? newHora : act.hora_inicio
   };
-  if (durChanged) change.duracion_planificador_min = newDurTotal;
-  if (dopChanged) change.duracion_operario_min = newDopMin;
+  // Siempre pasamos los nuevos valores recalculados (aunque no hayan cambiado
+  // individualmente, así la actividad queda consistente con la fórmula).
+  if (durEstChanged || margenChanged || totalChanged || setupChanged) {
+    change.duracion_planificador_min = newDurTotal;
+    change.duracion_estimada_min = newDurEstimada;
+    change.duracion_margen_min = newMargen;
+    change.duracion_operario_min = _setupFinal;
+    // v70 Fase 10: al editar desde el tablero, los ot_ack_* se sincronizan
+    // con los nuevos valores (sino aparece como divergencia OT en el bloque).
+    // El tablero es el último que tocó, así que su estado es el aceptado.
+    change.ot_ack_dur_estimada_min = newDurEstimada;
+    change.ot_ack_margen_min = newMargen;
+    change.ot_ack_setup_min = _setupFinal;
+  }
   _runMotorAndApply([change]);
 }
 
