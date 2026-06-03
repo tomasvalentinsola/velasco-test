@@ -34,8 +34,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .bk{position:absolute;border-radius:4px;padding:3px 5px;cursor:pointer;font-size:9px;line-height:1.3;border-style:solid;border-width:5px 2.5px;user-select:none;z-index:5;display:flex;flex-direction:column;justify-content:center;overflow:hidden;min-width:6px}
 .bk-u{background:#1A1A1A;color:#fff}.bk-u .bt,.bk-u .bs,.bk-u .bm,.bk-u .bma{color:#fff}
 .bk-a{background:#FF9B9B;color:#000}.bk-m{background:#F0D47A;color:#000}.bk-b{background:#BDECB6;color:#000}
-.bk-pulmon{background:repeating-linear-gradient(45deg,#FFF4D5,#FFF4D5 6px,#F0E0A0 6px,#F0E0A0 12px);color:#5F4811}
-.bk-pulmon .bt,.bk-pulmon .bs,.bk-pulmon .bm,.bk-pulmon .bma{color:#5F4811}
+.bk-pulmon{background:repeating-linear-gradient(45deg,#EAE8E0,#EAE8E0 6px,#D4D2C8 6px,#D4D2C8 12px);color:#5F5E5A}
+.bk-pulmon .bt,.bk-pulmon .bs,.bk-pulmon .bm,.bk-pulmon .bma{color:#5F5E5A}
 .bk-d{background:#E0DEDA;opacity:.5}
 .bt{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:10px}
 .bs{color:#2C2C2A;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:9px}
@@ -3468,13 +3468,14 @@ function showPulmonModal(actId, opId, opName, fecha, startMin) {
   if (a) {
     dur = a.duracion_planificador_min || a.duracion_estimada_min || 60;
   } else if (typeof startMin === 'number') {
-    const FIN_DIA = 17 * 60;
-    // Próxima actividad del operario en este día con inicio > startMin.
+    // v70 Fase 10: tope = próxima actividad del operario, o fin de jornada
+    // del operario en este día (no 17:00 fijo).
+    const finJornada = sE(opId, fecha);
     const sigInicio = acts
       .filter(x => x.operario_id === opId && x.fecha === fecha && x.estado !== 'sin_planificar' && tM(x.hora_inicio) > startMin)
       .map(x => tM(x.hora_inicio))
       .sort((a, b) => a - b)[0];
-    const tope = sigInicio !== undefined ? sigInicio : FIN_DIA;
+    const tope = sigInicio !== undefined ? Math.min(sigInicio, finJornada) : finJornada;
     dur = Math.max(10, tope - startMin);
   } else {
     dur = 60;
@@ -3697,8 +3698,8 @@ function renderOpSelector() {
   }
 
   // CREATE PULMÓN card (top of selector)
-  h += '<div onclick="createPulmonInFreeSlot(' + opId + ',\'' + fecha + '\')" style="cursor:pointer;border:1px solid #C8C6BE;border-radius:6px;padding:10px;margin-bottom:10px;display:flex;align-items:center;gap:10px;background:repeating-linear-gradient(45deg,#F5F3EC,#F5F3EC 6px,#E8E6DF 6px,#E8E6DF 12px)" onmouseenter="this.style.borderColor=\'#854F0B\'" onmouseleave="this.style.borderColor=\'#C8C6BE\'">';
-  h += '<div style="font-size:14px;font-weight:700;color:#5F4811">Crear pulmón</div>';
+  h += '<div onclick="createPulmonInFreeSlot(' + opId + ',\'' + fecha + '\')" style="cursor:pointer;border:1px solid #C8C6BE;border-radius:6px;padding:10px;margin-bottom:10px;display:flex;align-items:center;gap:10px;background:repeating-linear-gradient(45deg,#F5F3EC,#F5F3EC 6px,#E8E6DF 6px,#E8E6DF 12px)" onmouseenter="this.style.borderColor=\'#888780\'" onmouseleave="this.style.borderColor=\'#C8C6BE\'">';
+  h += '<div style="font-size:14px;font-weight:700;color:#5F5E5A">Crear pulmón</div>';
   h += '<div style="font-size:11px;color:#5F5E5A;flex:1">En el espacio libre más temprano del día</div>';
   h += '</div>';
 
