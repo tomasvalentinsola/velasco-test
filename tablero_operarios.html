@@ -3634,7 +3634,8 @@ async function resolvePulmonDecision(action, actId, machId, fecha, startTime, ne
 function showOpSelector(opId, opName, fecha) {
   opSelectorState = { opId, opName, fecha, filterMachines: [], filterUrgency: 'all', sortBy: 'urgencia', ddOpen: null, filterCliente: '', filterDesc: '', filterProceso: '', filterPedido: '' };
   const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'op-selector-modal';
-  bd.addEventListener('click', e => { if (e.target === bd) bd.remove() });
+  // v70: el modal NO se cierra al clickear afuera. Se cierra solo desde el
+  // botón "×" o "Cerrar". Evita perder el trabajo de filtros y selección.
   const m = document.createElement('div'); m.className = 'md'; m.style.minWidth = '540px'; m.style.maxWidth = '620px';
   m.id = 'op-selector-content';
   bd.appendChild(m); document.body.appendChild(bd);
@@ -4805,10 +4806,15 @@ function _validarInvariantesEnState(state, _applyPlan) {
 
   // --- 2) Ancladas no se mueven ---
   // Una anclada (estado='completada' en `acts`) no debe haber cambiado
-  // fecha/hora/máquina/operario en el state. (Si fue eliminada del state,
-  // también es violación.)
+  // fecha/hora/máquina/operario en el state.
+  // v70 Fase 10: solo controlamos las que estaban realmente planificadas en
+  // el tablero (con fecha distinta de '1900-01-01'). Las que se marcaron como
+  // hechas sin haber estado planificadas (caso típico: marcar "hecho" desde
+  // el proyecto a procesos que nunca llegaron al tablero) NO se controlan,
+  // porque no están en el state ni deberían estarlo.
   acts.forEach(a => {
     if (a.estado !== 'completada') return;
+    if (!a.fecha || a.fecha === '1900-01-01') return;
     const sim = state.get(a.id);
     if (!sim) {
       violaciones.push({ tipo: 'anclada_eliminada', act: { id: a.id, descripcion: a.descripcion } });
