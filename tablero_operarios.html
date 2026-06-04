@@ -215,7 +215,8 @@ function _normalizeActNumbers(a) {
   const numFields = [
     'duracion_estimada_min', 'duracion_planificador_min',
     'duracion_margen_min', 'duracion_operario_min', 'duracion_operacion_min',
-    'ot_ack_dur_estimada_min', 'ot_ack_margen_min', 'ot_ack_setup_min'
+    'ot_ack_dur_estimada_min', 'ot_ack_margen_min', 'ot_ack_setup_min',
+    'ot_ack_operacion_min'
   ];
   numFields.forEach(f => {
     if (a[f] !== null && a[f] !== undefined && typeof a[f] !== 'number') {
@@ -385,6 +386,21 @@ function hasOTDivergence(a) {
     out.fields.dur_estimada = { ot: a.duracion_estimada_min, ack: a.ot_ack_dur_estimada_min };
     out.hasDiv = true;
   }
+  // v70 Fase 13: detectar cambios en operación por pieza y cantidad
+  // (la cantidad se compara contra el item asociado).
+  if (diff(a.duracion_operacion_min, a.ot_ack_operacion_min)) {
+    out.fields.operacion = { ot: a.duracion_operacion_min, ack: a.ot_ack_operacion_min };
+    out.hasDiv = true;
+  }
+  if (a.item_id && typeof items !== 'undefined') {
+    const _it = items.find(i => i.id === a.item_id);
+    const cantActual = _it ? (_it.cantidad || 1) : 1;
+    if (a.ot_ack_cantidad !== null && a.ot_ack_cantidad !== undefined
+        && parseInt(a.ot_ack_cantidad) !== parseInt(cantActual)) {
+      out.fields.cantidad = { ot: cantActual, ack: a.ot_ack_cantidad };
+      out.hasDiv = true;
+    }
+  }
   if (diff(a.duracion_margen_min || 0, a.ot_ack_margen_min)) {
     out.fields.margen = { ot: a.duracion_margen_min || 0, ack: a.ot_ack_margen_min };
     out.hasDiv = true;
@@ -422,11 +438,16 @@ function hasOTDivergence(a) {
 async function applyOTAck(actId, fieldsToAck) {
   const a = acts.find(x => x.id === actId); if (!a) return;
   const payload = {};
+  // Cantidad actual del item (necesaria para ot_ack_cantidad).
+  const _it = items.find(i => i.id === a.item_id);
+  const cantActual = _it ? (_it.cantidad || 1) : 1;
   // Si fieldsToAck no se pasa, ack todos los campos de divergencia
   if (!fieldsToAck) {
     payload.ot_ack_dur_estimada_min = a.duracion_estimada_min;
     payload.ot_ack_margen_min = a.duracion_margen_min || 0;
     payload.ot_ack_setup_min = a.duracion_operario_min;
+    payload.ot_ack_operacion_min = a.duracion_operacion_min;
+    payload.ot_ack_cantidad = cantActual;
     payload.ot_ack_tipo = a.tipo;
     payload.ot_ack_operario_ideal_id = a.operario_ideal_id;
     payload.ot_ack_maquina_ideal_id = a.maquina_ideal_id;
@@ -435,6 +456,8 @@ async function applyOTAck(actId, fieldsToAck) {
     if (fieldsToAck.dur_estimada) payload.ot_ack_dur_estimada_min = a.duracion_estimada_min;
     if (fieldsToAck.margen) payload.ot_ack_margen_min = a.duracion_margen_min || 0;
     if (fieldsToAck.setup) payload.ot_ack_setup_min = a.duracion_operario_min;
+    if (fieldsToAck.operacion) payload.ot_ack_operacion_min = a.duracion_operacion_min;
+    if (fieldsToAck.cantidad) payload.ot_ack_cantidad = cantActual;
     if (fieldsToAck.tipo) payload.ot_ack_tipo = a.tipo;
     if (fieldsToAck.op_ideal) payload.ot_ack_operario_ideal_id = a.operario_ideal_id;
     if (fieldsToAck.maq_ideal) {
@@ -1886,6 +1909,12 @@ async function proceedWithPlacementMotor(placedActId, applyPlan, pulmonIdsToDele
       if (orig.ot_ack_operario_ideal_id === null || orig.ot_ack_operario_ideal_id === undefined) item.ot_ack_operario_ideal_id = orig.operario_ideal_id;
       if (orig.ot_ack_maquina_ideal_id === null || orig.ot_ack_maquina_ideal_id === undefined) item.ot_ack_maquina_ideal_id = orig.maquina_ideal_id;
       if (orig.ot_ack_maquina_ideal_nombre === null || orig.ot_ack_maquina_ideal_nombre === undefined) item.ot_ack_maquina_ideal_nombre = orig.maquina_ideal_nombre;
+      // v70 Fase 13: ack de operación y cantidad al planificar por primera vez.
+      if (orig.ot_ack_operacion_min === null || orig.ot_ack_operacion_min === undefined) item.ot_ack_operacion_min = orig.duracion_operacion_min;
+      if (orig.ot_ack_cantidad === null || orig.ot_ack_cantidad === undefined) {
+        const _it = items.find(i => i.id === orig.item_id);
+        item.ot_ack_cantidad = _it ? (_it.cantidad || 1) : 1;
+      }
     }
   }
 
@@ -3147,50 +3176,110 @@ function showEdit(act, bl) {
     otHtml += '<div>Esta actividad ya no tiene un proceso vinculado. Quitala del tablero con el boton "Quitar".</div>';
     otHtml += '</div>';
   } else {
-    // Bloque informativo normal con campos siempre visibles.
-    function badge(label, value) {
-      return ' <span style="display:inline-block;background:#FFC107;color:#000;font-size:10px;font-weight:700;padding:1px 6px;border-radius:3px;margin-left:6px;vertical-align:middle">⚠ OT: ' + value + '</span>';
-    }
-    otHtml += '<div style="border:1px solid #C8C6BE;background:#FAFAF7;padding:10px 12px;border-radius:6px;margin-bottom:14px;font-size:12px;line-height:1.8">';
-    otHtml += '<div style="font-weight:700;margin-bottom:4px;font-size:11px;color:#5F5E5A;text-transform:uppercase;letter-spacing:0.5px">Datos del proceso (Oficina Tecnica)</div>';
-    // Duracion estimada
-    const ackDurEst = (act.ot_ack_dur_estimada_min !== null && act.ot_ack_dur_estimada_min !== undefined) ? act.ot_ack_dur_estimada_min : act.duracion_estimada_min;
-    otHtml += '<div><b>Duracion estimada:</b> ' + ackDurEst + ' min' + (div.fields.dur_estimada ? badge('estimada', div.fields.dur_estimada.ot + ' min') : '') + '</div>';
-    // Margen
-    const ackMar = (act.ot_ack_margen_min !== null && act.ot_ack_margen_min !== undefined) ? act.ot_ack_margen_min : (act.duracion_margen_min || 0);
-    otHtml += '<div><b>Margen:</b> ' + ackMar + ' min' + (div.fields.margen ? badge('margen', div.fields.margen.ot + ' min') : '') + '</div>';
-    // Setup (solo si auto/semi)
-    if (isAuto(act) || (act.ot_ack_setup_min !== null && act.ot_ack_setup_min !== undefined)) {
-      const ackSet = (act.ot_ack_setup_min !== null && act.ot_ack_setup_min !== undefined) ? act.ot_ack_setup_min : (act.duracion_operario_min || 0);
-      otHtml += '<div><b>Setup (operario):</b> ' + ackSet + ' min' + (div.fields.setup ? badge('setup', div.fields.setup.ot + ' min') : '') + '</div>';
-    }
-    // Tipo
-    if (div.fields.tipo) {
-      const ackTipoLabel = div.fields.tipo.ack === 'automatica' ? 'auto 24/7' : (div.fields.tipo.ack === 'semi_automatica' ? 'semi' : 'manual');
-      const otTipoLabel = div.fields.tipo.ot === 'automatica' ? 'auto 24/7' : (div.fields.tipo.ot === 'semi_automatica' ? 'semi' : 'manual');
-      otHtml += '<div><b>Tipo:</b> ' + ackTipoLabel + badge('tipo', otTipoLabel) + '</div>';
-    }
-    // Operario ideal
-    const ackOp = (act.ot_ack_operario_ideal_id !== null && act.ot_ack_operario_ideal_id !== undefined) ? act.ot_ack_operario_ideal_id : act.operario_ideal_id;
-    otHtml += '<div><b>Operario ideal:</b> ' + (ackOp ? opN(ackOp) : '—') + (div.fields.op_ideal ? badge('op', opN(div.fields.op_ideal.ot)) : '') + '</div>';
-    // Maquina ideal
-    let ackMaqLabel;
-    if (act.ot_ack_maquina_ideal_id) ackMaqLabel = mN(act.ot_ack_maquina_ideal_id);
-    else if (act.ot_ack_maquina_ideal_nombre) ackMaqLabel = act.ot_ack_maquina_ideal_nombre + ' (otra)';
-    else if (act.maquina_ideal_id) ackMaqLabel = mN(act.maquina_ideal_id);
-    else if (act.maquina_ideal_nombre) ackMaqLabel = act.maquina_ideal_nombre + ' (otra)';
-    else ackMaqLabel = '—';
-    let otMaqLabel = null;
-    if (div.fields.maq_ideal) {
-      if (div.fields.maq_ideal.ot) otMaqLabel = mN(div.fields.maq_ideal.ot);
-      else if (div.fields.maq_ideal.otNombre) otMaqLabel = div.fields.maq_ideal.otNombre + ' (otra)';
-      else otMaqLabel = '—';
-    }
-    otHtml += '<div><b>Maquina ideal:</b> ' + ackMaqLabel + (otMaqLabel !== null ? badge('maq', otMaqLabel) : '') + '</div>';
+    // v70 Fase 13: bloque informativo en formato tabla con columnas
+    // Concepto / Antes (ack del planificador) / Ahora (valor actual desde Proyectos).
+    // Si Antes == Ahora, la fila se muestra normal. Si difieren, "Ahora" se
+    // resalta en naranja para indicar el cambio pendiente.
+    const itemDeAct = items.find(i => i.id === act.item_id);
+    const cantActual = itemDeAct ? (itemDeAct.cantidad || 1) : 1;
 
-    // Si hay divergencia, agregar nota de "tiene cambios pendientes"
-    if (div.hasDiv) {
-      otHtml += '<div style="margin-top:8px;padding-top:8px;border-top:1px solid #DCDAD3;font-size:11px;color:#A66A00"><b>⚠ Hay cambios desde Oficina Tecnica.</b> Revisa los campos marcados con badge naranja.</div>';
+    // Recuperar valores "Antes" (ack) y "Ahora" (actual).
+    // Para los que no tienen ack, asumimos que "Antes" = "Ahora" (sin cambio).
+    function pickAck(ackVal, currentVal) {
+      return (ackVal !== null && ackVal !== undefined) ? ackVal : currentVal;
+    }
+    const cantAck = pickAck(act.ot_ack_cantidad, cantActual);
+    const setupAck = pickAck(act.ot_ack_setup_min, act.duracion_operario_min || 0);
+    const opAck = pickAck(act.ot_ack_operacion_min, act.duracion_operacion_min || 0);
+    const margenAck = pickAck(act.ot_ack_margen_min, act.duracion_margen_min || 0);
+    const opIdealAck = pickAck(act.ot_ack_operario_ideal_id, act.operario_ideal_id);
+    const maqIdealAckId = pickAck(act.ot_ack_maquina_ideal_id, act.maquina_ideal_id);
+    const maqIdealAckNom = pickAck(act.ot_ack_maquina_ideal_nombre, act.maquina_ideal_nombre);
+
+    const setupAhora = act.duracion_operario_min || 0;
+    const opAhora = act.duracion_operacion_min || 0;
+    const margenAhora = act.duracion_margen_min || 0;
+    const opIdealAhora = act.operario_ideal_id;
+    const maqIdealAhoraId = act.maquina_ideal_id;
+    const maqIdealAhoraNom = act.maquina_ideal_nombre;
+
+    function maqLabel(id, nom) {
+      if (id) return mN(id);
+      if (nom) return nom + ' (otra)';
+      return '—';
+    }
+    function opLabel(id) { return id ? opN(id) : '—'; }
+    function fmtNum(n) {
+      if (n === null || n === undefined || n === '') return '0';
+      const v = parseFloat(n);
+      if (isNaN(v)) return String(n);
+      return (Math.round(v * 100) / 100).toString();
+    }
+
+    // Comparaciones numéricas tolerantes.
+    function numEq(a, b) {
+      const x = parseFloat(a), y = parseFloat(b);
+      if (isNaN(x) && isNaN(y)) return true;
+      return x === y;
+    }
+    const rows = [
+      {
+        concepto: 'Cantidad',
+        antes: cantAck,
+        ahora: cantActual,
+        cambio: cantAck != cantActual
+      },
+      {
+        concepto: 'Setup',
+        antes: fmtNum(setupAck) + ' min',
+        ahora: fmtNum(setupAhora) + ' min',
+        cambio: !numEq(setupAck, setupAhora)
+      },
+      {
+        concepto: 'Operación',
+        antes: fmtNum(opAck) + ' min',
+        ahora: fmtNum(opAhora) + ' min',
+        cambio: !numEq(opAck, opAhora)
+      },
+      {
+        concepto: 'Margen',
+        antes: fmtNum(margenAck) + ' min',
+        ahora: fmtNum(margenAhora) + ' min',
+        cambio: !numEq(margenAck, margenAhora)
+      },
+      {
+        concepto: 'Operario',
+        antes: opLabel(opIdealAck),
+        ahora: opLabel(opIdealAhora),
+        cambio: opIdealAck != opIdealAhora
+      },
+      {
+        concepto: 'Máquina',
+        antes: maqLabel(maqIdealAckId, maqIdealAckNom),
+        ahora: maqLabel(maqIdealAhoraId, maqIdealAhoraNom),
+        cambio: (maqIdealAckId != maqIdealAhoraId) || ((maqIdealAckNom || '') !== (maqIdealAhoraNom || ''))
+      }
+    ];
+    const hayCambios = rows.some(r => r.cambio);
+
+    otHtml += '<div style="border:1px solid #C8C6BE;background:#FAFAF7;padding:10px 12px;border-radius:6px;margin-bottom:14px;font-size:12px">';
+    otHtml += '<div style="font-weight:700;margin-bottom:8px;font-size:11px;color:#5F5E5A;text-transform:uppercase;letter-spacing:0.5px">Datos del proceso</div>';
+    otHtml += '<table style="width:100%;border-collapse:collapse;font-size:11px">';
+    otHtml += '<thead><tr style="border-bottom:1px solid #DCDAD3"><th style="text-align:left;padding:3px 6px;font-weight:600;color:#5F5E5A">Concepto</th><th style="text-align:left;padding:3px 6px;font-weight:600;color:#5F5E5A">Antes</th><th style="text-align:left;padding:3px 6px;font-weight:600;color:#5F5E5A">Ahora</th></tr></thead>';
+    otHtml += '<tbody>';
+    rows.forEach(r => {
+      const ahoraStyle = r.cambio
+        ? 'background:#FFF4D5;color:#854F0B;font-weight:700;padding:3px 6px;border-radius:3px;display:inline-block'
+        : 'padding:3px 0;display:inline-block';
+      otHtml += '<tr style="border-bottom:1px solid #F0EEE7">';
+      otHtml += '<td style="padding:4px 6px;color:#5F5E5A">' + r.concepto + '</td>';
+      otHtml += '<td style="padding:4px 6px">' + r.antes + '</td>';
+      otHtml += '<td style="padding:4px 6px"><span style="' + ahoraStyle + '">' + r.ahora + '</span></td>';
+      otHtml += '</tr>';
+    });
+    otHtml += '</tbody></table>';
+    if (hayCambios) {
+      otHtml += '<div style="margin-top:8px;padding-top:8px;border-top:1px solid #DCDAD3;font-size:11px;color:#A66A00"><b>⚠ Hay cambios desde Proyectos.</b> Revisá las filas resaltadas y aplicalas si corresponde.</div>';
     }
     otHtml += '</div>';
   }
@@ -3263,10 +3352,13 @@ function showEdit(act, bl) {
   //   la divergencia desaparezca hasta que OT modifique algo nuevamente.
   let extraBtns = '';
   if (!act.proceso_eliminado && div.hasDiv) {
-    // Hay algo aplicable si difiere algun campo que afecta comportamiento
-    const aplicable = !!(div.fields.dur_estimada || div.fields.margen || div.fields.setup || div.fields.tipo);
+    // v70 Fase 13: hay algo aplicable si cambió cualquiera de los 3 sagrados
+    // (setup, operación, margen) o cantidad o tipo, porque todos esos afectan
+    // el comportamiento del bloque (cambian su ancho o lógica de cascada).
+    const aplicable = !!(div.fields.dur_estimada || div.fields.margen || div.fields.setup
+                         || div.fields.operacion || div.fields.cantidad || div.fields.tipo);
     if (aplicable) {
-      extraBtns += '<button class="b" id="ed-apply-ot" style="background:#FFC107;color:#000;border-color:#E0A800;font-weight:600">Aplicar cambios de OT</button>';
+      extraBtns += '<button class="b" id="ed-apply-ot" style="background:#FFC107;color:#000;border-color:#E0A800;font-weight:600">Aplicar cambios desde Proyectos</button>';
     }
     extraBtns += '<button class="b" id="ed-ignore-ot" style="background:#fff;color:#5F5E5A;border-color:#C8C6BE">Ignorar</button>';
   }
@@ -3333,29 +3425,40 @@ function showEdit(act, bl) {
       // MOTOR A: el cambio compuesto (duracion/setup/tipo + ack) se pasa al
       // motor para que simule TODA la cascada. Si hay afectados, modal; si
       // no, aplica directo. La DB no se toca hasta que el motor confirme.
+      // v70 Fase 13: SIEMPRE pasamos el nuevo planificador_min (= estimada
+      // + margen) y todos los sagrados, para que el motor corra la cascada
+      // si el nuevo tamaño impacta a otras actividades. Y sincronizamos
+      // todos los ack para que la divergencia desaparezca.
       const newDurEst = act.duracion_estimada_min;
       const newMar = act.duracion_margen_min || 0;
       const newSetup = act.duracion_operario_min;
+      const newOp = act.duracion_operacion_min;
       const newTipo = act.tipo;
       const newTotal = newDurEst + newMar;
+      // Cantidad actual del item (para sincronizar el ack).
+      const _itemDeAct = items.find(i => i.id === act.item_id);
+      const newCant = _itemDeAct ? (_itemDeAct.cantidad || 1) : 1;
+
       const change = {
         id: act.id,
         operario_id: act.operario_id,
         maquina_id: act.maquina_id,
         fecha: act.fecha,
-        hora_inicio: act.hora_inicio
+        hora_inicio: act.hora_inicio,
+        // Estos 5 siempre se sincronizan al aplicar (no cambian el valor
+        // de la fila si no hubo divergencia, pero garantizan consistencia).
+        duracion_planificador_min: newTotal,
+        duracion_estimada_min: newDurEst,
+        duracion_margen_min: newMar,
+        duracion_operario_min: newSetup,
+        duracion_operacion_min: newOp,
+        // Ack: marcamos como "aceptado" exactamente lo que está ahora.
+        ot_ack_dur_estimada_min: newDurEst,
+        ot_ack_margen_min: newMar,
+        ot_ack_setup_min: newSetup,
+        ot_ack_operacion_min: newOp,
+        ot_ack_cantidad: newCant
       };
-      // Solo agregamos los campos que difieren. El motor los aplica al state
-      // antes de simular, asi la cascada se calcula con el nuevo tamano/tipo.
-      if (div.fields.dur_estimada || div.fields.margen) {
-        change.duracion_planificador_min = newTotal;
-        change.ot_ack_dur_estimada_min = newDurEst;
-        change.ot_ack_margen_min = newMar;
-      }
-      if (div.fields.setup) {
-        change.duracion_operario_min = newSetup;
-        change.ot_ack_setup_min = newSetup;
-      }
       if (div.fields.tipo) {
         change.tipo = newTipo;
         change.ot_ack_tipo = newTipo;
@@ -3372,7 +3475,7 @@ function showEdit(act, bl) {
       // Copia todos los valores actuales del proceso a ot_ack_*. La divergencia
       // dejara de aparecer hasta que OT modifique algo nuevamente.
       await applyOTAck(act.id, null);
-      toast('Cambios de OT ignorados');
+      toast('Cambios desde Proyectos ignorados');
       bd.remove();
       render();
     };
@@ -3467,6 +3570,9 @@ async function saveEdit(actId) {
     change.ot_ack_dur_estimada_min = newDurEstimada;
     change.ot_ack_margen_min = newMargen;
     change.ot_ack_setup_min = _setupFinal;
+    // v70 Fase 13: ack de operación y cantidad.
+    change.ot_ack_operacion_min = _opFinal;
+    change.ot_ack_cantidad = _cantItem;
   }
   _runMotorAndApply([change]);
 }
@@ -4405,6 +4511,8 @@ function _simBuildStateItem(a) {
     ot_ack_dur_estimada_min: a.ot_ack_dur_estimada_min,
     ot_ack_margen_min: a.ot_ack_margen_min,
     ot_ack_setup_min: a.ot_ack_setup_min,
+    ot_ack_operacion_min: a.ot_ack_operacion_min,
+    ot_ack_cantidad: a.ot_ack_cantidad,
     ot_ack_tipo: a.ot_ack_tipo,
     es_pulmon: !!a.es_pulmon,
     estado: a.estado,
@@ -4823,10 +4931,13 @@ function _simBuildResult(state, anchors) {
     const ackDurChanged = (orig.ot_ack_dur_estimada_min !== sim.ot_ack_dur_estimada_min);
     const ackMargenChanged = (orig.ot_ack_margen_min !== sim.ot_ack_margen_min);
     const ackSetupChanged = (orig.ot_ack_setup_min !== sim.ot_ack_setup_min);
+    const ackOpChanged = (orig.ot_ack_operacion_min !== sim.ot_ack_operacion_min);
+    const ackCantChanged = (orig.ot_ack_cantidad !== sim.ot_ack_cantidad);
     const ackTipoChanged = (orig.ot_ack_tipo !== sim.ot_ack_tipo);
     if (moved || opChanged || machChanged || durChanged || tipoChanged || setupChanged ||
         durEstChanged || margenChanged || opPiezaChanged ||
-        ackDurChanged || ackMargenChanged || ackSetupChanged || ackTipoChanged) {
+        ackDurChanged || ackMargenChanged || ackSetupChanged ||
+        ackOpChanged || ackCantChanged || ackTipoChanged) {
       const planItem = { id, _isAnchor: anchors.has(id) };
       // Solo incluir campos que cambiaron (para no pisar valores con undefined)
       if (moved) { planItem.fecha = sim.fecha; planItem.hora_inicio = sim.hora_inicio; }
@@ -4841,6 +4952,8 @@ function _simBuildResult(state, anchors) {
       if (ackDurChanged) planItem.ot_ack_dur_estimada_min = sim.ot_ack_dur_estimada_min;
       if (ackMargenChanged) planItem.ot_ack_margen_min = sim.ot_ack_margen_min;
       if (ackSetupChanged) planItem.ot_ack_setup_min = sim.ot_ack_setup_min;
+      if (ackOpChanged) planItem.ot_ack_operacion_min = sim.ot_ack_operacion_min;
+      if (ackCantChanged) planItem.ot_ack_cantidad = sim.ot_ack_cantidad;
       if (ackTipoChanged) planItem.ot_ack_tipo = sim.ot_ack_tipo;
       applyPlan.push(planItem);
     }

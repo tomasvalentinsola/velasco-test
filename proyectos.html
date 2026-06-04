@@ -947,7 +947,8 @@ function _normalizeActNumbers(a) {
   const numFields = [
     'duracion_estimada_min', 'duracion_planificador_min',
     'duracion_margen_min', 'duracion_operario_min', 'duracion_operacion_min',
-    'ot_ack_dur_estimada_min', 'ot_ack_margen_min', 'ot_ack_setup_min'
+    'ot_ack_dur_estimada_min', 'ot_ack_margen_min', 'ot_ack_setup_min',
+    'ot_ack_operacion_min'
   ];
   numFields.forEach(f => {
     if (a[f] !== null && a[f] !== undefined && typeof a[f] !== 'number') {
@@ -4317,11 +4318,10 @@ async function saveItem(itemId) {
           ? a.duracion_operacion_min
           : 0;
         const newEstimada = Math.round((setup + cant * opPorPieza) * 100) / 100;
-        const newPlanif = Math.round((newEstimada + margen) * 100) / 100;
         updPayload.duracion_estimada_min = newEstimada;
-        updPayload.duracion_planificador_min = newPlanif;
-        // NO tocamos ot_ack_dur_estimada_min ni ot_ack_margen_min: así el
-        // tablero detecta la divergencia y muestra el icono OT.
+        // v70 Fase 13: NO tocamos duracion_planificador_min (ancho del bloque)
+        // ni los ot_ack_*. El bloque del tablero queda con su tamaño hasta que
+        // el planificador acepte los cambios desde el tablero.
       }
       await sb.from('actividades_tablero').update(updPayload).eq('id', a.id);
     }
@@ -7025,11 +7025,16 @@ async function _saveProcesoImpl(procesoId) {
   };
 
   if (procesoId) {
-    // v70 Fase 10: recalcular SIEMPRE duracion_planificador_min como
-    // duracion_estimada_min + margen. Antes solo se actualizaba si la activ
-    // no estaba planificada, lo que dejaba el ancho del bloque del tablero
-    // desactualizado al editar tiempos de procesos ya planificados.
-    payload.duracion_planificador_min = _durTotal + margen;
+    // v70 Fase 13: si la actividad ya está planificada, NO tocamos
+    // duracion_planificador_min (el ancho del bloque del tablero).
+    // El planificador tiene que ACEPTAR los cambios desde el tablero antes de
+    // que se cascadeen visualmente. Mientras tanto, el bloque mantiene su
+    // tamaño y solo aparece el icono ⚠ de cambio pendiente.
+    // Si la actividad NO está planificada (sin_planificar), sí actualizamos
+    // duracion_planificador_min porque no hay nada que perturbar.
+    if (!isPlanificada) {
+      payload.duracion_planificador_min = _durTotal + margen;
+    }
     const peEl = document.getElementById('p-estado');
     if (peEl) payload.estado_proceso = peEl.value;
     await sb.from('actividades_tablero').update(payload).eq('id', procesoId);
