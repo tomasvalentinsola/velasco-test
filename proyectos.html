@@ -4274,13 +4274,37 @@ async function saveItem(itemId) {
 
   let savedItemId = itemId;
   if (itemId) {
+    // v70 Fase 10: si la cantidad del item cambió, recalcular las duraciones
+    // de TODAS sus actividades (excepto las divididas, que tienen cantidad
+    // efectiva = 1). Esto hace que el tablero detecte la divergencia con
+    // ot_ack_dur_estimada_min y muestre el icono de cambio pendiente.
+    const itemPrev = items.find(i => i.id === itemId);
+    const cantPrev = itemPrev ? (itemPrev.cantidad || 1) : 1;
+    const cantidadCambio = cantPrev !== cant;
+
     await sb.from('items').update(payload).eq('id', itemId);
     const itemActs = actividades.filter(a => a.item_id === itemId && !a.proceso_eliminado);
     for (const a of itemActs) {
-      await sb.from('actividades_tablero').update({
+      const updPayload = {
         descripcion: desc + ' - ' + (a.proceso || ''),
         foto_url: foto
-      }).eq('id', a.id);
+      };
+      if (cantidadCambio && !a.grupo_division_id) {
+        // Recalcular: duracion_estimada_min = setup + cant * operación.
+        // operación = (estimada_anterior - setup) / cantPrev. Si cantPrev=0
+        // (no debería pasar), usamos estimada/cant.
+        const setup = a.duracion_operario_min || 0;
+        const estPrev = a.duracion_estimada_min || 0;
+        const opPorPieza = cantPrev > 0 ? (estPrev - setup) / cantPrev : 0;
+        const newEstimada = Math.round((setup + cant * opPorPieza) * 100) / 100;
+        const margen = a.duracion_margen_min || 0;
+        const newPlanif = Math.round((newEstimada + margen) * 100) / 100;
+        updPayload.duracion_estimada_min = newEstimada;
+        updPayload.duracion_planificador_min = newPlanif;
+        // NO tocamos ot_ack_dur_estimada_min ni ot_ack_margen_min: así el
+        // tablero detecta la divergencia y muestra el icono OT.
+      }
+      await sb.from('actividades_tablero').update(updPayload).eq('id', a.id);
     }
     toast('Item actualizado');
   } else {
