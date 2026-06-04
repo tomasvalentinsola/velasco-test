@@ -4788,6 +4788,21 @@ function simulateChange(changes, options) {
     state.set(a.id, _simBuildStateItem(a));
   });
 
+  // v70 Fase 13: si una activ que viene en `changes` está sin_planificar
+  // (caso típico: usuario apretó "+" para colocar una activ nueva en el
+  // tablero), igual hay que agregarla al state INICIALIZADA con sus campos
+  // reales de acts. De lo contrario, _simApplyChange la trata como "item nuevo"
+  // y solo le copia los pocos campos del change (id, op, maq, fecha, hora),
+  // perdiendo el resto (duracion_margen_min, duracion_estimada_min, etc.).
+  // Eso producía que al planificar una activ recién creada, el motor armara
+  // el applyPlan con margen=0/null y reescribiera la base con valores vacíos.
+  changes.forEach(c => {
+    if (c._delete) return;
+    if (state.has(c.id)) return;
+    const a = acts.find(x => x.id === c.id);
+    if (a) state.set(c.id, _simBuildStateItem(a));
+  });
+
   // 2. Aplicar cambios al state y registrar anchors.
   const anchors = new Set();
   changes.forEach(c => {
