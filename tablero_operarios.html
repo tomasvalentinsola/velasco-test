@@ -1317,6 +1317,18 @@ async function cascadeOverlapsForOperator(opId, undoBatch, priorityActId) {
       let needsMove = false;
       if (bDate < endA.date) needsMove = true;
       else if (bDate === endA.date && bTime < endA.time + GAP) needsMove = true;
+      // v70 Fase 14: si una de las dos es auto/semi con setup_solapable=true
+      // y la otra es manual, NO empujar — el setup puede ocupar tiempo de
+      // la manual sin que el sistema lo trate como conflicto.
+      if (needsMove) {
+        const aIsAutoSolap = (A.tipo === 'automatica' || A.tipo === 'semi_automatica') && !!A.setup_solapable;
+        const bIsAutoSolap = (B.tipo === 'automatica' || B.tipo === 'semi_automatica') && !!B.setup_solapable;
+        const aIsManual = A.tipo === 'manual' || !A.tipo;
+        const bIsManual = B.tipo === 'manual' || !B.tipo;
+        if ((aIsAutoSolap && bIsManual) || (bIsAutoSolap && aIsManual)) {
+          needsMove = false;
+        }
+      }
       if (needsMove) {
         let newDate = endA.date, newTime = endA.time + GAP;
         const bShS = sS(opId);
@@ -2690,6 +2702,12 @@ function render() {
           else block.classList.add(act.urgencia === 'urgente' ? 'bk-u' : act.urgencia === 'alta' ? 'bk-a' : act.urgencia === 'media' ? 'bk-m' : 'bk-b');
           if (act.estado === 'completada') block.classList.add('bk-d');
           block.style.borderColor = machColor(act.maquina_id);
+          // v70 Fase 14: si la activ tiene setup_solapable, borde punteado
+          // para indicar visualmente que su setup puede solapar manuales.
+          if (act.setup_solapable) {
+            block.style.borderStyle = 'dashed';
+            block.style.borderWidth = '2px';
+          }
           // Indicador en esquina superior izquierda:
           // - Triangulo amarillo (⚠) si hay divergencia OT vs ack del planificador.
           // - Octagono rojo (⛔) si el proceso fue eliminado desde Proyectos.
@@ -3381,6 +3399,17 @@ function showEdit(act, bl) {
   editHtml += '<input type="number" class="ef-i" id="ed-margen" value="' + _margenEd + '" min="0" step="10"></div>';
   editHtml += '</div>';
   editHtml += '<div class="ef-help" style="margin-top:-6px;margin-bottom:10px;font-size:10px">El <b>tiempo de setup</b> es el seteo de la máquina, una sola vez. El <b>tiempo de operación</b> es por pieza' + _hintCant + '. El <b>margen</b> se suma al total.</div>';
+  // v70 Fase 14: checkbox "Permitir solapamiento de setup". Solo aplica a
+  // automáticas y semi-automáticas. Cuando está activo, el setup puede
+  // dibujarse encima de actividades manuales del mismo operario sin bloqueo.
+  if (act.tipo === 'automatica' || act.tipo === 'semi_automatica') {
+    const _solChecked = act.setup_solapable ? 'checked' : '';
+    editHtml += '<div class="ef" style="margin-top:6px;background:#FAFAF7;padding:8px 10px;border-radius:6px;border:1px solid #C8C6BE">';
+    editHtml += '<label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;font-size:12px">';
+    editHtml += '<input type="checkbox" id="ed-solapable" ' + _solChecked + ' style="margin-top:2px;flex-shrink:0">';
+    editHtml += '<span><b>Permitir solapamiento del setup sobre actividades manuales</b><br><span style="color:#5F5E5A;font-size:11px">El setup podrá dibujarse encima de una actividad manual del mismo operario (útil para largar una automática mientras hay otro trabajo en curso). La actividad manual subyacente mantiene su ancho original.</span></span>';
+    editHtml += '</label></div>';
+  }
   editHtml += '</div>';
 
   // Botones extra para divergencia OT.
@@ -3541,6 +3570,10 @@ async function saveEdit(actId) {
   const newFecha = (_fechaInput && _fechaInput.value) ? _fechaInput.value : act.fecha;
   const newUrg = document.getElementById('ed-u').value;
 
+  // v70 Fase 14: checkbox de setup solapable (solo en auto/semi).
+  const _solapInput = document.getElementById('ed-solapable');
+  const newSolapable = _solapInput ? !!_solapInput.checked : !!act.setup_solapable;
+
   // v70 Fase 10: leer los 3 campos (operación por pieza, setup, margen)
   // y recalcular duracion_estimada_min y duracion_planificador_min con la
   // misma fórmula que proyectos.
@@ -3576,6 +3609,7 @@ async function saveEdit(actId) {
   const durEstChanged = newDurEstimada !== (act.duracion_estimada_min || 0);
   const margenChanged = newMargen !== (act.duracion_margen_min || 0);
   const totalChanged = newDurTotal !== (act.duracion_planificador_min || 0);
+  const solapableChanged = newSolapable !== !!act.setup_solapable;
 
   // Urgencia se aplica directo sin cascada (no afecta tiempos)
   if (urgChanged) {
@@ -3589,7 +3623,7 @@ async function saveEdit(actId) {
   // que cualquier cambio de tiempos pasa por el motor.
 
   // Si NO hubo cambios de tamano/posicion/op/maq, refrescamos y salimos.
-  if (!opChanged && !mqChanged && !timeChanged && !fechaChanged && !setupChanged && !durEstChanged && !margenChanged && !totalChanged) {
+  if (!opChanged && !mqChanged && !timeChanged && !fechaChanged && !setupChanged && !durEstChanged && !margenChanged && !totalChanged && !solapableChanged) {
     if (urgChanged) toast('Urgencia actualizada');
     else toast('Sin cambios');
     render();
@@ -3622,6 +3656,11 @@ async function saveEdit(actId) {
     // v70 Fase 13: ack de operación y cantidad.
     change.ot_ack_operacion_min = _opFinal;
     change.ot_ack_cantidad = _cantItem;
+  }
+  // v70 Fase 14: setup_solapable se propaga independiente (no afecta tiempos
+  // sagrados, solo afecta cómo se cascadea sobre manuales).
+  if (solapableChanged) {
+    change.setup_solapable = newSolapable;
   }
   _runMotorAndApply([change]);
 }
@@ -4209,10 +4248,19 @@ function chooseMachineForAssign(actId, opId, fecha) {
   let h = '<button class="md-x" onclick="this.closest(\'.mo\').remove()">&times;</button>';
   h += '<div class="md-t">Elegir maquina</div>';
   h += '<div style="font-size:12px;color:#5F5E5A;margin-bottom:14px"><b>' + act.descripcion + '</b> — Ped. ' + (act.pedido_nro || '-') + ' — ' + opN(opId) + ' — ' + fecha + '</div>';
+  // v70 Fase 14: checkbox de setup solapable solo para auto/semi.
+  if (act.tipo === 'automatica' || act.tipo === 'semi_automatica') {
+    const _solChk = act.setup_solapable ? 'checked' : '';
+    h += '<div style="margin-bottom:12px;padding:8px 10px;background:#FAFAF7;border:1px solid #C8C6BE;border-radius:6px;font-size:12px">';
+    h += '<label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">';
+    h += '<input type="checkbox" id="mc-solapable" ' + _solChk + ' style="margin-top:2px;flex-shrink:0">';
+    h += '<span><b>Permitir solapamiento del setup sobre manuales</b><br><span style="color:#5F5E5A;font-size:11px">Útil para largar la automática mientras hay una manual en curso.</span></span>';
+    h += '</label></div>';
+  }
   mqOptions.forEach(o => {
     const labelBase = mN(o.id);
     const idealBadge = o.isIdeal ? ' <span style="color:#0C447C;font-weight:600;font-size:11px">(ideal)</span>' : '';
-    h += '<div class="ao" onclick="tryAssignToMachine(' + actId + ',' + opId + ',' + o.id + ',\'' + fecha + '\')" style="display:flex;align-items:center;gap:10px">';
+    h += '<div class="ao" onclick="_assignWithSolapableFlag(' + actId + ',' + opId + ',' + o.id + ',\'' + fecha + '\')" style="display:flex;align-items:center;gap:10px">';
     h += '<div style="width:30px;height:30px;border:3px solid ' + (MACH_COLORS[labelBase] || '#888') + ';border-radius:4px;flex-shrink:0;background:#fff"></div>';
     h += '<div style="flex:1;font-size:13px;font-weight:600">' + labelBase + idealBadge + '</div>';
     h += '<div style="font-size:18px;color:#888">→</div>';
@@ -4318,6 +4366,23 @@ function assignAutoAt(actId, opId, machId, fecha, startMin) {
 }
 
 
+// v70 Fase 14: helper que persiste setup_solapable según el checkbox del
+// modal de elegir máquina antes de continuar al placement.
+async function _assignWithSolapableFlag(actId, opId, machId, fecha) {
+  const chk = document.getElementById('mc-solapable');
+  if (chk) {
+    const act = acts.find(a => a.id === actId);
+    if (act) {
+      const desired = !!chk.checked;
+      if (desired !== !!act.setup_solapable) {
+        await sb.from('actividades_tablero').update({ setup_solapable: desired }).eq('id', actId);
+        act.setup_solapable = desired;
+      }
+    }
+  }
+  tryAssignToMachine(actId, opId, machId, fecha);
+}
+
 function tryAssignToMachine(actId, opId, machId, fecha) {
   const act = acts.find(a => a.id === actId);
   if (!act) return;
@@ -4337,11 +4402,16 @@ function tryAssignToMachine(actId, opId, machId, fecha) {
 
   // Find end of each activity's operator-attached portion on this day.
   // For manuals this is the whole activity; for automaticas just the setup.
+  // v70 Fase 14: si la activ a colocar es auto/semi con setup_solapable=true,
+  // ignoramos las activs MANUALES del operario (el setup puede solaparse).
+  const _actoIsAutoSolap = (act.tipo === 'automatica' || act.tipo === 'semi_automatica') && !!act.setup_solapable;
   const opEndsOnDay = [];
   acts.forEach(a => {
     if (a.id === actId) return;
     if (a.operario_id !== opId) return;
     if (a.estado === 'sin_planificar') return;
+    // v70 Fase 14: si tengo setup_solapable y la otra es manual, no la cuento.
+    if (_actoIsAutoSolap && (a.tipo === 'manual' || !a.tipo)) return;
     let rem = Dop(a), cd = a.fecha, ct = tM(a.hora_inicio), safe = 0;
     while (rem > 0 && safe < 20) {
       safe++;
@@ -4563,6 +4633,7 @@ function _simBuildStateItem(a) {
     ot_ack_operacion_min: a.ot_ack_operacion_min,
     ot_ack_cantidad: a.ot_ack_cantidad,
     ot_ack_tipo: a.ot_ack_tipo,
+    setup_solapable: !!a.setup_solapable,
     es_pulmon: !!a.es_pulmon,
     estado: a.estado,
     descripcion: a.descripcion,
@@ -4670,6 +4741,14 @@ function _simCascadeOp(state, anchors) {
       if (bDate < endA.date) needs = true;
       else if (bDate === endA.date && bTime < endA.time + SIM_GAP) needs = true;
       if (!needs) continue;
+      // v70 Fase 14: si una de las dos es auto/semi con setup_solapable=true
+      // y la otra es manual, no aplicar empuje: el setup puede ocupar el
+      // mismo tiempo que la manual.
+      const aIsAutoSolap = (A.tipo === 'automatica' || A.tipo === 'semi_automatica') && !!A.setup_solapable;
+      const bIsAutoSolap = (B.tipo === 'automatica' || B.tipo === 'semi_automatica') && !!B.setup_solapable;
+      const aIsManual = A.tipo === 'manual' || !A.tipo;
+      const bIsManual = B.tipo === 'manual' || !B.tipo;
+      if ((aIsAutoSolap && bIsManual) || (bIsAutoSolap && aIsManual)) continue;
       const aIsAnchor = anchors.has(A.id);
       const bIsAnchor = anchors.has(B.id);
       if (!bIsAnchor) {
@@ -4998,8 +5077,9 @@ function _simBuildResult(state, anchors) {
     const ackOpChanged = (orig.ot_ack_operacion_min !== sim.ot_ack_operacion_min);
     const ackCantChanged = (orig.ot_ack_cantidad !== sim.ot_ack_cantidad);
     const ackTipoChanged = (orig.ot_ack_tipo !== sim.ot_ack_tipo);
+    const solapableChangedSim = (!!orig.setup_solapable !== !!sim.setup_solapable);
     if (moved || opChanged || machChanged || durChanged || tipoChanged || setupChanged ||
-        durEstChanged || margenChanged || opPiezaChanged ||
+        durEstChanged || margenChanged || opPiezaChanged || solapableChangedSim ||
         ackDurChanged || ackMargenChanged || ackSetupChanged ||
         ackOpChanged || ackCantChanged || ackTipoChanged) {
       const planItem = { id, _isAnchor: anchors.has(id) };
@@ -5019,6 +5099,7 @@ function _simBuildResult(state, anchors) {
       if (ackOpChanged) planItem.ot_ack_operacion_min = sim.ot_ack_operacion_min;
       if (ackCantChanged) planItem.ot_ack_cantidad = sim.ot_ack_cantidad;
       if (ackTipoChanged) planItem.ot_ack_tipo = sim.ot_ack_tipo;
+      if (solapableChangedSim) planItem.setup_solapable = !!sim.setup_solapable;
       applyPlan.push(planItem);
     }
     if (moved && !anchors.has(id)) {
