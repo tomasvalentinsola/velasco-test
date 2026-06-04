@@ -946,7 +946,7 @@ function _normalizeActNumbers(a) {
   if (!a) return a;
   const numFields = [
     'duracion_estimada_min', 'duracion_planificador_min',
-    'duracion_margen_min', 'duracion_operario_min',
+    'duracion_margen_min', 'duracion_operario_min', 'duracion_operacion_min',
     'ot_ack_dur_estimada_min', 'ot_ack_margen_min', 'ot_ack_setup_min'
   ];
   numFields.forEach(f => {
@@ -4295,10 +4295,10 @@ async function saveItem(itemId) {
 
   let savedItemId = itemId;
   if (itemId) {
-    // v70 Fase 10: si la cantidad del item cambió, recalcular las duraciones
-    // de TODAS sus actividades (excepto las divididas, que tienen cantidad
-    // efectiva = 1). Esto hace que el tablero detecte la divergencia con
-    // ot_ack_dur_estimada_min y muestre el icono de cambio pendiente.
+    // v70 Fase 13: si la cantidad del item cambió, recalcular duracion_estimada_min
+    // y duracion_planificador_min de las actividades usando la operación por
+    // pieza GUARDADA (duracion_operacion_min), no la derivada. Eso evita
+    // bugs por imprecisiones en el cálculo inverso.
     const itemPrev = items.find(i => i.id === itemId);
     const cantPrev = itemPrev ? (itemPrev.cantidad || 1) : 1;
     const cantidadCambio = cantPrev !== cant;
@@ -4311,14 +4311,12 @@ async function saveItem(itemId) {
         foto_url: foto
       };
       if (cantidadCambio && !a.grupo_division_id) {
-        // Recalcular: duracion_estimada_min = setup + cant * operación.
-        // operación = (estimada_anterior - setup) / cantPrev. Si cantPrev=0
-        // (no debería pasar), usamos estimada/cant.
         const setup = a.duracion_operario_min || 0;
-        const estPrev = a.duracion_estimada_min || 0;
-        const opPorPieza = cantPrev > 0 ? (estPrev - setup) / cantPrev : 0;
-        const newEstimada = Math.round((setup + cant * opPorPieza) * 100) / 100;
         const margen = a.duracion_margen_min || 0;
+        const opPorPieza = (a.duracion_operacion_min !== null && a.duracion_operacion_min !== undefined)
+          ? a.duracion_operacion_min
+          : 0;
+        const newEstimada = Math.round((setup + cant * opPorPieza) * 100) / 100;
         const newPlanif = Math.round((newEstimada + margen) * 100) / 100;
         updPayload.duracion_estimada_min = newEstimada;
         updPayload.duracion_planificador_min = newPlanif;
@@ -6602,22 +6600,26 @@ function showProcesoForm(procesoId, ctx) {
   const proceso = procesoId ? list.find(a => a.id === procesoId) : null;
   const isNew = !proceso;
   const tipo = proceso ? proceso.tipo : 'manual';
-  // v70 Fase 7: el campo "Tiempo de operación" muestra el tiempo POR PIEZA.
-  // En la matriz, duracion_estimada_min ya es por pieza. En un proceso de
-  // proyecto NO dividido, duracion_estimada_min es el total (setup + cant*op),
-  // así que recuperamos la operación: (total - setup) / cantidad.
-  // v70 Fase 11: en un proceso de proyecto DIVIDIDO (grupo_division_id),
-  // cada actividad ya representa UNA pieza, así que la operación es
-  // (total - setup) / 1, sin escalar.
-  let _operacionMostrar = proceso ? (proceso.duracion_estimada_min || 0) : '';
-  if (proceso && procCtx.tipo === 'item') {
-    const _it = items.find(i => i.id === proceso.item_id);
-    const _cantTotal = (_it && _it.cantidad) ? _it.cantidad : 1;
-    const _esDividido = !!proceso.grupo_division_id;
-    const _divisor = _esDividido ? 1 : _cantTotal;
-    const _setupProc = proceso.duracion_operario_min || 0;
-    const _op = ((proceso.duracion_estimada_min || 0) - _setupProc) / _divisor;
-    _operacionMostrar = _op > 0 ? Math.round(_op * 100) / 100 : 0;
+  // v70 Fase 13: la operación por pieza es ahora una columna explícita
+  // (duracion_operacion_min). El campo del modal la lee directo, sin
+  // recalcular. Si la actividad es vieja y no tiene el valor, fallback a 0.
+  let _operacionMostrar = '';
+  if (proceso) {
+    if (proceso.duracion_operacion_min !== null && proceso.duracion_operacion_min !== undefined) {
+      _operacionMostrar = proceso.duracion_operacion_min;
+    } else if (procCtx.tipo === 'producto') {
+      // En matriz, duracion_estimada_min era la operación por pieza histórica.
+      _operacionMostrar = proceso.duracion_estimada_min || 0;
+    } else {
+      // Fallback para item: recuperar como antes.
+      const _it = items.find(i => i.id === proceso.item_id);
+      const _cantTotal = (_it && _it.cantidad) ? _it.cantidad : 1;
+      const _esDividido = !!proceso.grupo_division_id;
+      const _divisor = _esDividido ? 1 : _cantTotal;
+      const _setupProc = proceso.duracion_operario_min || 0;
+      const _op = ((proceso.duracion_estimada_min || 0) - _setupProc) / _divisor;
+      _operacionMostrar = _op > 0 ? Math.round(_op * 100) / 100 : 0;
+    }
   }
   // Solo en contexto 'item' tiene sentido "isPlanificada"
   const isPlanificada = procCtx.tipo === 'item' && proceso && proceso.estado && proceso.estado !== 'sin_planificar' && proceso.fecha !== '1900-01-01';
@@ -6926,11 +6928,15 @@ async function _saveProcesoImpl(procesoId) {
     // Estructura mas simple: solo campos estructurales, sin planificacion.
     // Usa columnas tipo array (maquinas_suplentes, operarios_suplentes) en lugar
     // de los _ids que usa actividades_tablero.
+    // v70 Fase 13: en matriz, operación por pieza == duracion_estimada_min
+    // (no hay cantidad asociada al producto). Guardamos los 2 igual para
+    // consistencia entre módulos.
     const payload = {
       producto_id: procCtx.parentId,
       proceso: proceso_cat,
       descripcion: producto.descripcion + ' - ' + proceso_cat,
-      duracion_estimada_min: dur,
+      duracion_estimada_min: _durSafe,
+      duracion_operacion_min: _durSafe,
       duracion_margen_min: 0,
       duracion_operario_min: setup,
       tipo: tipo,
@@ -6986,6 +6992,8 @@ async function _saveProcesoImpl(procesoId) {
   //   total = setup + cantidad * operación   (el margen se suma aparte)
   // v70 Fase 11: si es un sub-proceso dividido (existing.grupo_division_id),
   // cada actividad representa UNA pieza. No se escala por cantidad.
+  // v70 Fase 13: duracion_operacion_min es la fuente de verdad de la op
+  // por pieza. duracion_estimada_min se DERIVA al guardar.
   const _cantItem = (item && item.cantidad) ? item.cantidad : 1;
   const _esDividido = existing && !!existing.grupo_division_id;
   const _multiplicador = _esDividido ? 1 : _cantItem;
@@ -6999,6 +7007,7 @@ async function _saveProcesoImpl(procesoId) {
     descripcion_proyecto: proj.descripcion,
     descripcion_trabajo: trabajo,
     proceso: proceso_cat,
+    duracion_operacion_min: _durSafe,
     duracion_estimada_min: _durTotal,
     duracion_margen_min: margen,
     duracion_operario_min: setup,

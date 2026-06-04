@@ -214,7 +214,7 @@ function _normalizeActNumbers(a) {
   if (!a) return a;
   const numFields = [
     'duracion_estimada_min', 'duracion_planificador_min',
-    'duracion_margen_min', 'duracion_operario_min',
+    'duracion_margen_min', 'duracion_operario_min', 'duracion_operacion_min',
     'ot_ack_dur_estimada_min', 'ot_ack_margen_min', 'ot_ack_setup_min'
   ];
   numFields.forEach(f => {
@@ -3213,14 +3213,22 @@ function showEdit(act, bl) {
   // con la misma fórmula que en proyectos: total = setup + cantidad * operación.
   // Para sub-procesos divididos (grupo_division_id), cantidad efectiva = 1
   // (la actividad representa 1 pieza).
+  // v70 Fase 13: la operación por pieza es una columna explícita
+  // (duracion_operacion_min). Se lee directo de la actividad, sin recalcular.
+  // Fallback al cálculo viejo solo si la columna está nula (datos pre-fase 13).
   const _actItem = (typeof items !== 'undefined') ? items.find(i => i.id === act.item_id) : null;
   const _cantItemEd = (_actItem && _actItem.cantidad) ? _actItem.cantidad : 1;
   const _esDivididoEd = !!act.grupo_division_id;
   const _multEd = _esDivididoEd ? 1 : _cantItemEd;
   const _setupEd = act.duracion_operario_min || 0;
-  const _opEd = _multEd > 0
-    ? Math.round((((act.duracion_estimada_min || 0) - _setupEd) / _multEd) * 100) / 100
-    : 0;
+  let _opEd;
+  if (act.duracion_operacion_min !== null && act.duracion_operacion_min !== undefined) {
+    _opEd = act.duracion_operacion_min;
+  } else {
+    _opEd = _multEd > 0
+      ? Math.round((((act.duracion_estimada_min || 0) - _setupEd) / _multEd) * 100) / 100
+      : 0;
+  }
   const _margenEd = act.duracion_margen_min || 0;
   // Hint: "× N piezas" salvo dividido.
   const _hintCant = _esDivididoEd
@@ -3446,6 +3454,8 @@ async function saveEdit(actId) {
     change.duracion_estimada_min = newDurEstimada;
     change.duracion_margen_min = newMargen;
     change.duracion_operario_min = _setupFinal;
+    // v70 Fase 13: persistir la operación por pieza explícita (fuente de verdad).
+    change.duracion_operacion_min = _opFinal;
     // v70 Fase 10: al editar desde el tablero, los ot_ack_* se sincronizan
     // con los nuevos valores (sino aparece como divergencia OT en el bloque).
     // El tablero es el último que tocó, así que su estado es el aceptado.
@@ -4384,6 +4394,7 @@ function _simBuildStateItem(a) {
     duracion_estimada_min: a.duracion_estimada_min,
     duracion_margen_min: a.duracion_margen_min,
     duracion_operario_min: a.duracion_operario_min,
+    duracion_operacion_min: a.duracion_operacion_min,
     duracion_planificador_min: a.duracion_planificador_min,
     tipo: a.tipo,
     ot_ack_dur_estimada_min: a.ot_ack_dur_estimada_min,
@@ -4800,14 +4811,16 @@ function _simBuildResult(state, anchors) {
     const setupChanged = (orig.duracion_operario_min !== sim.duracion_operario_min);
     // v70 Fase 10: persistir también duracion_estimada_min y duracion_margen_min
     // cuando cambian (al editar los 3 campos desde el modal del bloque).
+    // v70 Fase 13: idem duracion_operacion_min (fuente de verdad de op por pieza).
     const durEstChanged = (orig.duracion_estimada_min !== sim.duracion_estimada_min);
     const margenChanged = ((orig.duracion_margen_min || 0) !== (sim.duracion_margen_min || 0));
+    const opPiezaChanged = (orig.duracion_operacion_min !== sim.duracion_operacion_min);
     const ackDurChanged = (orig.ot_ack_dur_estimada_min !== sim.ot_ack_dur_estimada_min);
     const ackMargenChanged = (orig.ot_ack_margen_min !== sim.ot_ack_margen_min);
     const ackSetupChanged = (orig.ot_ack_setup_min !== sim.ot_ack_setup_min);
     const ackTipoChanged = (orig.ot_ack_tipo !== sim.ot_ack_tipo);
     if (moved || opChanged || machChanged || durChanged || tipoChanged || setupChanged ||
-        durEstChanged || margenChanged ||
+        durEstChanged || margenChanged || opPiezaChanged ||
         ackDurChanged || ackMargenChanged || ackSetupChanged || ackTipoChanged) {
       const planItem = { id, _isAnchor: anchors.has(id) };
       // Solo incluir campos que cambiaron (para no pisar valores con undefined)
@@ -4818,6 +4831,7 @@ function _simBuildResult(state, anchors) {
       if (setupChanged) planItem.duracion_operario_min = sim.duracion_operario_min;
       if (durEstChanged) planItem.duracion_estimada_min = sim.duracion_estimada_min;
       if (margenChanged) planItem.duracion_margen_min = sim.duracion_margen_min || 0;
+      if (opPiezaChanged) planItem.duracion_operacion_min = sim.duracion_operacion_min;
       if (tipoChanged) planItem.tipo = sim.tipo;
       if (ackDurChanged) planItem.ot_ack_dur_estimada_min = sim.ot_ack_dur_estimada_min;
       if (ackMargenChanged) planItem.ot_ack_margen_min = sim.ot_ack_margen_min;
