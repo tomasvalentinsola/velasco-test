@@ -17326,6 +17326,23 @@ function makeModalDraggable(modalEl) {
   });
 }
 // Watch for new modals being added to the DOM
+// v70 Fase 10: también capear inputs type="date" para que el año sólo
+// acepte 4 dígitos (entre 1900 y 2099). Sin esto los navegadores permiten
+// hasta 6 dígitos en el año.
+function _capDateInput(input) {
+  if (!input || input.type !== 'date') return;
+  if (!input.min) input.min = '1900-01-01';
+  if (!input.max) input.max = '2099-12-31';
+}
+function _capAllDateInputs(root) {
+  if (!root) return;
+  if (root.nodeType === 1 && root.tagName === 'INPUT' && root.type === 'date') {
+    _capDateInput(root);
+  }
+  if (root.querySelectorAll) {
+    root.querySelectorAll('input[type="date"]').forEach(_capDateInput);
+  }
+}
 const modalObserver = new MutationObserver((mutations) => {
   mutations.forEach(mu => {
     mu.addedNodes.forEach(node => {
@@ -17334,6 +17351,7 @@ const modalObserver = new MutationObserver((mutations) => {
         const md = node.querySelector('.md');
         if (md) makeModalDraggable(md);
       }
+      _capAllDateInputs(node);
     });
   });
 });
@@ -17343,6 +17361,8 @@ async function init() {
   document.getElementById('hd-logo').src = LOGO_DATA_URL;
   await loadAll();
   render();
+  // v70 Fase 10: capear inputs de fecha pre-existentes (los nuevos los captura el observer).
+  _capAllDateInputs(document.body);
 }
 init();
 </script>

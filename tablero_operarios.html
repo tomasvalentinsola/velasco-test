@@ -5783,7 +5783,37 @@ async function init() {
   const { data: corrD } = await sb.from('correlatividades').select('*'); corrs = corrD || [];
   document.getElementById('hd-d').textContent = new Date().toLocaleDateString('es-AR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
   renderLg(); render();
+  // v70 Fase 10: capear inputs de fecha pre-existentes.
+  _capAllDateInputs(document.body);
 }
+
+// v70 Fase 10: limitar el año en inputs type="date" a 4 dígitos (1900-2099).
+// Sin esto los navegadores permiten hasta 6 dígitos.
+function _capDateInput(input) {
+  if (!input || input.type !== 'date') return;
+  if (!input.min) input.min = '1900-01-01';
+  if (!input.max) input.max = '2099-12-31';
+}
+function _capAllDateInputs(root) {
+  if (!root) return;
+  if (root.nodeType === 1 && root.tagName === 'INPUT' && root.type === 'date') {
+    _capDateInput(root);
+  }
+  if (root.querySelectorAll) {
+    root.querySelectorAll('input[type="date"]').forEach(_capDateInput);
+  }
+}
+// Observer para capear inputs de fecha agregados dinámicamente (modales, etc.).
+const _dateInputObserver = new MutationObserver((mutations) => {
+  mutations.forEach(mu => {
+    mu.addedNodes.forEach(node => {
+      if (node.nodeType !== 1) return;
+      _capAllDateInputs(node);
+    });
+  });
+});
+_dateInputObserver.observe(document.body, { childList: true, subtree: true });
+
 init();
 </script>
 </body>
