@@ -1488,11 +1488,20 @@ function checkCorrelatividadConflict(actId, fecha, startTime) {
   for (const pid of predIds) {
     const pa = acts.find(a => a.id === pid);
     if (!pa) continue;
-    // v70 Fase 10: predecesor marcado como hecho no bloquea.
-    if (pa.estado === 'completada') continue;
     const ps = pa.estado_proceso || 'Planificación Pendiente';
     // A Cerrado predecessor doesn't constrain
     if (ps === 'Cerrado') continue;
+    // v70 Fase 10: predecesor marcado como hecho. Si fue planificado (tiene
+    // fecha real), igual hay que respetar su fin de máquina (no solaparse).
+    // Si nunca fue planificado, no constraina.
+    if (pa.estado === 'completada') {
+      if (!pa.fecha || pa.fecha === '1900-01-01') continue;
+      const pe = realEnd(pa);
+      if (pe.date > fecha || (pe.date === fecha && pe.time > startTime)) {
+        return { type: 'pred-overlap', other: pa };
+      }
+      continue;
+    }
     // If predecessor is unplaced, block
     if (ps === 'Planificación Pendiente' || pa.estado === 'sin_planificar') {
       return { type: 'pred-unplaced', other: pa };
@@ -1545,11 +1554,20 @@ function latestPredecessorEnd(actId) {
   for (const pid of predIds) {
     const pa = acts.find(a => a.id === pid);
     if (!pa) continue;
-    // v70 Fase 10: una actividad completada no impone constraint sobre el fin
-    // de los sucesores — ya pasó.
-    if (pa.estado === 'completada') continue;
     const ps = pa.estado_proceso || 'Planificación Pendiente';
     if (ps === 'Cerrado') continue;
+    // v70 Fase 10: predecesor marcado completada. Si fue planificado, tomamos
+    // su fin de máquina como restricción real. Si nunca fue planificado, lo
+    // ignoramos (no impone constraint sobre cuándo arranca el sucesor).
+    if (pa.estado === 'completada') {
+      if (!pa.fecha || pa.fecha === '1900-01-01') continue;
+      const pe = realEnd(pa);
+      if (!latest || pe.date > latest.date || (pe.date === latest.date && pe.time > latest.time)) {
+        latest = pe;
+        latest.predName = (items.find(x => x.id === pa.item_id)?.descripcion || '?') + ' / ' + (pa.proceso || '?');
+      }
+      continue;
+    }
     // Skip predecessors that aren't placed yet
     if (ps === 'Planificación Pendiente' || pa.estado === 'sin_planificar') continue;
     const pe = realEnd(pa);
