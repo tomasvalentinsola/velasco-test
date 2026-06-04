@@ -3236,7 +3236,9 @@ function showEdit(act, bl) {
     : (_cantItemEd > 1 ? ' <span style="color:#888780;font-weight:400">(× ' + _cantItemEd + ' piezas)</span>' : '');
   // v70 Fase 13: orden y formato idéntico a Proyectos > Item > Editar proceso:
   // setup | operación | margen, todo en una sola fila.
-  editHtml += '<div class="row">';
+  // (Nota: el tablero no tiene la clase .row del CSS de proyectos, así que
+  // usamos display:flex inline.)
+  editHtml += '<div style="display:flex;gap:10px">';
   editHtml += '<div class="ef" style="flex:1"><div class="ef-l">Tiempo de setup (min)</div>';
   editHtml += '<input type="number" class="ef-i" id="ed-dop" value="' + _setupEd + '" min="0" step="5" placeholder="0"></div>';
   editHtml += '<div class="ef" style="flex:1"><div class="ef-l">Tiempo de operación (min) <span style="color:#A32D2D">*</span></div>';
