@@ -1363,19 +1363,23 @@ async function placeAct(actId, machId, fecha, startTime, newOpId) {
 
   const updatePayload = { maquina_id: machId, fecha: fecha, hora_inicio: mT(startTime), estado: ns, estado_proceso: 'Planificado' };
   if (effectiveOpId !== act.operario_id) updatePayload.operario_id = effectiveOpId;
-  // Al planificar por primera vez (sin_planificar -> pendiente), inicializar
-  // los ot_ack_* con los valores actuales del proceso. Esto evita que al
-  // recien planificar aparezca el triangulo amarillo (se considera "sincronizada"
-  // desde el momento de planificacion). Solo se setean si NO estan ya seteados,
-  // por seguridad.
+  // v70 Fase 13: al planificar por primera vez (sin_planificar -> pendiente),
+  // sincronizar SIEMPRE los ot_ack_* con los valores actuales del proceso.
+  // Antes solo se inicializaban si estaban null, pero si alguno tenía un
+  // valor stale (ej. de un planificado-desanclado previo), quedaba como
+  // divergencia falsa después.
   if (act.estado === 'sin_planificar') {
-    if (act.ot_ack_dur_estimada_min === null || act.ot_ack_dur_estimada_min === undefined) updatePayload.ot_ack_dur_estimada_min = act.duracion_estimada_min;
-    if (act.ot_ack_margen_min === null || act.ot_ack_margen_min === undefined) updatePayload.ot_ack_margen_min = act.duracion_margen_min || 0;
-    if (act.ot_ack_setup_min === null || act.ot_ack_setup_min === undefined) updatePayload.ot_ack_setup_min = act.duracion_operario_min;
-    if (act.ot_ack_tipo === null || act.ot_ack_tipo === undefined || act.ot_ack_tipo === '') updatePayload.ot_ack_tipo = act.tipo;
-    if (act.ot_ack_operario_ideal_id === null || act.ot_ack_operario_ideal_id === undefined) updatePayload.ot_ack_operario_ideal_id = act.operario_ideal_id;
-    if (act.ot_ack_maquina_ideal_id === null || act.ot_ack_maquina_ideal_id === undefined) updatePayload.ot_ack_maquina_ideal_id = act.maquina_ideal_id;
-    if (act.ot_ack_maquina_ideal_nombre === null || act.ot_ack_maquina_ideal_nombre === undefined) updatePayload.ot_ack_maquina_ideal_nombre = act.maquina_ideal_nombre;
+    const _it = items.find(i => i.id === act.item_id);
+    const _cantActual = _it ? (_it.cantidad || 1) : 1;
+    updatePayload.ot_ack_dur_estimada_min = act.duracion_estimada_min;
+    updatePayload.ot_ack_margen_min = act.duracion_margen_min || 0;
+    updatePayload.ot_ack_setup_min = act.duracion_operario_min;
+    updatePayload.ot_ack_operacion_min = act.duracion_operacion_min;
+    updatePayload.ot_ack_cantidad = _cantActual;
+    updatePayload.ot_ack_tipo = act.tipo;
+    updatePayload.ot_ack_operario_ideal_id = act.operario_ideal_id;
+    updatePayload.ot_ack_maquina_ideal_id = act.maquina_ideal_id;
+    updatePayload.ot_ack_maquina_ideal_nombre = act.maquina_ideal_nombre;
   }
   await sb.from('actividades_tablero').update(updatePayload).eq('id', actId);
   Object.keys(updatePayload).forEach(k => { act[k] = updatePayload[k]; });
@@ -1902,19 +1906,20 @@ async function proceedWithPlacementMotor(placedActId, applyPlan, pulmonIdsToDele
     if (orig && orig.estado === 'sin_planificar' && item.fecha && item.fecha !== '1900-01-01') {
       item.estado = 'pendiente';
       item.estado_proceso = 'Planificado';
-      if (orig.ot_ack_dur_estimada_min === null || orig.ot_ack_dur_estimada_min === undefined) item.ot_ack_dur_estimada_min = orig.duracion_estimada_min;
-      if (orig.ot_ack_margen_min === null || orig.ot_ack_margen_min === undefined) item.ot_ack_margen_min = orig.duracion_margen_min || 0;
-      if (orig.ot_ack_setup_min === null || orig.ot_ack_setup_min === undefined) item.ot_ack_setup_min = orig.duracion_operario_min;
-      if (orig.ot_ack_tipo === null || orig.ot_ack_tipo === undefined || orig.ot_ack_tipo === '') item.ot_ack_tipo = orig.tipo;
-      if (orig.ot_ack_operario_ideal_id === null || orig.ot_ack_operario_ideal_id === undefined) item.ot_ack_operario_ideal_id = orig.operario_ideal_id;
-      if (orig.ot_ack_maquina_ideal_id === null || orig.ot_ack_maquina_ideal_id === undefined) item.ot_ack_maquina_ideal_id = orig.maquina_ideal_id;
-      if (orig.ot_ack_maquina_ideal_nombre === null || orig.ot_ack_maquina_ideal_nombre === undefined) item.ot_ack_maquina_ideal_nombre = orig.maquina_ideal_nombre;
-      // v70 Fase 13: ack de operación y cantidad al planificar por primera vez.
-      if (orig.ot_ack_operacion_min === null || orig.ot_ack_operacion_min === undefined) item.ot_ack_operacion_min = orig.duracion_operacion_min;
-      if (orig.ot_ack_cantidad === null || orig.ot_ack_cantidad === undefined) {
-        const _it = items.find(i => i.id === orig.item_id);
-        item.ot_ack_cantidad = _it ? (_it.cantidad || 1) : 1;
-      }
+      // v70 Fase 13: al planificar por primera vez, sincronizar SIEMPRE todos
+      // los ot_ack_* con los valores actuales del proceso (no solo si están
+      // null). Evita divergencias falsas por valores stale.
+      const _it = items.find(i => i.id === orig.item_id);
+      const _cantActual = _it ? (_it.cantidad || 1) : 1;
+      item.ot_ack_dur_estimada_min = orig.duracion_estimada_min;
+      item.ot_ack_margen_min = orig.duracion_margen_min || 0;
+      item.ot_ack_setup_min = orig.duracion_operario_min;
+      item.ot_ack_operacion_min = orig.duracion_operacion_min;
+      item.ot_ack_cantidad = _cantActual;
+      item.ot_ack_tipo = orig.tipo;
+      item.ot_ack_operario_ideal_id = orig.operario_ideal_id;
+      item.ot_ack_maquina_ideal_id = orig.maquina_ideal_id;
+      item.ot_ack_maquina_ideal_nombre = orig.maquina_ideal_nombre;
     }
   }
 
