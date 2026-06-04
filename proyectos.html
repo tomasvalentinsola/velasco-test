@@ -6989,15 +6989,11 @@ async function _saveProcesoImpl(procesoId) {
   };
 
   if (procesoId) {
-    if (!isPlanificada) {
-      payload.duracion_planificador_min = _durTotal + margen;
-    } else {
-      const prevPlanLen = existing.duracion_planificador_min;
-      if (prevPlanLen === null || prevPlanLen === undefined) {
-        const prevEstMargen = (existing.duracion_estimada_min || 0) + (existing.duracion_margen_min || 0);
-        payload.duracion_planificador_min = prevEstMargen;
-      }
-    }
+    // v70 Fase 10: recalcular SIEMPRE duracion_planificador_min como
+    // duracion_estimada_min + margen. Antes solo se actualizaba si la activ
+    // no estaba planificada, lo que dejaba el ancho del bloque del tablero
+    // desactualizado al editar tiempos de procesos ya planificados.
+    payload.duracion_planificador_min = _durTotal + margen;
     const peEl = document.getElementById('p-estado');
     if (peEl) payload.estado_proceso = peEl.value;
     await sb.from('actividades_tablero').update(payload).eq('id', procesoId);

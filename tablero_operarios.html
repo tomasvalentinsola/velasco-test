@@ -4768,11 +4768,16 @@ function _simBuildResult(state, anchors) {
     const durChanged = (orig.duracion_planificador_min !== sim.duracion_planificador_min);
     const tipoChanged = (orig.tipo !== sim.tipo);
     const setupChanged = (orig.duracion_operario_min !== sim.duracion_operario_min);
+    // v70 Fase 10: persistir también duracion_estimada_min y duracion_margen_min
+    // cuando cambian (al editar los 3 campos desde el modal del bloque).
+    const durEstChanged = (orig.duracion_estimada_min !== sim.duracion_estimada_min);
+    const margenChanged = ((orig.duracion_margen_min || 0) !== (sim.duracion_margen_min || 0));
     const ackDurChanged = (orig.ot_ack_dur_estimada_min !== sim.ot_ack_dur_estimada_min);
     const ackMargenChanged = (orig.ot_ack_margen_min !== sim.ot_ack_margen_min);
     const ackSetupChanged = (orig.ot_ack_setup_min !== sim.ot_ack_setup_min);
     const ackTipoChanged = (orig.ot_ack_tipo !== sim.ot_ack_tipo);
     if (moved || opChanged || machChanged || durChanged || tipoChanged || setupChanged ||
+        durEstChanged || margenChanged ||
         ackDurChanged || ackMargenChanged || ackSetupChanged || ackTipoChanged) {
       const planItem = { id, _isAnchor: anchors.has(id) };
       // Solo incluir campos que cambiaron (para no pisar valores con undefined)
@@ -4781,6 +4786,8 @@ function _simBuildResult(state, anchors) {
       if (machChanged) planItem.maquina_id = sim.maquina_id;
       if (durChanged) planItem.duracion_planificador_min = sim.duracion_planificador_min;
       if (setupChanged) planItem.duracion_operario_min = sim.duracion_operario_min;
+      if (durEstChanged) planItem.duracion_estimada_min = sim.duracion_estimada_min;
+      if (margenChanged) planItem.duracion_margen_min = sim.duracion_margen_min || 0;
       if (tipoChanged) planItem.tipo = sim.tipo;
       if (ackDurChanged) planItem.ot_ack_dur_estimada_min = sim.ot_ack_dur_estimada_min;
       if (ackMargenChanged) planItem.ot_ack_margen_min = sim.ot_ack_margen_min;
