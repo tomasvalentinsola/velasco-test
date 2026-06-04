@@ -368,8 +368,17 @@ function Dop(a) {
 // evita falsos positivos en datos legacy).
 function hasOTDivergence(a) {
   const out = { hasDiv: false, isDeleted: !!a.proceso_eliminado, fields: {} };
+  // v70 Fase 10: comparación numérica relajada. Antes hacía `!==` que daba
+  // true cuando un lado venía como string y otro como number (caso típico
+  // después de la migración a numeric: Supabase devuelve los numeric como
+  // string en lecturas posteriores al update). Se evita usar valores
+  // numéricos parseados.
   function diff(otVal, ackVal) {
     if (ackVal === null || ackVal === undefined) return false; // legacy / no migrado
+    // Si ambos parsean a número, comparar numéricamente.
+    const ot = parseFloat(otVal);
+    const ack = parseFloat(ackVal);
+    if (!isNaN(ot) && !isNaN(ack)) return ot !== ack;
     return otVal !== ackVal;
   }
   if (diff(a.duracion_estimada_min, a.ot_ack_dur_estimada_min)) {
