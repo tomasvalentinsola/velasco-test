@@ -3313,8 +3313,28 @@ function showEdit(act, bl) {
   let editHtml = '<div style="border-top:1px solid #C8C6BE;padding-top:14px">';
   editHtml += '<div class="ef"><div class="ef-l">Operario</div><select class="ef-i" id="ed-op">' + opOptionsHtml + '</select></div>';
   editHtml += '<div class="ef"><div class="ef-l">Maquina</div><select class="ef-i" id="ed-mq">' + mqOptionsHtml + '</select></div>';
+  // v70 Fase 13: renglón con 3 columnas:
+  //   - Fecha y hora de inicio (editables)
+  //   - Fecha y hora de fin (read-only, calculado desde inicio + duración)
+  //   - Urgencia (editable)
+  // El fin se recalcula al cambiar fecha/hora/duración mediante onInputFinUpdate.
+  const _finCalc = realEnd(act);
+  const _fechaFinStr = _finCalc.date;
+  const _horaFinStr = mT(_finCalc.time);
   editHtml += '<div style="display:flex;gap:10px">';
-  editHtml += '<div class="ef" style="flex:1"><div class="ef-l">Hora de inicio</div><input type="time" class="ef-i" id="ed-h" value="' + act.hora_inicio.substring(0, 5) + '" step="600"></div>';
+  // Col 1: Fecha y hora de inicio (dos inputs anidados)
+  editHtml += '<div class="ef" style="flex:1"><div class="ef-l">Fecha y hora de inicio</div>';
+  editHtml += '<div style="display:flex;gap:4px">';
+  editHtml += '<input type="date" class="ef-i" id="ed-fecha" value="' + act.fecha + '" style="flex:1.4">';
+  editHtml += '<input type="time" class="ef-i" id="ed-h" value="' + act.hora_inicio.substring(0, 5) + '" step="600" style="flex:1">';
+  editHtml += '</div></div>';
+  // Col 2: Fecha y hora de fin (read-only, calculado)
+  editHtml += '<div class="ef" style="flex:1"><div class="ef-l">Fecha y hora de fin <span style="color:#888780;font-weight:400">(calculado)</span></div>';
+  editHtml += '<div style="display:flex;gap:4px">';
+  editHtml += '<input type="date" class="ef-i" id="ed-fecha-fin" value="' + _fechaFinStr + '" readonly disabled style="flex:1.4;background:#F5F4EE;color:#5F5E5A">';
+  editHtml += '<input type="time" class="ef-i" id="ed-h-fin" value="' + _horaFinStr + '" readonly disabled style="flex:1;background:#F5F4EE;color:#5F5E5A">';
+  editHtml += '</div></div>';
+  // Col 3: Urgencia
   editHtml += '<div class="ef" style="flex:1"><div class="ef-l">Urgencia</div><select class="ef-i" id="ed-u">' + urgOptionsHtml + '</select></div>';
   editHtml += '</div>';
 
@@ -3516,6 +3536,9 @@ async function saveEdit(actId) {
   const newOpId = parseInt(document.getElementById('ed-op').value);
   const newMqId = parseInt(document.getElementById('ed-mq').value);
   const newHora = document.getElementById('ed-h').value + ':00';
+  // v70 Fase 13: la fecha ahora también es editable en el modal del bloque.
+  const _fechaInput = document.getElementById('ed-fecha');
+  const newFecha = (_fechaInput && _fechaInput.value) ? _fechaInput.value : act.fecha;
   const newUrg = document.getElementById('ed-u').value;
 
   // v70 Fase 10: leer los 3 campos (operación por pieza, setup, margen)
@@ -3547,6 +3570,7 @@ async function saveEdit(actId) {
   const opChanged = newOpId !== act.operario_id;
   const mqChanged = newMqId !== act.maquina_id;
   const timeChanged = newHora !== act.hora_inicio;
+  const fechaChanged = newFecha !== act.fecha;
   const urgChanged = newUrg !== act.urgencia;
   const setupChanged = _setupFinal !== (act.duracion_operario_min || 0);
   const durEstChanged = newDurEstimada !== (act.duracion_estimada_min || 0);
@@ -3565,7 +3589,7 @@ async function saveEdit(actId) {
   // que cualquier cambio de tiempos pasa por el motor.
 
   // Si NO hubo cambios de tamano/posicion/op/maq, refrescamos y salimos.
-  if (!opChanged && !mqChanged && !timeChanged && !setupChanged && !durEstChanged && !margenChanged && !totalChanged) {
+  if (!opChanged && !mqChanged && !timeChanged && !fechaChanged && !setupChanged && !durEstChanged && !margenChanged && !totalChanged) {
     if (urgChanged) toast('Urgencia actualizada');
     else toast('Sin cambios');
     render();
@@ -3577,7 +3601,7 @@ async function saveEdit(actId) {
     id: actId,
     operario_id: opChanged ? newOpId : act.operario_id,
     maquina_id: mqChanged ? newMqId : act.maquina_id,
-    fecha: act.fecha,
+    fecha: fechaChanged ? newFecha : act.fecha,
     hora_inicio: timeChanged ? newHora : act.hora_inicio
   };
   // Siempre pasamos los nuevos valores recalculados (aunque no hayan cambiado
