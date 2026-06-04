@@ -206,6 +206,26 @@ function isActAvailableForPlanning(a) {
 // appear greyed out in the "+" picker.
 // v70 Fase 12: helper que devuelve el sufijo " [Pieza N/M]" si la actividad
 // pertenece a un grupo de división. Vacío en caso contrario.
+
+// v70 Fase 10h: Supabase devuelve numeric como STRING (incluso si es un número
+// entero). Esta función convierte los campos numéricos relevantes a Number.
+// Aplicar a CADA actividad después de leer de Supabase.
+function _normalizeActNumbers(a) {
+  if (!a) return a;
+  const numFields = [
+    'duracion_estimada_min', 'duracion_planificador_min',
+    'duracion_margen_min', 'duracion_operario_min',
+    'ot_ack_dur_estimada_min', 'ot_ack_margen_min', 'ot_ack_setup_min'
+  ];
+  numFields.forEach(f => {
+    if (a[f] !== null && a[f] !== undefined && typeof a[f] !== 'number') {
+      const n = parseFloat(a[f]);
+      a[f] = isNaN(n) ? null : n;
+    }
+  });
+  return a;
+}
+
 function piezaSuffix(act) {
   if (!act || !act.grupo_division_id) return '';
   const grupo = acts.filter(x => x.grupo_division_id === act.grupo_division_id)
@@ -3279,7 +3299,8 @@ function showEdit(act, bl) {
       }
       bd.remove();
       // Recargar y re-render.
-      const { data: aD } = await sb.from('actividades_tablero').select('*'); acts = aD || [];
+      const { data: aD } = await sb.from('actividades_tablero').select('*');
+      acts = (aD || []).map(_normalizeActNumbers);
       toast('Proceso desanclado');
       render();
     };
@@ -5577,6 +5598,10 @@ async function init() {
   ops = (oD || []).filter(o => o.en_tablero !== false && o.activo !== false);
   const { data: cD } = await sb.from('clientes').select('*'); cls = cD || [];
   const { data: aD } = await sb.from('actividades_tablero').select('*'); acts = aD || [];
+  // v70 Fase 10h: Supabase devuelve numeric como STRING (ej. "52.50"), lo que
+  // rompe operaciones aritméticas en JS. Convertir a Number las columnas que
+  // se usan en cálculos del motor y del render.
+  acts = acts.map(_normalizeActNumbers);
   // Cleanup: eliminar de la DB cualquier activ con proceso_eliminado=true que
   // este como sin_planificar. Estas filas son huerfanas (el proceso ya no
   // existe en Proyectos y la activ no esta planificada). De lo contrario

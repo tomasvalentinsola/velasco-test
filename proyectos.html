@@ -939,6 +939,25 @@ function itemStateColor(estado) {
   }
 }
 
+// v70 Fase 10h: Supabase devuelve numeric como STRING. Esta función convierte
+// a Number las columnas numéricas relevantes. Aplicar a cada actividad
+// después de leer de Supabase.
+function _normalizeActNumbers(a) {
+  if (!a) return a;
+  const numFields = [
+    'duracion_estimada_min', 'duracion_planificador_min',
+    'duracion_margen_min', 'duracion_operario_min',
+    'ot_ack_dur_estimada_min', 'ot_ack_margen_min', 'ot_ack_setup_min'
+  ];
+  numFields.forEach(f => {
+    if (a[f] !== null && a[f] !== undefined && typeof a[f] !== 'number') {
+      const n = parseFloat(a[f]);
+      a[f] = isNaN(n) ? null : n;
+    }
+  });
+  return a;
+}
+
 async function loadAll() {
   const [c, m, o, p, it, a, co] = await Promise.all([
     sb.from('clientes').select('*').order('nombre'),
@@ -952,6 +971,8 @@ async function loadAll() {
   clientes = c.data || []; maquinas = m.data || []; operarios = o.data || [];
   proyectos = p.data || []; items = it.data || []; actividades = a.data || [];
   correlatividades = co.data || [];
+  // v70 Fase 10h: Supabase devuelve numeric como string. Convertir a Number.
+  actividades = actividades.map(_normalizeActNumbers);
   // Matriz de productos (carga separada - si las tablas no existen aun, no
   // rompe la app y queda como arrays vacios. Cuando se aplique el SQL, ya
   // funciona sin tocar nada).
@@ -987,7 +1008,7 @@ async function loadAll() {
       sb.from('procesos').select('*').order('orden', { ascending: true, nullsFirst: false })
     ]);
     productosMatriz = pm.data || [];
-    productosMatrizProcesos = pmp.data || [];
+    productosMatrizProcesos = (pmp.data || []).map(_normalizeActNumbers);
     materiales = mat.data || [];
     sectores = sec.data || [];
     equipos = eq.data || [];
@@ -6658,7 +6679,7 @@ function showProcesoForm(procesoId, ctx) {
   h += '<div class="ef" style="flex:1"><div class="ef-l">Tiempo de setup (min)</div>';
   h += '<input type="number" class="ef-i" id="p-setup" value="' + (proceso && proceso.duracion_operario_min != null ? proceso.duracion_operario_min : 0) + '" min="0" step="5" placeholder="0"></div>';
   h += '<div class="ef" style="flex:1"><div class="ef-l">Tiempo de operación (min) <span style="color:#A32D2D">*</span></div>';
-  h += '<input type="number" class="ef-i" id="p-dur" value="' + _operacionMostrar + '" min="0.17" step="0.1" placeholder="Ej. 240 — usá decimales para menos de 1 min (0,17 = 10 s)"></div>';
+  h += '<input type="number" class="ef-i" id="p-dur" value="' + _operacionMostrar + '" min="0" step="0.1" placeholder="Ej. 240. Usá decimales para menos de 1 min (0,17 = 10 s). Poné 0 si el tiempo total va en setup/margen."></div>';
   if (_esProyecto) {
     h += '<div class="ef" style="flex:1"><div class="ef-l">Margen (min)</div>';
     h += '<input type="number" class="ef-i" id="p-margen" value="' + (proceso && proceso.duracion_margen_min ? proceso.duracion_margen_min : 0) + '" min="0" step="10"></div>';
@@ -6887,7 +6908,13 @@ async function _saveProcesoImpl(procesoId) {
   // v70 Fase 7: el tiempo de setup aplica a todos los procesos. Default 0.
   let setup = parseInt(document.getElementById('p-setup').value);
   if (isNaN(setup) || setup < 0) setup = 0;
-  if (!dur || dur < 0.17) { toast('El tiempo de operación mínimo es 0,17 min (~10 segundos)', true); return; }
+  // v70 Fase 10h: operación admite 0 (útil cuando todo el tiempo va en setup
+  // o margen, ej. despacho). Pero el total no puede ser 0.
+  const _durSafe = (isNaN(dur) || dur < 0) ? 0 : dur;
+  if (_durSafe + setup + margen <= 0) {
+    toast('El tiempo total (operación × cantidad + setup + margen) debe ser mayor a 0', true);
+    return;
+  }
   if (!opIdeal) { toast('Elegi operario ideal', true); return; }
 
   const supMaqs = [...chipState.maq];
@@ -6962,7 +6989,7 @@ async function _saveProcesoImpl(procesoId) {
   const _cantItem = (item && item.cantidad) ? item.cantidad : 1;
   const _esDividido = existing && !!existing.grupo_division_id;
   const _multiplicador = _esDividido ? 1 : _cantItem;
-  const _durTotal = Math.round((setup + _multiplicador * dur) * 100) / 100;
+  const _durTotal = Math.round((setup + _multiplicador * _durSafe) * 100) / 100;
 
   const payload = {
     item_id: procCtx.parentId,
