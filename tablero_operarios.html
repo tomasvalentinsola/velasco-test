@@ -5001,6 +5001,17 @@ function _simDetectResidualConflicts(state, anchors) {
       let conflicts = false;
       if (bDate < endA.date) conflicts = true;
       else if (bDate === endA.date && bTime < endA.time + SIM_GAP) conflicts = true;
+      // v70 Fase 14: no es residual si una es auto/semi con setup_solapable
+      // y la otra es manual. El solapamiento es esperado.
+      if (conflicts) {
+        const aIsAutoSolap = (A.tipo === 'automatica' || A.tipo === 'semi_automatica') && !!A.setup_solapable;
+        const bIsAutoSolap = (B.tipo === 'automatica' || B.tipo === 'semi_automatica') && !!B.setup_solapable;
+        const aIsManual = A.tipo === 'manual' || !A.tipo;
+        const bIsManual = B.tipo === 'manual' || !B.tipo;
+        if ((aIsAutoSolap && bIsManual) || (bIsAutoSolap && aIsManual)) {
+          conflicts = false;
+        }
+      }
       if (conflicts) {
         residual.push({ type: 'op', a: A.id, b: B.id, opId: A.operario_id, bothAnchors: anchors.has(A.id) && anchors.has(B.id) });
       }
