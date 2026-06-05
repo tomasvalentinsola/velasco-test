@@ -2702,11 +2702,12 @@ function render() {
           else block.classList.add(act.urgencia === 'urgente' ? 'bk-u' : act.urgencia === 'alta' ? 'bk-a' : act.urgencia === 'media' ? 'bk-m' : 'bk-b');
           if (act.estado === 'completada') block.classList.add('bk-d');
           block.style.borderColor = machColor(act.maquina_id);
-          // v70 Fase 14: si la activ tiene setup_solapable, borde punteado
-          // para indicar visualmente que su setup puede solapar manuales.
-          if (act.setup_solapable) {
-            block.style.borderStyle = 'dashed';
-            block.style.borderWidth = '2px';
+          // v70 Fase 14: si la activ tiene setup_solapable y esta part es el
+          // setup (operario activo), resaltar con borde NEGRO más grueso
+          // para que se distinga claramente del resto.
+          if (act.setup_solapable && bl._phase === 'setup') {
+            block.style.borderColor = '#000';
+            block.style.borderWidth = '3px';
           }
           // Indicador en esquina superior izquierda:
           // - Triangulo amarillo (⚠) si hay divergencia OT vs ack del planificador.
