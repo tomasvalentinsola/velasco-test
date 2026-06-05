@@ -2702,13 +2702,6 @@ function render() {
           else block.classList.add(act.urgencia === 'urgente' ? 'bk-u' : act.urgencia === 'alta' ? 'bk-a' : act.urgencia === 'media' ? 'bk-m' : 'bk-b');
           if (act.estado === 'completada') block.classList.add('bk-d');
           block.style.borderColor = machColor(act.maquina_id);
-          // v70 Fase 14: si la activ tiene setup_solapable y esta part es el
-          // setup (operario activo), resaltar con borde NEGRO más grueso
-          // para que se distinga claramente del resto.
-          if (act.setup_solapable && bl._phase === 'setup') {
-            block.style.borderColor = '#000';
-            block.style.borderWidth = '3px';
-          }
           // Indicador en esquina superior izquierda:
           // - Triangulo amarillo (⚠) si hay divergencia OT vs ack del planificador.
           // - Octagono rojo (⛔) si el proceso fue eliminado desde Proyectos.
@@ -3025,12 +3018,19 @@ function render() {
 
           const ghost = document.createElement('div');
           ghost.className = 'bk';
+          // v70 Fase 14: si la activ tiene setup_solapable, el ghost (que es
+          // el indicador del setup en el track del operario, con candado) se
+          // resalta con borde NEGRO más grueso para que sea claramente visible
+          // sobre la actividad manual subyacente.
+          const _ghostBorder = act.setup_solapable
+            ? 'border:3px solid #000;'
+            : 'border:1px dashed rgba(0,0,0,.35);';
           ghost.style.cssText =
             'position:absolute;left:calc(' + pL(bl.startMin) + '% + 1px);' +
             'width:calc(' + Math.min(pW(setupInThisBlock), 100 - pL(bl.startMin)) + '%);' +
             'top:2px;height:' + (blockH - 4) + 'px;' +
             'background:repeating-linear-gradient(135deg,rgba(128,128,128,.22) 0 6px,rgba(200,200,200,.12) 6px 12px);' +
-            'border:1px dashed rgba(0,0,0,.35);border-radius:4px;' +
+            _ghostBorder + 'border-radius:4px;' +
             'cursor:default;pointer-events:auto;' +
             'display:flex;align-items:center;justify-content:center;gap:4px;' +
             'font-size:10px;color:#5F5E5A;font-weight:600;overflow:hidden;padding:0 6px';
