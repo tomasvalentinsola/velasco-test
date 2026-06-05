@@ -1373,11 +1373,15 @@ function renderItemsListBody(filteredProjects) {
     const isClosed = (proyecto.estado === 'Cerrado' || proyecto.estado === 'Anulado' || proyecto.estado === 'Perdido');
     // v70 Fase 12: items de retrabajo con fondo distinto (naranja muy suave)
     // para distinguirlos de un vistazo de los items normales del proyecto.
+    // v70 Fase 15: items de dispositivo (auxiliares) con fondo celeste suave.
     let cardBg;
     if (item.es_retrabajo) cardBg = '#FFF4E6';
+    else if (item.es_dispositivo) cardBg = '#E8F5E9';
     else if (isClosed) cardBg = '#F5F3EC';
     else cardBg = '#fff';
-    const cardBorderL = item.es_retrabajo ? 'border-left:4px solid #E69138;' : '';
+    let cardBorderL = '';
+    if (item.es_retrabajo) cardBorderL = 'border-left:4px solid #E69138;';
+    else if (item.es_dispositivo) cardBorderL = 'border-left:4px solid #2E7D32;';
     const fotoUrl = item.foto_url || proyecto.foto_url;
     const img = fotoUrl
       ? '<img src="' + escapeHtml(fotoUrl) + '" class="card-img" onerror="this.style.display=\'none\'">'
@@ -1401,6 +1405,8 @@ function renderItemsListBody(filteredProjects) {
     const itemEstadoBadge = '<span style="display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-weight:700;background:#E8F2FC;color:#0C447C;margin-left:6px">' + escapeHtml(itemEstadoTxt) + '</span>';
     // v70 Fase 12: badge "Retrabajo" para distinguirlos.
     const retBadge = item.es_retrabajo ? '<span style="display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-weight:700;background:#E69138;color:#fff;margin-left:6px">Retrabajo</span>' : '';
+    // v70 Fase 15: badge "Dispositivo" para items auxiliares.
+    const dispBadge = item.es_dispositivo ? '<span style="display:inline-block;padding:2px 8px;border-radius:3px;font-size:10px;font-weight:700;background:#2E7D32;color:#fff;margin-left:6px">Dispositivo</span>' : '';
     const isExpanded = expandedItems.has(item.id);
     const arrow = isExpanded ? '▼' : '▶';
     h += '<div class="card-wrap" style="margin-bottom:8px">';
@@ -1411,7 +1417,7 @@ function renderItemsListBody(filteredProjects) {
     h += '</div>';
     h += img;
     h += '<div class="card-body" style="flex:1">';
-    h += '<div class="card-t">' + escapeHtml(item.descripcion || '(sin descripcion)') + urg + retBadge + itemEstadoBadge + stBadge + '</div>';
+    h += '<div class="card-t">' + escapeHtml(item.descripcion || '(sin descripcion)') + urg + retBadge + dispBadge + itemEstadoBadge + stBadge + '</div>';
     h += '<div class="card-s"><b>' + escapeHtml(clN(proyecto.cliente_id)) + '</b>';
     h += ' · Pr. ' + proyecto.id + ' · ' + escapeHtml(proyecto.descripcion || '');
     if (proyecto.pedido_nro) h += ' · Ped. ' + escapeHtml(proyecto.pedido_nro);
@@ -2256,6 +2262,13 @@ function showNewProjectItemForm(idx) {
   h += '<div style="flex:1"><div style="font-weight:600;font-size:12px">Es retrabajo</div>';
   h += '<div style="font-size:10px;color:#5F5E5A">Marca el item como trabajo correctivo. NO aparece en notas de envío ni remitos.</div></div></label></div>';
 
+  // v70 Fase 15: checkbox dispositivo / pieza auxiliar.
+  h += '<div class="ef" style="background:#F5F3EC;border:1px solid #C8C6BE;border-radius:5px;padding:8px 11px;margin-bottom:10px">';
+  h += '<label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">';
+  h += '<input type="checkbox" id="np-it-dispositivo"' + (it.es_dispositivo ? ' checked' : '') + ' style="margin-top:2px">';
+  h += '<div style="flex:1"><div style="font-weight:600;font-size:12px">Es dispositivo o pieza auxiliar</div>';
+  h += '<div style="font-size:10px;color:#5F5E5A">Pieza necesaria para fabricar el trabajo (ej. una mordaza para sujetar la pieza principal). NO aparece en notas de envío ni remitos.</div></div></label></div>';
+
   h += '</div></div>';
 
   h += '<div class="actions">';
@@ -2321,7 +2334,9 @@ function saveNewProjectItemFromModal(idx) {
     estado: estado,
     foto_url: fotoUrl,
     // v70 Fase 12
-    es_retrabajo: !!(document.getElementById('np-it-retrabajo') && document.getElementById('np-it-retrabajo').checked)
+    es_retrabajo: !!(document.getElementById('np-it-retrabajo') && document.getElementById('np-it-retrabajo').checked),
+    // v70 Fase 15
+    es_dispositivo: !!(document.getElementById('np-it-dispositivo') && document.getElementById('np-it-dispositivo').checked)
   });
   if (isNew) {
     newProjectItemsBuffer.push(item);
@@ -2732,7 +2747,9 @@ async function _crearItemDesdeBuffer(item, proj, projDesc, urgencia, projFoto, f
     fecha_fin_estipulada: item.fecha_fin_estipulada || null,
     estado: item.estado || 'Espera MP',
     // v70 Fase 12
-    es_retrabajo: !!item.es_retrabajo
+    es_retrabajo: !!item.es_retrabajo,
+    // v70 Fase 15
+    es_dispositivo: !!item.es_dispositivo
   };
   if (item.fromMatriz) {
     itemPayload.imported_from_matriz_id = item.fromMatriz.productoId;
@@ -3062,12 +3079,17 @@ function renderProjectDetail() {
       const itBadge = '<span style="display:inline-block;padding:1px 7px;border-radius:3px;font-size:10px;font-weight:700;background:' + itColors.bg + ';color:' + itColors.fg + ';margin-left:6px">' + (it.estado || 'Espera MP') + '</span>';
       // v70 Fase 12: badge retrabajo + fondo distinto.
       const retBadge = it.es_retrabajo ? '<span style="display:inline-block;padding:1px 7px;border-radius:3px;font-size:10px;font-weight:700;background:#E69138;color:#fff;margin-left:6px">Retrabajo</span>' : '';
+      // v70 Fase 15: badge dispositivo + fondo distinto.
+      const dispBadge = it.es_dispositivo ? '<span style="display:inline-block;padding:1px 7px;border-radius:3px;font-size:10px;font-weight:700;background:#2E7D32;color:#fff;margin-left:6px">Dispositivo</span>' : '';
       const isClosed = it.estado === 'Anulado' || it.estado === 'Stockeado' || it.estado === 'Enviado' || it.estado === 'Terminado';
       let cardBg;
       if (it.es_retrabajo) cardBg = '#FFF4E6';
+      else if (it.es_dispositivo) cardBg = '#E8F5E9';
       else if (isClosed) cardBg = '#F5F3EC';
       else cardBg = '#fff';
-      const cardBorderL = it.es_retrabajo ? 'border-left:4px solid #E69138;' : '';
+      let cardBorderL = '';
+      if (it.es_retrabajo) cardBorderL = 'border-left:4px solid #E69138;';
+      else if (it.es_dispositivo) cardBorderL = 'border-left:4px solid #2E7D32;';
       const img = it.foto_url
         ? '<img src="' + escapeHtml(it.foto_url) + '" style="width:42px;height:42px;border-radius:5px;object-fit:cover;flex-shrink:0">'
         : '<div style="width:42px;height:42px;border-radius:5px;background:#E8E6DF;display:flex;align-items:center;justify-content:center;color:#888780;font-size:8px;flex-shrink:0">sin foto</div>';
@@ -3085,7 +3107,7 @@ function renderProjectDetail() {
       }
       c += img;
       c += '<div style="flex:1;min-width:0">';
-      c += '<div style="font-size:13px;font-weight:600">' + escapeHtml(it.descripcion) + retBadge + itBadge + '</div>';
+      c += '<div style="font-size:13px;font-weight:600">' + escapeHtml(it.descripcion) + retBadge + dispBadge + itBadge + '</div>';
       c += '<div style="font-size:11px;color:#5F5E5A">' + procCount + ' proceso(s)</div>';
       c += '</div>';
       c += '<div style="display:flex;gap:4px;flex-shrink:0">';
@@ -3890,7 +3912,9 @@ function _renderItemModal(item, proj) {
     estado: item ? (item.estado || 'Espera MP') : 'Espera MP',
     obs_anulacion: (item && item.observaciones_anulacion) || '',
     // v70 Fase 12: marca de retrabajo. Para items nuevos arranca en false.
-    esRetrabajo: item ? !!item.es_retrabajo : false
+    esRetrabajo: item ? !!item.es_retrabajo : false,
+    // v70 Fase 15: marca de dispositivo.
+    esDispositivo: item ? !!item.es_dispositivo : false
   };
 
   const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'item-modal';
@@ -3968,6 +3992,13 @@ function _renderItemModal(item, proj) {
   h += '<div style="flex:1"><div style="font-weight:600;font-size:12px">Es retrabajo</div>';
   h += '<div style="font-size:10px;color:#5F5E5A">Marca el item como trabajo correctivo. NO aparece en notas de envío ni remitos. Funciona normalmente en el resto del sistema.</div></div></label></div>';
 
+  // v70 Fase 15: checkbox dispositivo / pieza auxiliar.
+  h += '<div class="ef" style="background:#F5F3EC;border:1px solid #C8C6BE;border-radius:5px;padding:8px 11px;margin-bottom:10px">';
+  h += '<label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">';
+  h += '<input type="checkbox" id="i-dispositivo"' + (v.esDispositivo ? ' checked' : '') + ' style="margin-top:2px">';
+  h += '<div style="flex:1"><div style="font-weight:600;font-size:12px">Es dispositivo o pieza auxiliar</div>';
+  h += '<div style="font-size:10px;color:#5F5E5A">Pieza necesaria para fabricar el trabajo (ej. una mordaza para sujetar la pieza principal). NO aparece en notas de envío ni remitos. Funciona normalmente en el resto del sistema.</div></div></label></div>';
+
   // Foto
   h += '<div class="ef"><div class="ef-l">Foto del item (opcional)</div>' + buildPhotoWrapHtml(v.foto_url, 'item') + '<div class="ef-help">Si la dejás vacía, se usa la del proyecto.</div></div>';
 
@@ -4014,7 +4045,9 @@ function _itCaptureFormValues() {
     estado: document.getElementById('i-estado').value,
     obs_anulacion: (document.getElementById('i-obs') || { value: '' }).value,
     // v70 Fase 12
-    esRetrabajo: !!(document.getElementById('i-retrabajo') && document.getElementById('i-retrabajo').checked)
+    esRetrabajo: !!(document.getElementById('i-retrabajo') && document.getElementById('i-retrabajo').checked),
+    // v70 Fase 15
+    esDispositivo: !!(document.getElementById('i-dispositivo') && document.getElementById('i-dispositivo').checked)
   };
 }
 
@@ -4291,7 +4324,9 @@ async function saveItem(itemId) {
     presentacion_mat_prima: presentacion, fecha_fin_estipulada: fechaFin,
     estado, observaciones_anulacion: obs,
     // v70 Fase 12
-    es_retrabajo: !!(document.getElementById('i-retrabajo') && document.getElementById('i-retrabajo').checked)
+    es_retrabajo: !!(document.getElementById('i-retrabajo') && document.getElementById('i-retrabajo').checked),
+    // v70 Fase 15
+    es_dispositivo: !!(document.getElementById('i-dispositivo') && document.getElementById('i-dispositivo').checked)
   };
 
   let savedItemId = itemId;
@@ -5137,6 +5172,8 @@ function afmSeleccionarProducto(productoId) {
           foto_url: prod.foto_url,
           // v70 Fase 12
           es_retrabajo: !!valores.es_retrabajo,
+          // v70 Fase 15
+          es_dispositivo: !!valores.es_dispositivo,
           fromMatriz: {
             productoId: prod.id,
             ubicaciones: ubics,
@@ -5600,6 +5637,13 @@ function _mostrarModalImportar(opts) {
   h += '<div style="flex:1"><div style="font-weight:600;font-size:12px">Es retrabajo</div>';
   h += '<div style="font-size:10px;color:#5F5E5A">Marca el item como trabajo correctivo. NO aparece en notas de envío ni remitos.</div></div></label></div>';
 
+  // v70 Fase 15: checkbox dispositivo.
+  h += '<div class="ef" style="background:#F5F3EC;border:1px solid #C8C6BE;border-radius:5px;padding:8px 11px;margin-bottom:10px">';
+  h += '<label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">';
+  h += '<input type="checkbox" id="imp-dispositivo" style="margin-top:2px">';
+  h += '<div style="flex:1"><div style="font-weight:600;font-size:12px">Es dispositivo o pieza auxiliar</div>';
+  h += '<div style="font-size:10px;color:#5F5E5A">Pieza necesaria para fabricar el trabajo. NO aparece en notas de envío ni remitos.</div></div></label></div>';
+
   // Acciones
   h += '<div class="actions">';
   h += '<button class="b" onclick="document.getElementById(\'import-prod-modal\').remove()">Cancelar</button>';
@@ -5626,9 +5670,10 @@ function _confirmarImport(mode) {
   const estado = (document.getElementById('imp-estado') || { value: 'Espera MP' }).value;
   // v70 Fase 12
   const esRetrabajo = !!(document.getElementById('imp-retrabajo') && document.getElementById('imp-retrabajo').checked);
+  const esDispositivo = !!(document.getElementById('imp-dispositivo') && document.getElementById('imp-dispositivo').checked);
   if (cant < 1) { toast('La cantidad debe ser >= 1', true); return; }
   if (!fechaFin) { toast('Ingresá la fecha de fin estipulada', true); return; }
-  const valores = { cantidad: cant, fecha_fin_estipulada: fechaFin, presentacion_mat_prima: presentacion, estado: estado, es_retrabajo: esRetrabajo };
+  const valores = { cantidad: cant, fecha_fin_estipulada: fechaFin, presentacion_mat_prima: presentacion, estado: estado, es_retrabajo: esRetrabajo, es_dispositivo: esDispositivo };
   document.getElementById('import-prod-modal').remove();
   window._importarPendingOpts = null;
   opts.onConfirm(valores, mode === 'force');
@@ -5677,7 +5722,9 @@ async function _importarProductoCore(productoId, valores, ignorarValidaciones) {
     estado: valores.estado || 'Espera MP',
     imported_from_matriz_id: prod.id,
     // v70 Fase 12
-    es_retrabajo: !!valores.es_retrabajo
+    es_retrabajo: !!valores.es_retrabajo,
+    // v70 Fase 15
+    es_dispositivo: !!valores.es_dispositivo
   };
   // v70: si el producto se importa como parte de un grupo (conjunto), marcamos
   // las columnas de agrupación para poder mostrarlo agrupado en el proyecto.
@@ -15116,8 +15163,8 @@ function showNotaEnvioModal(projId) {
         });
       }
     } else {
-      // v70 Fase 12: filtro retrabajo solo para items sueltos.
-      if (it.es_retrabajo) return;
+      // v70 Fase 12/15: items de retrabajo y dispositivos no se entregan al cliente.
+      if (it.es_retrabajo || it.es_dispositivo) return;
       const refKey = 'item:' + it.id;
       lineas.push({
         refKey: refKey,
@@ -16884,7 +16931,7 @@ function _rmAbrir(cfg) {
       gruposVistos.add(it.grupo_uid);
       refKey = 'grupo:' + it.grupo_uid; total = it.grupo_cantidad || 1; desc = it.grupo_etiqueta || 'Conjunto';
     } else {
-      if (it.es_retrabajo) return;
+      if (it.es_retrabajo || it.es_dispositivo) return;
       refKey = 'item:' + it.id; total = it.cantidad || 1; desc = it.descripcion || '';
     }
     const k = 'd|' + refKey;
