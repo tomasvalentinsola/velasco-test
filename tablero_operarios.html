@@ -252,8 +252,16 @@ function hasPredecessorsReady(actId) {
     // v70 Fase 10: una actividad marcada como hecha (completada) NO bloquea
     // a sus sucesores, sin importar dónde esté planificada.
     if (pa.estado === 'completada') continue;
+    // v70 Fase 15: el predecesor está "listo" (no bloquea) si tiene una
+    // planificación real (estado pendiente con fecha válida) O si está marcado
+    // como Cerrado. La regla NO se basa solo en estado_proceso porque puede
+    // estar desincronizado (caso conocido: estado=pendiente con fecha real
+    // pero estado_proceso='Planificación Pendiente').
+    if (pa.estado === 'pendiente' && pa.fecha && pa.fecha !== '1900-01-01') continue;
     const ps = pa.estado_proceso || 'Planificación Pendiente';
-    if (ps === 'Planificación Pendiente') return false;
+    if (ps === 'Cerrado') continue;
+    // Caso restante: estado='sin_planificar' o sin fecha válida → bloquea.
+    return false;
   }
   return true;
 }

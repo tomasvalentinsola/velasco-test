@@ -2619,6 +2619,14 @@ async function saveNewProject() {
   if (!cliente_id) { toast('Elegi un cliente', true); return; }
   if (!descripcion) { toast('Ingresa descripcion del proyecto', true); return; }
   if (!fechaEntrega) { toast('Ingresa fecha de entrega del proyecto', true); return; }
+  // v70 Fase 15: si tiene pedido_nro, el proyecto no puede estar en estados
+  // pre-venta (Proyectando, Solicitud). El número de pedido implica venta
+  // cerrada.
+  if (pedido_nro && (estado === 'Proyectando' || estado === 'Solicitud')) {
+    errPedido.textContent = 'Si el proyecto tiene número de pedido (' + pedido_nro + ') no puede estar en estado "' + estado + '". Cambialo a "Pedido", "Cerrado" o "Anulado".';
+    errPedido.style.display = 'block';
+    return;
+  }
   if (pedido_nro) {
     const dup = proyectos.find(p => p.pedido_nro === pedido_nro);
     if (dup) { errPedido.textContent = 'Ya existe un proyecto con el pedido ' + pedido_nro + ' (cliente: ' + clN(dup.cliente_id) + ')'; errPedido.style.display = 'block'; return; }
@@ -3488,6 +3496,11 @@ async function saveProjectMeta() {
     const dup = proyectos.find(p => p.pedido_nro === pedidoNro && p.id !== proj.id);
     if (dup) { toast('Ya existe un proyecto con el pedido ' + pedidoNro, true); return; }
   }
+  // v70 Fase 15: pedido_nro no puede coexistir con estado pre-venta.
+  if (pedidoNro && (proj.estado === 'Proyectando' || proj.estado === 'Solicitud')) {
+    toast('No podés asignar número de pedido a un proyecto en estado "' + proj.estado + '". Cambialo a "Pedido" desde la lista de proyectos.', true);
+    return;
+  }
   showSpinner('Guardando proyecto...');
   try {
   await sb.from('proyectos').update({
@@ -3630,6 +3643,12 @@ async function saveProjectState(projectId) {
   const pedidoNew = (pedidoEl && pedidoEl.style.display !== 'none' && pedidoEl.value.trim()) ? pedidoEl.value.trim() : null;
   const pedidoWrap = document.getElementById('ps-pedido-wrap');
   const pedidoVisible = pedidoWrap && pedidoWrap.style.display === 'block';
+
+  // v70 Fase 15: no permitir volver un proyecto con pedido_nro a estados pre-venta.
+  if ((newEstado === 'Proyectando' || newEstado === 'Solicitud') && proj.pedido_nro) {
+    toast('No se puede cambiar a "' + newEstado + '" porque el proyecto ya tiene número de pedido (' + proj.pedido_nro + ').', true);
+    return;
+  }
 
   // Función que termina de aplicar el cambio (se llama desde varios caminos).
   const aplicarCambioEstado = async () => {
