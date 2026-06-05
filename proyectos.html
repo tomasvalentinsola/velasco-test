@@ -6057,7 +6057,18 @@ function renderItemDetail() {
       const isPlanificada = p.estado && p.estado !== 'sin_planificar' && p.fecha !== '1900-01-01';
       const procEstado = p.estado_proceso || 'Planificación Pendiente';
       const peColors = procStateColor(procEstado);
-      const peBadge = '<span class="tag" style="background:' + peColors.bg + ';color:' + peColors.fg + ';margin-left:4px;border:1px solid ' + peColors.fg + '">' + procEstado.toUpperCase() + '</span>';
+      // v70 Fase 14: cuando el proceso está PLANIFICADO o CERRADO, mostrar
+      // al lado del badge la fecha/hora correspondiente. Eso aclara cuándo
+      // está planificado y evita confusiones por badges desincronizados.
+      let peDateInfo = '';
+      if (procEstado === 'Planificado' && p.fecha && p.fecha !== '1900-01-01') {
+        const _h = (p.hora_inicio || '').substring(0, 5);
+        peDateInfo = ' <span style="font-size:11px;color:#5F5E5A;font-weight:400;margin-left:4px">' + p.fecha + (_h ? ' ' + _h : '') + '</span>';
+      } else if (procEstado === 'Cerrado' && p.fecha_real) {
+        const _h = (p.hora_real_fin || '').substring(0, 5);
+        peDateInfo = ' <span style="font-size:11px;color:#5F5E5A;font-weight:400;margin-left:4px">Hecho ' + (p.fecha_real_fin || p.fecha_real) + (_h ? ' ' + _h : '') + '</span>';
+      }
+      const peBadge = '<span class="tag" style="background:' + peColors.bg + ';color:' + peColors.fg + ';margin-left:4px;border:1px solid ' + peColors.fg + '">' + procEstado.toUpperCase() + '</span>' + peDateInfo;
       // Predecessors of this proceso
       const myPreds = correlatividades.filter(c => c.sucesor_id === p.id);
       // v70 Fase 11b: si pertenece a un grupo de división, calcular el número
