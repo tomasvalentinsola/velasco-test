@@ -5988,10 +5988,10 @@ function showReorderColsModal() {
 
   const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'reorder-cols-modal';
   const m = document.createElement('div'); m.className = 'md';
-  m.style.maxWidth = '720px';
+  m.style.maxWidth = '460px';
   m.innerHTML = '<button class="md-x" onclick="this.closest(\'.mo\').remove()">&times;</button>' +
     '<div class="md-t">Reordenar columnas del tablero</div>' +
-    '<div style="font-size:12px;color:#5F5E5A;margin-bottom:14px">Usá las flechas para mover cada operario a izquierda o derecha. La columna de la izquierda aparecerá primero en el tablero.</div>' +
+    '<div style="font-size:12px;color:#5F5E5A;margin-bottom:14px">Usá las flechas para subir o bajar cada operario. El primero de la lista será la columna izquierda del tablero.</div>' +
     '<div id="reorder-cols-list" style="margin-bottom:14px"></div>' +
     '<div style="display:flex;gap:8px;justify-content:flex-end">' +
     '<button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button>' +
@@ -6007,15 +6007,19 @@ function _renderReorderColsList() {
   const cont = document.getElementById('reorder-cols-list');
   if (!cont) return;
   const ids = _reorderModalState;
-  let h = '<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:10px;background:#F5F3EC;border:1px solid #C8C6BE;border-radius:6px">';
+  let h = '<div style="display:flex;flex-direction:column;gap:6px;padding:10px;background:#F5F3EC;border:1px solid #C8C6BE;border-radius:6px">';
   ids.forEach((id, idx) => {
     const isFirst = idx === 0;
     const isLast = idx === ids.length - 1;
-    h += '<button class="b" onclick="_moveCol(' + idx + ',-1)" ' + (isFirst ? 'disabled' : '') + ' style="font-size:14px;padding:2px 7px;min-width:28px" title="Mover a la izquierda">←</button>';
-    h += '<div style="padding:6px 12px;background:#fff;border:1px solid #C8C6BE;border-radius:4px;font-size:13px;font-weight:600;min-width:90px;text-align:center">' + escapeHtml(opN(id)) + '</div>';
-    h += '<button class="b" onclick="_moveCol(' + idx + ',1)" ' + (isLast ? 'disabled' : '') + ' style="font-size:14px;padding:2px 7px;min-width:28px;margin-right:8px" title="Mover a la derecha">→</button>';
+    h += '<div style="display:flex;align-items:center;gap:8px">';
+    h += '<div style="width:28px;text-align:center;font-size:11px;color:#888780;font-weight:600">' + (idx + 1) + '</div>';
+    h += '<div style="flex:1;padding:8px 14px;background:#fff;border:1px solid #C8C6BE;border-radius:4px;font-size:13px;font-weight:600">' + escapeHtml(opN(id)) + '</div>';
+    h += '<button class="b" onclick="_moveCol(' + idx + ',-1)" ' + (isFirst ? 'disabled' : '') + ' style="font-size:14px;padding:2px 8px;min-width:32px" title="Subir">↑</button>';
+    h += '<button class="b" onclick="_moveCol(' + idx + ',1)" ' + (isLast ? 'disabled' : '') + ' style="font-size:14px;padding:2px 8px;min-width:32px" title="Bajar">↓</button>';
+    h += '</div>';
   });
   h += '</div>';
+  h += '<div style="font-size:10px;color:#888780;margin-top:6px">El primero de la lista será la columna izquierda del tablero.</div>';
   cont.innerHTML = h;
 }
 
@@ -6029,7 +6033,7 @@ function _moveCol(idx, dir) {
 
 async function saveReorderCols() {
   if (!_reorderModalState) return;
-  showSpinner && showSpinner('Guardando orden...');
+  if (typeof showSpinner === 'function') showSpinner('Guardando orden...');
   try {
     // Asignar orden_tablero = posición (0-indexed) a cada operario.
     const updates = _reorderModalState.map((id, idx) =>
@@ -6051,7 +6055,7 @@ async function saveReorderCols() {
     toast('Orden actualizado');
     render();
   } finally {
-    hideSpinner && hideSpinner();
+    if (typeof hideSpinner === 'function') hideSpinner();
   }
 }
 
