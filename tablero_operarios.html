@@ -113,6 +113,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       <button class="b-nav" onclick="navWeek(-1)">← Sem. ant.</button>
       <button class="b-nav" onclick="navWeek(0)">Hoy</button>
       <button class="b-nav" onclick="navWeek(1)">Sem. sig. →</button>
+      <button class="b-nav" onclick="showReorderColsModal()" title="Reordenar columnas del tablero">⇄ Orden</button>
     </div>
   </div>
   <div class="hd-r">
@@ -489,7 +490,16 @@ function toast(m){const t=document.getElementById('to');t.textContent=m;t.classL
 function updU(){const b=document.getElementById('bu');if(!b)return;b.disabled=uStack.length===0;document.getElementById('uc').textContent=uStack.length>0?uStack.length+' cambio(s)':''}
 function canPlace(act,machId){if(!act.maquina_ideal_id)return true;if(mN(machId)==='Otra')return true;return act.maquina_ideal_id===machId||(act.maquinas_suplentes_ids||[]).includes(machId)}
 function nwd(ds){const d=new Date(ds+'T12:00:00');do{d.setDate(d.getDate()+1)}while(d.getDay()===0);return dK(d)}
-function sS(opId){const o=ops.find(x=>x.id===opId);return o?tM(o.horario_entrada||o.horario_inicio||'06:00'):360}
+function sS(opId,ds){
+  const o=ops.find(x=>x.id===opId);
+  if(!o)return 360;
+  // v70 Fase 16: sábado usa horario_sabado_inicio si está seteado.
+  if(ds){
+    const d=new Date(ds+'T12:00:00');
+    if(d.getDay()===6) return tM(o.horario_sabado_inicio||'08:00');
+  }
+  return tM(o.horario_entrada||o.horario_inicio||'06:00');
+}
 function sE(opId,ds){const o=ops.find(x=>x.id===opId);if(!o)return 1020;const d=new Date(ds+'T12:00:00');return d.getDay()===6?tM(o.horario_sabado_fin||'12:00'):tM(o.horario_salida||o.horario_fin||'15:00')}
 
 // ========== VISUAL BLOCKS (multi-day aware) ==========
@@ -523,14 +533,14 @@ function computeVB() {
       let rem = setupMin, cd = act.fecha, ct = tM(act.hora_inicio), safe = 0;
       while (rem > 0 && safe < 20) {
         safe++;
-        const ds = sS(act.operario_id), de = sE(act.operario_id, cd);
+        const ds = sS(act.operario_id, cd), de = sE(act.operario_id, cd);
         if (ct < ds) ct = ds;
         const av = de - ct;
-        if (av <= 0) { cd = nwd(cd); ct = sS(act.operario_id); continue; }
+        if (av <= 0) { cd = nwd(cd); ct = sS(act.operario_id, cd); continue; }
         const bd = Math.min(rem, av);
         parts.push({ actId: act.id, act, date: cd, startMin: ct, dur: bd, _phase: 'setup' });
         rem -= bd;
-        if (rem > 0) { cd = nwd(cd); ct = sS(act.operario_id); }
+        if (rem > 0) { cd = nwd(cd); ct = sS(act.operario_id, cd); }
         else { ct += bd; }
       }
       // cd/ct = momento en que termina el setup. La maquina corre desde aqui
@@ -548,7 +558,7 @@ function computeVB() {
 
         const dow = new Date(curDate + 'T12:00:00').getDay();
         if (dow !== 0) {
-          const ds = sS(act.operario_id), de = sE(act.operario_id, curDate);
+          const ds = sS(act.operario_id, curDate), de = sE(act.operario_id, curDate);
           const visStart = Math.max(curTime, ds);
           const visEnd = Math.min(machineEndOfDay, de);
           if (visEnd > visStart) {
@@ -593,14 +603,14 @@ function computeVB() {
     const parts = []; let safe = 0;
     while (rem > 0 && safe < 20) {
       safe++;
-      const ds = sS(act.operario_id), de = sE(act.operario_id, cd);
+      const ds = sS(act.operario_id, cd), de = sE(act.operario_id, cd);
       if (ct < ds) ct = ds;
       const av = de - ct;
-      if (av <= 0) { cd = nwd(cd); ct = sS(act.operario_id); continue; }
+      if (av <= 0) { cd = nwd(cd); ct = sS(act.operario_id, cd); continue; }
       const bd = Math.min(rem, av);
       parts.push({ actId: act.id, act, date: cd, startMin: ct, dur: bd, part: pn });
       rem -= bd;
-      if (rem > 0) { cd = nwd(cd); ct = sS(act.operario_id); pn++; }
+      if (rem > 0) { cd = nwd(cd); ct = sS(act.operario_id, cd); pn++; }
     }
     const tot = parts.length;
     parts.forEach(p => { p.totalParts = tot; vb.push(p); });
@@ -625,13 +635,13 @@ function realEnd(a) {
     let rem = setupMin, cd = a.fecha, ct = tM(a.hora_inicio), safe = 0;
     while (rem > 0 && safe < 20) {
       safe++;
-      const ds = sS(a.operario_id), de = sE(a.operario_id, cd);
+      const ds = sS(a.operario_id, cd), de = sE(a.operario_id, cd);
       if (ct < ds) ct = ds;
       const avail = de - ct;
-      if (avail <= 0) { cd = nwd(cd); ct = sS(a.operario_id); continue; }
+      if (avail <= 0) { cd = nwd(cd); ct = sS(a.operario_id, cd); continue; }
       const used = Math.min(rem, avail);
       rem -= used;
-      if (rem > 0) { cd = nwd(cd); ct = sS(a.operario_id); } else { ct += used; }
+      if (rem > 0) { cd = nwd(cd); ct = sS(a.operario_id, cd); } else { ct += used; }
     }
     // Ahora cd/ct es donde termina el setup. La maquina sigue 24/7.
     // Sumar machineRest minutos calendario directos.
@@ -649,13 +659,13 @@ function realEnd(a) {
   let rem = D(a), cd = a.fecha, ct = tM(a.hora_inicio), safe = 0;
   while (rem > 0 && safe < 20) {
     safe++;
-    const ds = sS(a.operario_id), de = sE(a.operario_id, cd);
+    const ds = sS(a.operario_id, cd), de = sE(a.operario_id, cd);
     if (ct < ds) ct = ds;
     const avail = de - ct;
-    if (avail <= 0) { cd = nwd(cd); ct = sS(a.operario_id); continue; }
+    if (avail <= 0) { cd = nwd(cd); ct = sS(a.operario_id, cd); continue; }
     const used = Math.min(rem, avail);
     rem -= used;
-    if (rem > 0) { cd = nwd(cd); ct = sS(a.operario_id); } else { ct = ct + used; }
+    if (rem > 0) { cd = nwd(cd); ct = sS(a.operario_id, cd); } else { ct = ct + used; }
   }
   return { date: cd, time: ct };
 }
@@ -667,13 +677,13 @@ function realEndOp(a) {
   let rem = Dop(a), cd = a.fecha, ct = tM(a.hora_inicio), safe = 0;
   while (rem > 0 && safe < 20) {
     safe++;
-    const ds = sS(a.operario_id), de = sE(a.operario_id, cd);
+    const ds = sS(a.operario_id, cd), de = sE(a.operario_id, cd);
     if (ct < ds) ct = ds;
     const avail = de - ct;
-    if (avail <= 0) { cd = nwd(cd); ct = sS(a.operario_id); continue; }
+    if (avail <= 0) { cd = nwd(cd); ct = sS(a.operario_id, cd); continue; }
     const used = Math.min(rem, avail);
     rem -= used;
-    if (rem > 0) { cd = nwd(cd); ct = sS(a.operario_id); } else { ct = ct + used; }
+    if (rem > 0) { cd = nwd(cd); ct = sS(a.operario_id, cd); } else { ct = ct + used; }
   }
   return { date: cd, time: ct };
 }
@@ -709,10 +719,10 @@ async function globalResolve(undoBatch, justPlacedId) {
           let newDate = endA.date, newTime = endA.time + GAP;
           // Si newDate cae domingo (puede pasar si A es auto 24/7), saltar a lunes.
           const dow = new Date(newDate + 'T12:00:00').getDay();
-          if (dow === 0) { newDate = nwd(newDate); newTime = sS(B.operario_id); }
-          const bShE = sE(B.operario_id, newDate), bShS = sS(B.operario_id);
+          if (dow === 0) { newDate = nwd(newDate); newTime = sS(B.operario_id, newDate); }
+          const bShE = sE(B.operario_id, newDate), bShS = sS(B.operario_id, newDate);
           if (newTime < bShS) newTime = bShS;
-          if (newTime >= bShE) { newDate = nwd(newDate); newTime = sS(B.operario_id); }
+          if (newTime >= bShE) { newDate = nwd(newDate); newTime = sS(B.operario_id, newDate); }
           if (B.fecha !== newDate || B.hora_inicio !== mT(newTime)) {
             const prev = { maquina_id: B.maquina_id, fecha: B.fecha, hora_inicio: B.hora_inicio, estado: B.estado };
             if (!undoBatch.find(u => u.id === B.id)) undoBatch.push({ id: B.id, prev });
@@ -742,7 +752,7 @@ function dayBlocks(machId, dateStr, excludeId) {
 function calcInsertTime(machId, dateStr, dropMin, excludeId) {
   const blocks = dayBlocks(machId, dateStr, excludeId);
   const act = acts.find(a => a.id === excludeId);
-  const opStart = act && act.operario_id ? sS(act.operario_id) : 360;
+  const opStart = act && act.operario_id ? sS(act.operario_id, cd) : 360;
   if (blocks.length === 0) return opStart;
   if (dropMin < blocks[0].s) {
     if (blocks[0].s > opStart + GAP) {
@@ -775,15 +785,15 @@ function dayBlocksForOp(opId, dateStr, excludeId) {
       let rem = Dop(a), cd = a.fecha, ct = tM(a.hora_inicio), safe = 0;
       while (rem > 0 && safe < 20) {
         safe++;
-        const ds = sS(a.operario_id), de = sE(a.operario_id, cd);
+        const ds = sS(a.operario_id, cd), de = sE(a.operario_id, cd);
         if (ct < ds) ct = ds;
         const avail = de - ct;
-        if (avail <= 0) { cd = nwd(cd); ct = sS(a.operario_id); continue; }
+        if (avail <= 0) { cd = nwd(cd); ct = sS(a.operario_id, cd); continue; }
         const used = Math.min(rem, avail);
         if (cd === dateStr) blocks.push({ s: ct, e: ct + used, act: a });
         if (cd > dateStr) break;
         rem -= used;
-        if (rem > 0) { cd = nwd(cd); ct = sS(a.operario_id); } else { ct += used; }
+        if (rem > 0) { cd = nwd(cd); ct = sS(a.operario_id, cd); } else { ct += used; }
       }
     });
   return blocks.sort((a, b) => a.s - b.s);
@@ -793,7 +803,7 @@ function dayBlocksForOp(opId, dateStr, excludeId) {
 // (not the machine's) to decide where an incoming drop lands.
 function calcInsertTimeForOp(opId, dateStr, dropMin, excludeId) {
   const blocks = dayBlocksForOp(opId, dateStr, excludeId);
-  const opStart = opId ? sS(opId) : 360;
+  const opStart = opId ? sS(opId, dateStr) : 360;
   if (blocks.length === 0) return opStart;
   if (dropMin < blocks[0].s) {
     if (blocks[0].s > opStart + GAP) {
@@ -832,14 +842,14 @@ function machineSlicesOf(a) {
     let rem = setupMin, cd = a.fecha, ct = tM(a.hora_inicio), safe = 0;
     while (rem > 0 && safe < 20) {
       safe++;
-      const ds = sS(a.operario_id), de = sE(a.operario_id, cd);
+      const ds = sS(a.operario_id, cd), de = sE(a.operario_id, cd);
       if (ct < ds) ct = ds;
       const av = de - ct;
-      if (av <= 0) { cd = nwd(cd); ct = sS(a.operario_id); continue; }
+      if (av <= 0) { cd = nwd(cd); ct = sS(a.operario_id, cd); continue; }
       const used = Math.min(rem, av);
       slices.push({ date: cd, start: ct, end: ct + used });
       rem -= used;
-      if (rem > 0) { cd = nwd(cd); ct = sS(a.operario_id); } else { ct += used; }
+      if (rem > 0) { cd = nwd(cd); ct = sS(a.operario_id, cd); } else { ct += used; }
     }
     // Fase 2: maquina sola 24/7 (calendar continuo, dia por dia)
     if (machineRest > 0) {
@@ -872,14 +882,14 @@ function machineSlicesOf(a) {
   let rem = D(a), cd = a.fecha, ct = tM(a.hora_inicio), safe = 0;
   while (rem > 0 && safe < 20) {
     safe++;
-    const ds = sS(a.operario_id), de = sE(a.operario_id, cd);
+    const ds = sS(a.operario_id, cd), de = sE(a.operario_id, cd);
     if (ct < ds) ct = ds;
     const av = de - ct;
-    if (av <= 0) { cd = nwd(cd); ct = sS(a.operario_id); continue; }
+    if (av <= 0) { cd = nwd(cd); ct = sS(a.operario_id, cd); continue; }
     const used = Math.min(rem, av);
     slices.push({ date: cd, start: ct, end: ct + used });
     rem -= used;
-    if (rem > 0) { cd = nwd(cd); ct = sS(a.operario_id); } else { ct += used; }
+    if (rem > 0) { cd = nwd(cd); ct = sS(a.operario_id, cd); } else { ct += used; }
   }
   return slices;
 }
@@ -932,17 +942,17 @@ function findOpConflicts(actId, opId, machId, fecha, startMin, dur) {
     let rem = Dop(a), cd = a.fecha, ct = tM(a.hora_inicio), safe = 0;
     while (rem > 0 && safe < 20) {
       safe++;
-      const ds = sS(a.operario_id), de = sE(a.operario_id, cd);
+      const ds = sS(a.operario_id, cd), de = sE(a.operario_id, cd);
       if (ct < ds) ct = ds;
       const av = de - ct;
-      if (av <= 0) { cd = nwd(cd); ct = sS(a.operario_id); continue; }
+      if (av <= 0) { cd = nwd(cd); ct = sS(a.operario_id, cd); continue; }
       const used = Math.min(rem, av);
       if (cd === fecha && ct < startMin + dur && ct + used > startMin) {
         conflicts.push(a); break;
       }
       if (cd > fecha) break;
       rem -= used;
-      if (rem > 0) { cd = nwd(cd); ct = sS(a.operario_id); } else { ct += used; }
+      if (rem > 0) { cd = nwd(cd); ct = sS(a.operario_id, cd); } else { ct += used; }
     }
   });
   return conflicts;
@@ -970,15 +980,15 @@ function getManualRanges(excludeActId, opId, fecha) {
     let rem = D(a), cd = a.fecha, ct = tM(a.hora_inicio), safe = 0;
     while (rem > 0 && safe < 30) {
       safe++;
-      const ds = sS(a.operario_id), de = sE(a.operario_id, cd);
+      const ds = sS(a.operario_id, cd), de = sE(a.operario_id, cd);
       if (ct < ds) ct = ds;
       const av = de - ct;
-      if (av <= 0) { cd = nwd(cd); ct = sS(a.operario_id); continue; }
+      if (av <= 0) { cd = nwd(cd); ct = sS(a.operario_id, cd); continue; }
       const used = Math.min(rem, av);
       if (cd === fecha) ranges.push({ start: ct, end: ct + used });
       if (cd > fecha) break;
       rem -= used;
-      if (rem > 0) { cd = nwd(cd); ct = sS(a.operario_id); } else { ct += used; }
+      if (rem > 0) { cd = nwd(cd); ct = sS(a.operario_id, cd); } else { ct += used; }
     }
   });
   ranges.sort((a, b) => a.start - b.start);
@@ -990,14 +1000,14 @@ function simulatePlacement(act, opId, fecha, startMin) {
   let rem = D(act), cd = fecha, ct = startMin, safe = 0;
   while (rem > 0 && safe < 30) {
     safe++;
-    const ds = sS(opId), de = sE(opId, cd);
+    const ds = sS(opId, cd), de = sE(opId, cd);
     if (ct < ds) ct = ds;
     const av = de - ct;
-    if (av <= 0) { cd = nwd(cd); ct = sS(opId); continue; }
+    if (av <= 0) { cd = nwd(cd); ct = sS(opId, cd); continue; }
     const used = Math.min(rem, av);
     slices.push({ date: cd, start: ct, end: ct + used });
     rem -= used;
-    if (rem > 0) { cd = nwd(cd); ct = sS(opId); } else { ct += used; }
+    if (rem > 0) { cd = nwd(cd); ct = sS(opId, cd); } else { ct += used; }
   }
   return rem > 0 ? [] : slices;
 }
@@ -1018,7 +1028,7 @@ function findFreeManualSlot(act, opId, fechaFrom) {
   let cd = fechaFrom;
   for (let day = 0; day < maxDays; day++) {
     const ranges = getManualRanges(act.id, opId, cd);
-    const dayStart = sS(opId), dayEnd = sE(opId, cd);
+    const dayStart = sS(opId, cd), dayEnd = sE(opId, cd);
     const candidates = new Set([dayStart]);
     for (const r of ranges) { const c = r.end + GAP; if (c < dayEnd) candidates.add(c); }
     const sorted = [...candidates].sort((a, b) => a - b);
@@ -1181,17 +1191,17 @@ function findOverlappingActivitiesForOp(actId, opId, fecha, startMin, dur) {
     let rem = Dop(a), cd = a.fecha, ct = tM(a.hora_inicio), safe = 0;
     while (rem > 0 && safe < 20) {
       safe++;
-      const ds = sS(a.operario_id), de = sE(a.operario_id, cd);
+      const ds = sS(a.operario_id, cd), de = sE(a.operario_id, cd);
       if (ct < ds) ct = ds;
       const av = de - ct;
-      if (av <= 0) { cd = nwd(cd); ct = sS(a.operario_id); continue; }
+      if (av <= 0) { cd = nwd(cd); ct = sS(a.operario_id, cd); continue; }
       const used = Math.min(rem, av);
       if (cd === fecha && ct < endMin && ct + used > startMin) {
         overlapping.push(a); break;
       }
       if (cd > fecha) break;
       rem -= used;
-      if (rem > 0) { cd = nwd(cd); ct = sS(a.operario_id); } else { ct += used; }
+      if (rem > 0) { cd = nwd(cd); ct = sS(a.operario_id, cd); } else { ct += used; }
     }
   });
   return overlapping;
@@ -1273,10 +1283,10 @@ function simulateOpCascade(opId, placedActId, placedFecha, placedStart, placedMa
       else if (bDate === endA.date && bTime < endA.time + GAP) needsMove = true;
       if (needsMove) {
         let newDate = endA.date, newTime = endA.time + GAP;
-        const bShS = sS(opId);
+        const bShS = sS(opId, newDate);
         if (newTime < bShS) newTime = bShS;
         const bShE = sE(opId, newDate);
-        if (newTime >= bShE) { newDate = nwd(newDate); newTime = sS(opId); }
+        if (newTime >= bShE) { newDate = nwd(newDate); newTime = sS(opId, newDate); }
         if (B.fecha !== newDate || B.hora_inicio !== mT(newTime)) {
           B.fecha = newDate; B.hora_inicio = mT(newTime);
           pushed = true;
@@ -1339,10 +1349,10 @@ async function cascadeOverlapsForOperator(opId, undoBatch, priorityActId) {
       }
       if (needsMove) {
         let newDate = endA.date, newTime = endA.time + GAP;
-        const bShS = sS(opId);
+        const bShS = sS(opId, newDate);
         if (newTime < bShS) newTime = bShS;
         const bShE = sE(opId, newDate);
-        if (newTime >= bShE) { newDate = nwd(newDate); newTime = sS(opId); }
+        if (newTime >= bShE) { newDate = nwd(newDate); newTime = sS(opId, newDate); }
         if (B.fecha !== newDate || B.hora_inicio !== mT(newTime)) {
           const prev = { maquina_id: B.maquina_id, fecha: B.fecha, hora_inicio: B.hora_inicio, estado: B.estado, operario_id: B.operario_id };
           if (!undoBatch.find(u => u.id === B.id)) undoBatch.push({ id: B.id, prev });
@@ -1626,12 +1636,12 @@ function earliestSuccessorStart(actId) {
 // If time is at or past shift end → moves to next working day's start.
 // Returns { date, time }.
 function adjustToWorkingHours(opId, date, time) {
-  const ds = sS(opId);
+  const ds = sS(opId, date);
   const de = sE(opId, date);
   if (time < ds) time = ds;
   if (time >= de) {
     date = nwd(date);
-    time = sS(opId);
+    time = sS(opId, date);
   }
   return { date, time };
 }
@@ -1679,10 +1689,10 @@ function simulateMachinePushOnState(state, placedActId) {
         else if (bDate === aEnd.date && bTime < aEnd.time + GAP) needs = true;
         if (needs) {
           let newDate = aEnd.date, newTime = aEnd.time + GAP;
-          const bShS = sS(B.operario_id);
+          const bShS = sS(B.operario_id, newDate);
           if (newTime < bShS) newTime = bShS;
           const bShE = sE(B.operario_id, newDate);
-          if (newTime >= bShE) { newDate = nwd(newDate); newTime = sS(B.operario_id); }
+          if (newTime >= bShE) { newDate = nwd(newDate); newTime = sS(B.operario_id, newDate); }
           if (B.fecha !== newDate || B.hora_inicio !== mT(newTime)) {
             B.fecha = newDate;
             B.hora_inicio = mT(newTime);
@@ -1720,10 +1730,10 @@ function simulateOpCascadeOnState(state, opId) {
       else if (bDate === endA.date && bTime < endA.time + GAP) needs = true;
       if (needs) {
         let newDate = endA.date, newTime = endA.time + GAP;
-        const bShS = sS(opId);
+        const bShS = sS(opId, newDate);
         if (newTime < bShS) newTime = bShS;
         const bShE = sE(opId, newDate);
-        if (newTime >= bShE) { newDate = nwd(newDate); newTime = sS(opId); }
+        if (newTime >= bShE) { newDate = nwd(newDate); newTime = sS(opId, newDate); }
         if (B.fecha !== newDate || B.hora_inicio !== mT(newTime)) {
           B.fecha = newDate;
           B.hora_inicio = mT(newTime);
@@ -2609,11 +2619,16 @@ function render() {
   const days = getDays();
   const vBlocks = computeVB();
 
-  // v70 Fase 9: las columnas son los operarios con en_tablero=true (ya
-  // filtrados al cargar `ops`), ordenados alfabéticamente por nombre de
-  // display. Antes la lista estaba hardcodeada y se rompía al cambiar nombres.
+  // v70 Fase 16: orden personalizable. Si el operario tiene orden_tablero,
+  // se usa ese (asc). Los que no tienen orden_tablero van al final,
+  // alfabéticos entre sí.
   const colOps = ops.slice()
-    .sort((a, b) => opN(a.id).localeCompare(opN(b.id)))
+    .sort((a, b) => {
+      const oa = (a.orden_tablero === null || a.orden_tablero === undefined) ? Infinity : a.orden_tablero;
+      const ob = (b.orden_tablero === null || b.orden_tablero === undefined) ? Infinity : b.orden_tablero;
+      if (oa !== ob) return oa - ob;
+      return opN(a.id).localeCompare(opN(b.id));
+    })
     .map(o => ({ name: opN(o.id), id: o.id }));
 
   // Assign tracks ONCE across all days so multi-day activities keep their track
@@ -2877,10 +2892,10 @@ function render() {
               let rem = setupTotal, cd = act.fecha, ct = tM(act.hora_inicio), partIdx = 0, safe = 0;
               while (rem > 0 && safe < 30) {
                 safe++;
-                const ds = sS(act.operario_id), de = sE(act.operario_id, cd);
+                const ds = sS(act.operario_id, cd), de = sE(act.operario_id, cd);
                 if (ct < ds) ct = ds;
                 const av = de - ct;
-                if (av <= 0) { cd = nwd(cd); ct = sS(act.operario_id); continue; }
+                if (av <= 0) { cd = nwd(cd); ct = sS(act.operario_id, cd); continue; }
                 const used = Math.min(rem, av);
                 partIdx++;
                 if (partIdx === bl.part) {
@@ -2889,7 +2904,7 @@ function render() {
                 }
                 setupUsedBefore += used;
                 rem -= used;
-                if (rem > 0) { cd = nwd(cd); ct = sS(act.operario_id); } else { ct += used; }
+                if (rem > 0) { cd = nwd(cd); ct = sS(act.operario_id, cd); } else { ct += used; }
               }
               // Si el bloque actual es posterior al setup (partIdx no llego)
               // setupInThisBlock queda 0 -> todo el bloque sera rayado.
@@ -2898,10 +2913,10 @@ function render() {
               let rem = D(act), cd = act.fecha, ct = tM(act.hora_inicio), partIdx = 0, safe = 0;
               while (rem > 0 && safe < 30) {
                 safe++;
-                const ds = sS(act.operario_id), de = sE(act.operario_id, cd);
+                const ds = sS(act.operario_id, cd), de = sE(act.operario_id, cd);
                 if (ct < ds) ct = ds;
                 const av = de - ct;
-                if (av <= 0) { cd = nwd(cd); ct = sS(act.operario_id); continue; }
+                if (av <= 0) { cd = nwd(cd); ct = sS(act.operario_id, cd); continue; }
                 const used = Math.min(rem, av);
                 partIdx++;
                 if (partIdx === bl.part) {
@@ -2912,7 +2927,7 @@ function render() {
                 const remainingSetup = Math.max(0, setupTotal - setupUsedBefore);
                 setupUsedBefore += Math.min(remainingSetup, used);
                 rem -= used;
-                if (rem > 0) { cd = nwd(cd); ct = sS(act.operario_id); } else { ct += used; }
+                if (rem > 0) { cd = nwd(cd); ct = sS(act.operario_id, cd); } else { ct += used; }
               }
             }
 
@@ -2985,10 +3000,10 @@ function render() {
             let rem = setupTotal, cd = act.fecha, ct = tM(act.hora_inicio), partIdx = 0, safe = 0;
             while (rem > 0 && safe < 30) {
               safe++;
-              const ds = sS(act.operario_id), de = sE(act.operario_id, cd);
+              const ds = sS(act.operario_id, cd), de = sE(act.operario_id, cd);
               if (ct < ds) ct = ds;
               const av = de - ct;
-              if (av <= 0) { cd = nwd(cd); ct = sS(act.operario_id); continue; }
+              if (av <= 0) { cd = nwd(cd); ct = sS(act.operario_id, cd); continue; }
               const used = Math.min(rem, av);
               partIdx++;
               if (partIdx === bl.part) {
@@ -2997,7 +3012,7 @@ function render() {
               }
               setupUsedBefore += used;
               rem -= used;
-              if (rem > 0) { cd = nwd(cd); ct = sS(act.operario_id); } else { ct += used; }
+              if (rem > 0) { cd = nwd(cd); ct = sS(act.operario_id, cd); } else { ct += used; }
             }
           } else {
             // SEMI: walk completo respetando jornada
@@ -3005,10 +3020,10 @@ function render() {
             let rem = D(act), cd = act.fecha, ct = tM(act.hora_inicio), partIdx = 0, safe = 0;
             while (rem > 0 && safe < 30) {
               safe++;
-              const ds = sS(act.operario_id), de = sE(act.operario_id, cd);
+              const ds = sS(act.operario_id, cd), de = sE(act.operario_id, cd);
               if (ct < ds) ct = ds;
               const av = de - ct;
-              if (av <= 0) { cd = nwd(cd); ct = sS(act.operario_id); continue; }
+              if (av <= 0) { cd = nwd(cd); ct = sS(act.operario_id, cd); continue; }
               const used = Math.min(rem, av);
               partIdx++;
               if (partIdx === bl.part) {
@@ -3019,7 +3034,7 @@ function render() {
               const remainingSetup = Math.max(0, setupTotal - setupUsedBefore);
               setupUsedBefore += Math.min(remainingSetup, used);
               rem -= used;
-              if (rem > 0) { cd = nwd(cd); ct = sS(act.operario_id); } else { ct += used; }
+              if (rem > 0) { cd = nwd(cd); ct = sS(act.operario_id, cd); } else { ct += used; }
             }
           }
           if (setupInThisBlock <= 0) return;  // no setup in this slice (already past setup)
@@ -4309,10 +4324,10 @@ function showAutoInsertOptions(actId, opId, machId, fecha) {
     let dayEnd = null, started = false;
     while (rem > 0 && safe < 20) {
       safe++;
-      const ds = sS(a.operario_id), de = sE(a.operario_id, cd);
+      const ds = sS(a.operario_id, cd), de = sE(a.operario_id, cd);
       if (ct < ds) ct = ds;
       const av = de - ct;
-      if (av <= 0) { cd = nwd(cd); ct = sS(a.operario_id); continue; }
+      if (av <= 0) { cd = nwd(cd); ct = sS(a.operario_id, cd); continue; }
       const used = Math.min(rem, av);
       if (cd === fecha) {
         // Has a slice on this day; track its end
@@ -4325,7 +4340,7 @@ function showAutoInsertOptions(actId, opId, machId, fecha) {
           // Crosses to next day → skip (not eligible)
           dayEnd = null; break;
         }
-        cd = nwd(cd); ct = sS(a.operario_id);
+        cd = nwd(cd); ct = sS(a.operario_id, cd);
       } else { ct += used; }
     }
     if (dayEnd !== null) dayActs.push({ act: a, endMin: dayEnd });
@@ -4338,7 +4353,7 @@ function showAutoInsertOptions(actId, opId, machId, fecha) {
   h += '<div style="font-size:11px;color:#5F5E5A;margin-bottom:10px">' + opN(opId) + ' tiene el dia completo. Elegi donde colocar esta actividad automatica (su tiempo manual es ' + Dop(act) + ' min):</div>';
 
   // Option 1: start of day
-  const dayStart = sS(opId);
+  const dayStart = sS(opId, fecha);
   h += '<div class="ao" onclick="assignAutoAt(' + actId + ',' + opId + ',' + machId + ',\'' + fecha + '\',' + dayStart + ')">';
   h += '<div class="ao-t">Al inicio de la jornada</div>';
   h += '<div class="ao-s">Arranca a las ' + mT(dayStart) + '</div>';
@@ -4405,7 +4420,7 @@ function tryAssignToMachine(actId, opId, machId, fecha) {
   // Si machId es null (caso "sin maquina"), no hay conflicto de maquina:
   // solo se considera la disponibilidad del operario.
   const machBlocks = machId === null ? [] : dayBlocks(machId, fecha, actId);
-  const dayStart = sS(opId);
+  const dayStart = sS(opId, fecha);
   const dayEnd = sE(opId, fecha);
   const machineLatest = machBlocks.length === 0 ? dayStart : Math.max(...machBlocks.map(b => b.e)) + GAP;
 
@@ -4424,15 +4439,15 @@ function tryAssignToMachine(actId, opId, machId, fecha) {
     let rem = Dop(a), cd = a.fecha, ct = tM(a.hora_inicio), safe = 0;
     while (rem > 0 && safe < 20) {
       safe++;
-      const ds = sS(a.operario_id), de = sE(a.operario_id, cd);
+      const ds = sS(a.operario_id, cd), de = sE(a.operario_id, cd);
       if (ct < ds) ct = ds;
       const av = de - ct;
-      if (av <= 0) { cd = nwd(cd); ct = sS(a.operario_id); continue; }
+      if (av <= 0) { cd = nwd(cd); ct = sS(a.operario_id, cd); continue; }
       const used = Math.min(rem, av);
       if (cd === fecha) opEndsOnDay.push(ct + used);
       if (cd > fecha) break;
       rem -= used;
-      if (rem > 0) { cd = nwd(cd); ct = sS(a.operario_id); } else { ct += used; }
+      if (rem > 0) { cd = nwd(cd); ct = sS(a.operario_id, cd); } else { ct += used; }
     }
   });
   const operatorLatest = opEndsOnDay.length === 0 ? dayStart : Math.max(...opEndsOnDay) + GAP;
@@ -4704,12 +4719,12 @@ function _simNextWorkDay(ds) {
 // Si newTime cae fuera de jornada, mueve al siguiente dia laboral.
 function _simAdjustToWorkingHours(item, newDate, newTime) {
   const opId = item.operario_id;
-  const shS = sS(opId);
+  const shS = sS(opId, newDate);
   if (newTime < shS) newTime = shS;
   const shE = sE(opId, newDate);
   if (newTime >= shE) {
     newDate = _simNextWorkDay(newDate);
-    newTime = sS(opId);
+    newTime = sS(opId, newDate);
   }
   return { date: newDate, time: newTime };
 }
@@ -5953,6 +5968,92 @@ const _dateInputObserver = new MutationObserver((mutations) => {
   });
 });
 _dateInputObserver.observe(document.body, { childList: true, subtree: true });
+
+// v70 Fase 16: modal para reordenar columnas del tablero. Las columnas son
+// los operarios con en_tablero=true. Se muestran como botones horizontales
+// con flechas ← → entre cada par para moverlos.
+let _reorderModalState = null;
+
+function showReorderColsModal() {
+  const prev = document.getElementById('reorder-cols-modal');
+  if (prev) prev.remove();
+  // Tomar el orden actual (mismo criterio que render()).
+  const opsOrdenados = ops.slice().sort((a, b) => {
+    const oa = (a.orden_tablero === null || a.orden_tablero === undefined) ? Infinity : a.orden_tablero;
+    const ob = (b.orden_tablero === null || b.orden_tablero === undefined) ? Infinity : b.orden_tablero;
+    if (oa !== ob) return oa - ob;
+    return opN(a.id).localeCompare(opN(b.id));
+  });
+  _reorderModalState = opsOrdenados.map(o => o.id);
+
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'reorder-cols-modal';
+  const m = document.createElement('div'); m.className = 'md';
+  m.style.maxWidth = '720px';
+  m.innerHTML = '<button class="md-x" onclick="this.closest(\'.mo\').remove()">&times;</button>' +
+    '<div class="md-t">Reordenar columnas del tablero</div>' +
+    '<div style="font-size:12px;color:#5F5E5A;margin-bottom:14px">Usá las flechas para mover cada operario a izquierda o derecha. La columna de la izquierda aparecerá primero en el tablero.</div>' +
+    '<div id="reorder-cols-list" style="margin-bottom:14px"></div>' +
+    '<div style="display:flex;gap:8px;justify-content:flex-end">' +
+    '<button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button>' +
+    '<button class="b" style="background:#0C447C;color:#fff;font-weight:600" onclick="saveReorderCols()">Guardar</button>' +
+    '</div>';
+  bd.appendChild(m);
+  bd.addEventListener('click', e => { if (e.target === bd) bd.remove(); });
+  document.body.appendChild(bd);
+  _renderReorderColsList();
+}
+
+function _renderReorderColsList() {
+  const cont = document.getElementById('reorder-cols-list');
+  if (!cont) return;
+  const ids = _reorderModalState;
+  let h = '<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:10px;background:#F5F3EC;border:1px solid #C8C6BE;border-radius:6px">';
+  ids.forEach((id, idx) => {
+    const isFirst = idx === 0;
+    const isLast = idx === ids.length - 1;
+    h += '<button class="b" onclick="_moveCol(' + idx + ',-1)" ' + (isFirst ? 'disabled' : '') + ' style="font-size:14px;padding:2px 7px;min-width:28px" title="Mover a la izquierda">←</button>';
+    h += '<div style="padding:6px 12px;background:#fff;border:1px solid #C8C6BE;border-radius:4px;font-size:13px;font-weight:600;min-width:90px;text-align:center">' + escapeHtml(opN(id)) + '</div>';
+    h += '<button class="b" onclick="_moveCol(' + idx + ',1)" ' + (isLast ? 'disabled' : '') + ' style="font-size:14px;padding:2px 7px;min-width:28px;margin-right:8px" title="Mover a la derecha">→</button>';
+  });
+  h += '</div>';
+  cont.innerHTML = h;
+}
+
+function _moveCol(idx, dir) {
+  const newIdx = idx + dir;
+  if (newIdx < 0 || newIdx >= _reorderModalState.length) return;
+  const arr = _reorderModalState;
+  [arr[idx], arr[newIdx]] = [arr[newIdx], arr[idx]];
+  _renderReorderColsList();
+}
+
+async function saveReorderCols() {
+  if (!_reorderModalState) return;
+  showSpinner && showSpinner('Guardando orden...');
+  try {
+    // Asignar orden_tablero = posición (0-indexed) a cada operario.
+    const updates = _reorderModalState.map((id, idx) =>
+      sb.from('operarios').update({ orden_tablero: idx }).eq('id', id)
+    );
+    const results = await Promise.all(updates);
+    const errors = results.filter(r => r.error);
+    if (errors.length) {
+      toast('Error al guardar: ' + errors[0].error.message, true);
+      return;
+    }
+    // Actualizar local.
+    _reorderModalState.forEach((id, idx) => {
+      const o = ops.find(x => x.id === id);
+      if (o) o.orden_tablero = idx;
+    });
+    const modal = document.getElementById('reorder-cols-modal');
+    if (modal) modal.remove();
+    toast('Orden actualizado');
+    render();
+  } finally {
+    hideSpinner && hideSpinner();
+  }
+}
 
 init();
 </script>

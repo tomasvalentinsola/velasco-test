@@ -15797,11 +15797,26 @@ function showOperarioForm(operarioId) {
   h += '<input type="text" class="ef-i" id="rh-apellido" value="' + escapeHtml(o ? (o.apellido || '') : '') + '"></div>';
   h += '</div>';
   h += '<div class="row">';
-  h += '<div class="ef" style="flex:1"><div class="ef-l">Horario de entrada</div>';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Horario de entrada (lun-vie)</div>';
   h += '<input type="time" class="ef-i" id="rh-entrada" value="' + escapeHtml(o ? (o.horario_entrada || '') : '') + '"></div>';
-  h += '<div class="ef" style="flex:1"><div class="ef-l">Horario de salida</div>';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Horario de salida (lun-vie)</div>';
   h += '<input type="time" class="ef-i" id="rh-salida" value="' + escapeHtml(o ? (o.horario_salida || '') : '') + '"></div>';
   h += '</div>';
+  // v70 Fase 16: horario sábado independiente. Si "No trabaja sábados" está
+  // activo, los inputs quedan deshabilitados y los valores se guardan como NULL.
+  // Por defecto: marca como NO trabaja sábado si la persona no tiene horario_sabado_inicio.
+  const _sabIni = o ? (o.horario_sabado_inicio || '') : '';
+  const _sabFin = o ? (o.horario_sabado_fin || '') : '';
+  const _noTrabajaSab = o ? (!_sabIni && !_sabFin) : false;
+  h += '<div class="ef" style="background:#F5F3EC;border:1px solid #C8C6BE;border-radius:5px;padding:8px 11px">';
+  h += '<label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:12px;margin-bottom:6px">';
+  h += '<input type="checkbox" id="rh-no-sab"' + (_noTrabajaSab ? ' checked' : '') + ' onchange="_rhToggleSab()"> No trabaja sábados</label>';
+  h += '<div class="row" style="margin-top:4px">';
+  h += '<div class="ef" style="flex:1;margin-bottom:0"><div class="ef-l">Horario sábado entrada</div>';
+  h += '<input type="time" class="ef-i" id="rh-sab-ini" value="' + escapeHtml(_sabIni || '08:00') + '"' + (_noTrabajaSab ? ' disabled style="background:#E8E6DF;color:#9A9890"' : '') + '></div>';
+  h += '<div class="ef" style="flex:1;margin-bottom:0"><div class="ef-l">Horario sábado salida</div>';
+  h += '<input type="time" class="ef-i" id="rh-sab-fin" value="' + escapeHtml(_sabFin || '12:00') + '"' + (_noTrabajaSab ? ' disabled style="background:#E8E6DF;color:#9A9890"' : '') + '></div>';
+  h += '</div></div>';
   h += '<div class="ef"><label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:13px">';
   h += '<input type="checkbox" id="rh-tablero"' + (!o || o.en_tablero ? ' checked' : '') + '> Aparece en el tablero</label>';
   h += '<div class="ef-help" style="font-size:10px">Destildá esta opción para personal que no se planifica en el tablero (administración, dirección).</div></div>';
@@ -15872,6 +15887,25 @@ function _colorBordeLibre() {
   return libre || paleta[0];
 }
 
+// v70 Fase 16: alterna habilitación de los inputs de horario sábado según
+// el checkbox "No trabaja sábados".
+function _rhToggleSab() {
+  const noSab = document.getElementById('rh-no-sab');
+  const ini = document.getElementById('rh-sab-ini');
+  const fin = document.getElementById('rh-sab-fin');
+  if (!noSab || !ini || !fin) return;
+  const disabled = !!noSab.checked;
+  ini.disabled = disabled;
+  fin.disabled = disabled;
+  if (disabled) {
+    ini.style.background = '#E8E6DF'; ini.style.color = '#9A9890';
+    fin.style.background = '#E8E6DF'; fin.style.color = '#9A9890';
+  } else {
+    ini.style.background = ''; ini.style.color = '';
+    fin.style.background = ''; fin.style.color = '';
+  }
+}
+
 // v70 Fase 9b: las dos casillas (Ideal / Suplente) de una máquina funcionan
 // como radios: al marcar una, se desmarca la otra.
 function _rhMaqRolChange(maqId, rol) {
@@ -15887,6 +15921,11 @@ async function guardarOperario(operarioId) {
   const apellido = (document.getElementById('rh-apellido').value || '').trim() || null;
   const entrada = document.getElementById('rh-entrada').value || null;
   const salida = document.getElementById('rh-salida').value || null;
+  // v70 Fase 16: horarios sábado. Si "No trabaja sábados" está marcado,
+  // se guardan como NULL.
+  const noSab = !!(document.getElementById('rh-no-sab') && document.getElementById('rh-no-sab').checked);
+  const sabIni = noSab ? null : (document.getElementById('rh-sab-ini').value || null);
+  const sabFin = noSab ? null : (document.getElementById('rh-sab-fin').value || null);
   const enTablero = document.getElementById('rh-tablero').checked;
   // Leer los tres checklists.
   const maqIdealIds = [...document.querySelectorAll('.rh-maq-ideal-cb:checked')].map(c => parseInt(c.value));
@@ -15909,6 +15948,8 @@ async function guardarOperario(operarioId) {
       const payload = {
         nombre: nombre, apellido: apellido,
         horario_entrada: entrada, horario_salida: salida,
+        // v70 Fase 16: horario sábado (puede ser NULL si no trabaja sábados).
+        horario_sabado_inicio: sabIni, horario_sabado_fin: sabFin,
         en_tablero: enTablero, procesos: procNombres.length ? procNombres : null
       };
       if (operarioId) {
