@@ -3460,6 +3460,14 @@ function showEdit(act, bl) {
     }
     extraBtns += '<button class="b" id="ed-ignore-ot" style="background:#fff;color:#5F5E5A;border-color:#C8C6BE">Ignorar</button>';
   }
+  // v70 Fase 17: si la actividad NO está completada, ofrecer botón "Hecho".
+  // Si SÍ lo está, mantener el botón Desanclar existente.
+  let hechoRowHtml = '';
+  if (act.estado !== 'completada' && !act.es_pulmon) {
+    hechoRowHtml = '<div style="display:flex;gap:8px;margin-top:12px;padding-top:12px;border-top:1px solid #E8E6DF">' +
+      '<button class="b" id="ed-hecho" style="background:#D4EDDA;color:#155724;border-color:#28A745;font-weight:600">✓ Marcar como hecho</button>' +
+      '</div>';
+  }
   // v70 Fase 10c: si la actividad está anclada (completada), agregar el
   // botón Desanclar para volverla al estado planificable.
   if (act.estado === 'completada') {
@@ -3478,11 +3486,17 @@ function showEdit(act, bl) {
       '<button class="b b-p" id="ed-save">Guardar</button>' +
       extraBtns +
       '<button class="b" style="color:#A32D2D;border-color:#E24B4A" id="ed-remove">Quitar</button>' +
-    '</div>';
+    '</div>' +
+    hechoRowHtml;
   bd.appendChild(m); document.body.appendChild(bd);
 
   document.getElementById('ed-save').onclick = () => { saveEdit(act.id); bd.remove(); };
   document.getElementById('ed-remove').onclick = () => { removeAct(act.id); bd.remove(); };
+  // v70 Fase 17: botón "Hecho" abre el modal de marcar como completado.
+  const hechoBtn = document.getElementById('ed-hecho');
+  if (hechoBtn) {
+    hechoBtn.onclick = () => { bd.remove(); marcarProcesoHecho(act.id); };
+  }
   // v70 Fase 10c: desanclar una actividad completada (vuelve a planificable).
   const desBtn = document.getElementById('ed-desanclar');
   if (desBtn) {
@@ -6053,6 +6067,178 @@ async function saveReorderCols() {
     const modal = document.getElementById('reorder-cols-modal');
     if (modal) modal.remove();
     toast('Orden actualizado');
+    render();
+  } finally {
+    if (typeof hideSpinner === 'function') hideSpinner();
+  }
+}
+
+// v70 Fase 17: portado desde proyectos_v70.html (funciones marcarProcesoHecho /
+// _mphGuardar / _mostrarModalFinalizarItem / _finalizarItemGuardar). En esta
+// versión del sistema (dos archivos HTML separados) no hay forma técnica de
+// compartir código entre proyectos.html y tablero.html, así que se duplica.
+// CUANDO MIGREMOS A REACT: estas funciones tienen que vivir en un módulo
+// compartido (ej. src/lib/procesos.ts) y consumirse desde ambas pantallas.
+// Diferencias respecto a proyectos:
+//   - actividades → acts
+//   - loadAll() → recargar acts + items directamente
+//   - showSpinner/hideSpinner guarded con typeof
+//   - makeModalDraggable omitido
+
+function marcarProcesoHecho(procesoId) {
+  const p = acts.find(a => a.id === procesoId);
+  if (!p) { toast('Proceso no encontrado', true); return; }
+  if (p.estado === 'completada') { toast('Ya está marcado como hecho', true); return; }
+
+  const estaPlanificado = p.estado && p.estado !== 'sin_planificar' && p.fecha !== '1900-01-01';
+  const hoyIso = new Date().toISOString().slice(0, 10);
+  const fechaIniPre = estaPlanificado ? p.fecha : hoyIso;
+  const horaIniPre = estaPlanificado ? (p.hora_inicio || '06:00').substring(0, 5) : '';
+  let fechaFinPre = fechaIniPre;
+  let horaFinPre = '';
+  if (estaPlanificado && p.hora_inicio && p.duracion_planificador_min) {
+    const [hh, mm] = p.hora_inicio.split(':').map(x => parseInt(x));
+    const totalMinAbs = hh * 60 + mm + p.duracion_planificador_min;
+    const diasExtra = Math.floor(totalMinAbs / (24 * 60));
+    const minDelDiaFin = totalMinAbs % (24 * 60);
+    const fh = Math.floor(minDelDiaFin / 60), fm = minDelDiaFin % 60;
+    horaFinPre = String(fh).padStart(2, '0') + ':' + String(fm).padStart(2, '0');
+    if (diasExtra > 0) {
+      const baseDate = new Date(p.fecha + 'T00:00:00');
+      baseDate.setDate(baseDate.getDate() + diasExtra);
+      fechaFinPre = baseDate.toISOString().slice(0, 10);
+    }
+  }
+
+  const prev = document.getElementById('hecho-modal');
+  if (prev) prev.remove();
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'hecho-modal';
+  bd.addEventListener('click', e => { if (e.target === bd) bd.remove(); });
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '460px';
+
+  const descBase = p.proceso || p.descripcion || '';
+  let h = '<button class="md-x" onclick="this.closest(\'.mo\').remove()">&times;</button>';
+  h += '<div class="md-t">Marcar proceso como hecho</div>';
+  h += '<div style="font-size:12px;color:#5F5E5A;margin-bottom:10px">' + escapeHtml(descBase) + '</div>';
+  if (!estaPlanificado) {
+    h += '<div style="background:#FFF8E1;color:#854F0B;padding:7px 11px;border-radius:5px;margin-bottom:10px;font-size:11px;border:1px solid #FFE5A0">Este proceso no estaba planificado. Podés dejar los tiempos en blanco si no los conocés.</div>';
+  } else {
+    h += '<div style="background:#E6F1FB;color:#0C447C;padding:7px 11px;border-radius:5px;margin-bottom:10px;font-size:11px;border:1px solid #A8C8E8">Los campos vienen con los tiempos planificados. Ajustá si la realidad fue distinta.</div>';
+  }
+  h += '<div style="font-weight:600;font-size:11px;color:#5F5E5A;margin-bottom:4px">Inicio</div>';
+  h += '<div style="display:flex;gap:8px;margin-bottom:10px">';
+  h += '<div class="ef" style="flex:2"><div class="ef-l">Fecha</div>';
+  h += '<input type="date" class="ef-i" id="mph-fecha-ini" value="' + escapeHtml(fechaIniPre) + '"></div>';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Hora</div>';
+  h += '<input type="time" class="ef-i" id="mph-hini" value="' + escapeHtml(horaIniPre) + '"></div>';
+  h += '</div>';
+  h += '<div style="font-weight:600;font-size:11px;color:#5F5E5A;margin-bottom:4px">Fin</div>';
+  h += '<div style="display:flex;gap:8px;margin-bottom:10px">';
+  h += '<div class="ef" style="flex:2"><div class="ef-l">Fecha</div>';
+  h += '<input type="date" class="ef-i" id="mph-fecha-fin" value="' + escapeHtml(fechaFinPre) + '"></div>';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Hora</div>';
+  h += '<input type="time" class="ef-i" id="mph-hfin" value="' + escapeHtml(horaFinPre) + '"></div>';
+  h += '</div>';
+  h += '<div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end">';
+  h += '<button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button>';
+  h += '<button class="b" style="background:#0C447C;color:#fff;font-weight:600" onclick="_mphGuardar(' + procesoId + ')">Marcar como hecho</button></div>';
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd);
+}
+
+async function _mphGuardar(procesoId) {
+  const fechaIni = document.getElementById('mph-fecha-ini').value || null;
+  const horaIni = document.getElementById('mph-hini').value || null;
+  const fechaFin = document.getElementById('mph-fecha-fin').value || null;
+  const horaFin = document.getElementById('mph-hfin').value || null;
+  if (fechaIni && horaIni && fechaFin && horaFin) {
+    const dIni = new Date(fechaIni + 'T' + horaIni);
+    const dFin = new Date(fechaFin + 'T' + horaFin);
+    if (dFin < dIni) {
+      toast('El fin no puede ser anterior al inicio', true);
+      return;
+    }
+  }
+  if (typeof showSpinner === 'function') showSpinner('Marcando como hecho...');
+  try {
+    const payload = {
+      estado: 'completada',
+      estado_proceso: 'Cerrado',
+      fecha_real: fechaIni,
+      hora_real_inicio: horaIni,
+      fecha_real_fin: fechaFin,
+      hora_real_fin: horaFin
+    };
+    const { error } = await sb.from('actividades_tablero').update(payload).eq('id', procesoId);
+    if (error) { toast('Error: ' + error.message, true); return; }
+    // Recargar acts e items localmente (el tablero no tiene loadAll() global).
+    const { data: aD } = await sb.from('actividades_tablero').select('*');
+    acts = (aD || []).map(_normalizeActNumbers);
+    const { data: iD } = await sb.from('items').select('*');
+    items = iD || [];
+    toast('Proceso marcado como hecho');
+    const modal = document.getElementById('hecho-modal');
+    if (modal) modal.remove();
+    // ¿Era el último proceso pendiente del item?
+    const procActual = acts.find(a => a.id === procesoId);
+    if (procActual && procActual.item_id) {
+      const procsHermanos = acts.filter(a => a.item_id === procActual.item_id && !a.proceso_eliminado);
+      const pendientes = procsHermanos.filter(a => a.estado !== 'completada');
+      const itemActual = items.find(i => i.id === procActual.item_id);
+      const yaFinalizado = itemActual && ['Terminado', 'Stockeado', 'Enviado', 'Anulado'].includes(itemActual.estado);
+      if (pendientes.length === 0 && itemActual && !yaFinalizado) {
+        _mostrarModalFinalizarItem(itemActual);
+      } else {
+        render();
+      }
+    } else {
+      render();
+    }
+  } finally {
+    if (typeof hideSpinner === 'function') hideSpinner();
+  }
+}
+
+function _mostrarModalFinalizarItem(item) {
+  const prev = document.getElementById('finitem-modal');
+  if (prev) prev.remove();
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'finitem-modal';
+  bd.addEventListener('click', e => { if (e.target === bd) bd.remove(); });
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '420px';
+  let h = '<button class="md-x" onclick="this.closest(\'.mo\').remove()">&times;</button>';
+  h += '<div class="md-t">Item con todos los procesos hechos</div>';
+  h += '<div style="font-size:12px;color:#5F5E5A;margin-bottom:12px"><b>' + escapeHtml(item.descripcion || '(sin descripción)') + '</b><br>Se completó el último proceso pendiente. ¿Qué estado le ponés al item?</div>';
+  const opciones = [
+    { val: 'Terminado', label: 'Terminado', desc: 'El item está listo, pendiente de envío o stockeo.' },
+    { val: 'Stockeado', label: 'Stockeado', desc: 'El item quedó guardado en stock.' },
+    { val: 'Enviado',   label: 'Enviado',   desc: 'El item ya se entregó al cliente.' }
+  ];
+  opciones.forEach((op, i) => {
+    h += '<label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;padding:10px 12px;border:1px solid #C8C6BE;border-radius:5px;margin-bottom:6px;background:#fff">';
+    h += '<input type="radio" name="finitem-estado" value="' + op.val + '"' + (i === 0 ? ' checked' : '') + ' style="margin-top:2px">';
+    h += '<div style="flex:1"><div style="font-weight:600;font-size:13px">' + op.label + '</div>';
+    h += '<div style="font-size:11px;color:#5F5E5A">' + op.desc + '</div></div></label>';
+  });
+  h += '<div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end">';
+  h += '<button class="b" onclick="document.getElementById(\'finitem-modal\').remove(); render();">Dejar como está</button>';
+  h += '<button class="b" style="background:#0C447C;color:#fff;font-weight:600" onclick="_finalizarItemGuardar(' + item.id + ')">Aplicar</button>';
+  h += '</div>';
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd);
+}
+
+async function _finalizarItemGuardar(itemId) {
+  const radios = document.querySelectorAll('input[name="finitem-estado"]');
+  let nuevo = null;
+  radios.forEach(r => { if (r.checked) nuevo = r.value; });
+  if (!nuevo) { toast('Elegí un estado', true); return; }
+  if (typeof showSpinner === 'function') showSpinner('Actualizando estado del item...');
+  try {
+    const { error } = await sb.from('items').update({ estado: nuevo }).eq('id', itemId);
+    if (error) { toast('Error: ' + error.message, true); return; }
+    const { data: iD } = await sb.from('items').select('*');
+    items = iD || [];
+    const modal = document.getElementById('finitem-modal');
+    if (modal) modal.remove();
+    toast('Item actualizado a "' + nuevo + '"');
     render();
   } finally {
     if (typeof hideSpinner === 'function') hideSpinner();
