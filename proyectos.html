@@ -3650,6 +3650,41 @@ async function saveProjectState(projectId) {
     return;
   }
 
+  // v70 Fase 17: Perdido solo se permite desde Proyectando o Solicitud.
+  // Una vez que el proyecto pasó a Pedido (o más allá), no se puede "perder":
+  // Perdido es para cuando un presupuesto no se concretó en venta.
+  if (newEstado === 'Perdido' && proj.estado !== 'Proyectando' && proj.estado !== 'Solicitud') {
+    toast('No se puede cambiar a "Perdido" desde "' + proj.estado + '". "Perdido" solo aplica a proyectos que estaban en presupuesto.', true);
+    return;
+  }
+
+  // v70 Fase 17: si se está cerrando el proyecto y hay items con remito
+  // incompleto, mostrar lista y dejar elegir cancelar / cerrar igualmente.
+  // Se hace ANTES del flujo de "procesos abiertos" para que el usuario vea
+  // el problema más relevante primero (los remitos son un dato de negocio,
+  // los procesos abiertos son operativos).
+  if (newEstado === 'Cerrado') {
+    const itemsPendientesRemito = _itemsConRemitoIncompleto(projectId);
+    if (itemsPendientesRemito.length > 0) {
+      const modal = document.getElementById('state-modal');
+      if (modal) modal.remove();
+      _mostrarModalRemitosFaltantes(projectId, itemsPendientesRemito, () => {
+        // Si el usuario eligió "Cerrar igualmente", continuar con el flujo normal.
+        _abrirModalCerrarProyecto(projectId, async () => {
+          const payload = {
+            estado: newEstado, sub_estado_cerrado: newSub, observaciones_anulacion: newObs
+          };
+          if (pedidoNew) payload.pedido_nro = pedidoNew;
+          await sb.from('proyectos').update(payload).eq('id', projectId);
+          await loadAll();
+          toast('Estado actualizado');
+          render();
+        });
+      });
+      return;
+    }
+  }
+
   // Función que termina de aplicar el cambio (se llama desde varios caminos).
   const aplicarCambioEstado = async () => {
     const payload = {
@@ -7372,10 +7407,140 @@ async function _finalizarItemGuardar(itemId) {
     const modal = document.getElementById('finitem-modal');
     if (modal) modal.remove();
     toast('Item actualizado a "' + nuevo + '"');
+    // v70 Fase 17: si todos los items del proyecto quedaron en estado terminal
+    // (Terminado / Stockeado / Enviado / Anulado), ofrecer cerrar el proyecto.
+    const itemActual = items.find(i => i.id === itemId);
+    if (itemActual && itemActual.proyecto_id) {
+      const proyectoActual = proyectos.find(p => p.id === itemActual.proyecto_id);
+      // Solo si el proyecto no estaba ya en estado terminal.
+      const estadosTerminalesProyecto = ['Cerrado', 'Anulado', 'Perdido'];
+      if (proyectoActual && !estadosTerminalesProyecto.includes(proyectoActual.estado)) {
+        const itemsDelProyecto = items.filter(i => i.proyecto_id === proyectoActual.id);
+        const estadosTerminales = ['Terminado', 'Stockeado', 'Enviado', 'Anulado'];
+        const todosTerminados = itemsDelProyecto.length > 0 &&
+          itemsDelProyecto.every(i => estadosTerminales.includes(i.estado));
+        if (todosTerminados) {
+          _mostrarModalCerrarProyecto(proyectoActual);
+          return;
+        }
+      }
+    }
     render();
   } finally {
     hideSpinner();
   }
+}
+
+// v70 Fase 17: cuando se finaliza el último item de un proyecto, ofrecer
+// cerrar el proyecto. Si hay items no remitidos (con cantidad pendiente),
+// mostrar listado y dejar elegir entre cancelar o cerrar igualmente.
+function _mostrarModalCerrarProyecto(proyecto) {
+  const prev = document.getElementById('cerrarproy-modal');
+  if (prev) prev.remove();
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'cerrarproy-modal';
+  bd.addEventListener('click', e => { if (e.target === bd) { bd.remove(); render(); } });
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '480px';
+  let h = '<button class="md-x" onclick="document.getElementById(\'cerrarproy-modal\').remove(); render();">&times;</button>';
+  h += '<div class="md-t">Proyecto completado</div>';
+  h += '<div style="font-size:12px;color:#5F5E5A;margin-bottom:14px">Todos los items del proyecto <b>' + escapeHtml(proyecto.descripcion || '(sin descripción)') + '</b> están en estado terminal. ¿Querés cerrar el proyecto?</div>';
+  h += '<div style="display:flex;gap:8px;justify-content:flex-end">';
+  h += '<button class="b" onclick="document.getElementById(\'cerrarproy-modal\').remove(); render();">Dejar como está</button>';
+  h += '<button class="b" style="background:#0C447C;color:#fff;font-weight:600" onclick="_intentarCerrarProyecto(' + proyecto.id + ')">Cerrar proyecto</button>';
+  h += '</div>';
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd);
+}
+
+// v70 Fase 17: intentar cerrar el proyecto desde el flujo "último item completado".
+// Si hay items con cantidad pendiente de remitir, mostrar listado y ofrecer
+// "Cancelar" o "Cerrar igualmente". Si todo OK, dispara el flujo estándar
+// (_abrirModalCerrarProyecto que se encarga de procesos abiertos también).
+async function _intentarCerrarProyecto(proyectoId) {
+  const proyecto = proyectos.find(p => p.id === proyectoId);
+  if (!proyecto) return;
+  // Cerrar el modal "Proyecto completado" antes de seguir.
+  const modalCompletado = document.getElementById('cerrarproy-modal');
+  if (modalCompletado) modalCompletado.remove();
+  const aplicarCierre = async () => {
+    showSpinner('Cerrando proyecto...');
+    try {
+      const { error } = await sb.from('proyectos').update({ estado: 'Cerrado' }).eq('id', proyectoId);
+      if (error) { toast('Error: ' + error.message, true); return; }
+      await loadAll();
+      toast('Proyecto cerrado');
+      render();
+    } finally {
+      hideSpinner();
+    }
+  };
+  const itemsPendientesRemito = _itemsConRemitoIncompleto(proyectoId);
+  if (itemsPendientesRemito.length > 0) {
+    _mostrarModalRemitosFaltantes(proyectoId, itemsPendientesRemito, () => {
+      _abrirModalCerrarProyecto(proyectoId, aplicarCierre);
+    });
+    return;
+  }
+  _abrirModalCerrarProyecto(proyectoId, aplicarCierre);
+}
+
+// v70 Fase 17: devuelve lista de items del proyecto con remitos incompletos.
+// Excluye retrabajos, dispositivos y anulados (no se entregan al cliente).
+function _itemsConRemitoIncompleto(proyectoId) {
+  const remitidoMap = _neRemitidoPorProyecto(proyectoId, null);
+  const itemsDelProyecto = items.filter(i => i.proyecto_id === proyectoId);
+  const resultado = [];
+  itemsDelProyecto.forEach(item => {
+    if (item.es_retrabajo) return;
+    if (item.es_dispositivo) return;
+    if (item.estado === 'Anulado') return;
+    // Si el item es parte de un grupo/conjunto, se contabiliza por grupo (refKey = 'grupo:UID').
+    const refKey = item.grupo_uid ? ('grupo:' + item.grupo_uid) : ('item:' + item.id);
+    const total = item.grupo_uid ? (item.grupo_cantidad || 1) : (item.cantidad || 1);
+    // Si es parte de grupo, solo agregar al resultado una vez por grupo.
+    if (item.grupo_uid) {
+      if (resultado.find(r => r.refKey === refKey)) return;
+    }
+    const remitido = remitidoMap[refKey] || 0;
+    if (remitido < total) {
+      resultado.push({
+        refKey: refKey,
+        descripcion: item.grupo_uid ? (item.grupo_etiqueta || 'Conjunto') : (item.descripcion || '(sin descripción)'),
+        total: total,
+        remitido: remitido,
+        faltante: total - remitido
+      });
+    }
+  });
+  return resultado;
+}
+
+// v70 Fase 17: modal mostrado cuando se intenta cerrar un proyecto desde el
+// cambio de estado y hay items sin remito completo. Permite cancelar o
+// avanzar (continuando con el flujo normal de cerrar proyecto).
+function _mostrarModalRemitosFaltantes(proyectoId, itemsPendientesRemito, onAvanzar) {
+  const prev = document.getElementById('cerrarproy-modal');
+  if (prev) prev.remove();
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'cerrarproy-modal';
+  bd.addEventListener('click', e => { if (e.target === bd) { bd.remove(); render(); } });
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '540px';
+  let h = '<button class="md-x" onclick="document.getElementById(\'cerrarproy-modal\').remove(); render();">&times;</button>';
+  h += '<div class="md-t">Items sin remito completo</div>';
+  h += '<div style="font-size:12px;color:#5F5E5A;margin-bottom:10px">El proyecto tiene items que todavía no fueron remitidos en su totalidad. Si lo cerrás igual, esos items quedan como "no entregados".</div>';
+  h += '<div style="background:#FEF0F0;border:1px solid #FEDADA;border-radius:5px;padding:10px;margin-bottom:14px;max-height:240px;overflow:auto">';
+  itemsPendientesRemito.forEach(info => {
+    h += '<div style="font-size:11px;color:#3F3E3A;padding:3px 0;border-top:1px solid #FEDADA">';
+    h += '<b>' + escapeHtml(info.descripcion) + '</b> — Remitido ' + info.remitido + ' de ' + info.total + ' (faltan ' + info.faltante + ')';
+    h += '</div>';
+  });
+  h += '</div>';
+  h += '<div style="display:flex;gap:8px;justify-content:flex-end">';
+  h += '<button class="b" onclick="document.getElementById(\'cerrarproy-modal\').remove(); render();">Cancelar cierre</button>';
+  h += '<button class="b" style="background:#A32D2D;color:#fff;font-weight:600" id="cerrarproy-avanzar">Cerrar igualmente</button>';
+  h += '</div>';
+  m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd);
+  document.getElementById('cerrarproy-avanzar').onclick = () => {
+    bd.remove();
+    onAvanzar();
+  };
 }
 
 // Devuelve un proceso completado al estado planificado. Limpia los tiempos
