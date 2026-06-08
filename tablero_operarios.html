@@ -4760,15 +4760,15 @@ function _simApplyChange(state, change) {
 
 // Devuelve el end de OPERARIO de un item del state (Dop respetando jornada).
 function _simEndOp(item) {
-  // v70 Fase 17: completadas no se proyectan al futuro (ver _simEndMach).
-  if (item.estado === 'completada') {
-    if (item.fecha_real_fin && item.hora_real_fin) {
-      return { date: item.fecha_real_fin, time: tM(item.hora_real_fin) };
-    }
-    return { date: item.fecha, time: tM(item.hora_inicio) };
-  }
-  // Operario ocupado por Dop minutos, respetando jornada.
-  let rem = Dop(item), cd = item.fecha, ct = tM(item.hora_inicio), safe = 0;
+  // v70 Fase 17: para completadas, calcular fin de operario desde la fecha/hora
+  // REAL de inicio (fecha_real / hora_real_inicio) + Dop, respetando jornada.
+  // No usamos fecha_real_fin porque eso es fin de MÁQUINA — para semi/auto el
+  // operario se libera mucho antes (al terminar el setup).
+  const isCompletada = item.estado === 'completada';
+  let rem = Dop(item);
+  let cd = isCompletada && item.fecha_real ? item.fecha_real : item.fecha;
+  let ct = isCompletada && item.hora_real_inicio ? tM(item.hora_real_inicio) : tM(item.hora_inicio);
+  let safe = 0;
   while (rem > 0 && safe < 30) {
     safe++;
     const ds = sS(item.operario_id), de = sE(item.operario_id, cd);
@@ -4786,14 +4786,21 @@ function _simEndOp(item) {
 // Devuelve el end de MAQUINA de un item del state (D total respetando reglas
 // del tipo: auto-24/7 corre calendar, semi/manual respetan jornada).
 function _simEndMach(item) {
-  // v70 Fase 17: completadas no extienden al futuro. Si tienen tiempos
-  // reales registrados, los usamos. Si no, asumimos puntual en fecha+hora
-  // (no sumamos duración planificada, que sería falsa y mandaría al futuro).
+  // v70 Fase 17: para completadas, el fin de máquina es fecha_real_fin /
+  // hora_real_fin si están registrados. Si no están completos (caso legacy
+  // o marcado a medias), calculamos desde la hora real de inicio + duración,
+  // no desde la planificada (que puede ser muy distinta de cuando realmente
+  // pasó).
   if (item.estado === 'completada') {
     if (item.fecha_real_fin && item.hora_real_fin) {
       return { date: item.fecha_real_fin, time: tM(item.hora_real_fin) };
     }
-    return { date: item.fecha, time: tM(item.hora_inicio) };
+    // Fallback: calcular desde inicio real + duración, respetando jornada.
+    const startDate = item.fecha_real || item.fecha;
+    const startTime = item.hora_real_inicio || item.hora_inicio;
+    // Hacemos una versión "virtual" del item para reusar realEnd.
+    const virt = Object.assign({}, item, { fecha: startDate, hora_inicio: startTime });
+    return realEnd(virt);
   }
   // Reusa realEnd que ya tiene la logica correcta para los 3 tipos
   return realEnd(item);
