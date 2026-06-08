@@ -4133,6 +4133,11 @@ function itCargarMaterial(initialName) {
   showCargarMaterial(initialName, 'i-material');
 }
 
+// v70 Fase 17: para el form "Crear entidad" en matriz de productos.
+function ceCargarMaterial(initialName) {
+  showCargarMaterial(initialName, 'ce-material');
+}
+
 // ----- Modal "Asignar compatibilidad" para item -----
 // Igual al de producto matriz. Solo cambia el destino: itFormState en lugar de pmFormState.
 let itCompatState = null;
@@ -11342,11 +11347,16 @@ function _ceCamposHtml() {
     h += '<div class="ef" style="flex:1"><div class="ef-l">Código de cliente</div>';
     h += '<input type="text" class="ef-i" id="ce-cod"></div>';
     h += '<div class="ef" style="flex:1"><div class="ef-l">Material</div>';
-    h += '<select class="ef-i" id="ce-material"><option value="">(Sin material)</option>';
-    materiales.slice().sort((a, b) => (a.nombre || '').localeCompare(b.nombre || '')).forEach(mat => {
-      h += '<option value="' + mat.id + '">' + escapeHtml(mat.nombre) + '</option>';
+    h += renderPicker({
+      id: 'ce-material',
+      value: null,
+      valueLabel: '',
+      placeholder: 'Buscar o cargar nuevo...',
+      options: materiales.filter(x => x.activo !== false).map(x => ({ id: x.id, label: x.nombre })),
+      onCreateLabel: '+ Cargar nuevo material',
+      onCreateFnName: 'ceCargarMaterial'
     });
-    h += '</select></div>';
+    h += '</div>';
     h += '</div>';
     h += '<div class="ef"><div class="ef-l">Presentación de materia prima</div>';
     h += '<input type="text" class="ef-i" id="ce-presentacion" placeholder="Ej. Redondo Ø50"></div>';
@@ -11523,7 +11533,7 @@ async function _ceCrear() {
       const desc = (document.getElementById('ce-desc').value || '').trim();
       if (!desc) { toast('La descripción es obligatoria', true); return; }
       const codigo = (document.getElementById('ce-cod').value || '').trim() || null;
-      const matVal = document.getElementById('ce-material').value;
+      const matVal = (document.getElementById('ce-material-value') || {}).value;
       const materialId = matVal ? parseInt(matVal) : null;
       const presentacion = (document.getElementById('ce-presentacion').value || '').trim() || null;
       const { data, error } = await sb.from('productos_matriz').insert({
@@ -15830,9 +15840,22 @@ function _neSeccionProyectoHtml(projId) {
   }
   notas.forEach(n => {
     const cant = Array.isArray(n.items) ? n.items.length : 0;
+    // v70 Fase 17: priorizar el número impreso (cargado a mano por el usuario,
+    // tipo "0001-00001053") en negrita. El número interno del sistema va al
+    // lado, entre paréntesis y en cursiva. Si no hay número impreso, se
+    // muestra solo el interno en negrita.
+    const impreso = (n.numero_impreso || '').trim();
+    const interno = (n.numero || '').trim();
+    let labelHtml;
+    if (impreso) {
+      labelHtml = '<span style="font-weight:700">' + escapeHtml(impreso) + '</span>' +
+        (interno ? ' <span style="font-style:italic;color:#5F5E5A;font-weight:400">(' + escapeHtml(interno) + ')</span>' : '');
+    } else {
+      labelHtml = '<span style="font-weight:700">' + escapeHtml(interno) + '</span>';
+    }
     h += '<div style="display:flex;align-items:center;gap:10px;padding:7px 12px;background:#fff;border:1px solid #E8E6DF;border-radius:4px;margin-bottom:5px">';
     h += '<div style="flex:1;min-width:0">';
-    h += '<div style="font-size:13px;font-weight:700">' + escapeHtml(n.numero || '') + '</div>';
+    h += '<div style="font-size:13px">' + labelHtml + '</div>';
     h += '<div style="font-size:11px;color:#5F5E5A">' + escapeHtml(_neFmtFechaCorta(n.fecha)) + ' · ' + cant + ' ítem(s)</div>';
     h += '</div>';
     h += '<button class="b b-icon" onclick="_neVerPdf(' + n.id + ')" title="Abrir el PDF en otra pestaña">Ver PDF</button>';
