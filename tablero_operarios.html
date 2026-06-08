@@ -4959,18 +4959,22 @@ function simulateChange(changes, options) {
   //    d) Verificar correlatividades.
   //    Si nada cambio, terminar. Si en a) se elimino algo, b/c/d se aplican
   //    igual.
+  const _DBG = window._motorDebug === true;
+  const _dbg127 = () => state.get(127) ? `#127 ${state.get(127).fecha} ${state.get(127).hora_inicio}` : '#127 not in state';
+  if (_DBG) console.log('[motor] state inicial:', _dbg127());
   for (let iter = 0; iter < SIM_MAX_ITER; iter++) {
     let any = false;
     if (pulmonAction === 'pisar') {
       const pisados = _simPisarPulmonesEnConflicto(state, anchors);
       if (pisados > 0) any = true;
     }
-    if (_simCascadeOp(state, anchors)) any = true;
-    if (_simPushMach(state, anchors)) any = true;
+    if (_simCascadeOp(state, anchors)) { any = true; if (_DBG) console.log('[motor] iter', iter, 'tras cascadeOp:', _dbg127()); }
+    if (_simPushMach(state, anchors)) { any = true; if (_DBG) console.log('[motor] iter', iter, 'tras pushMach:', _dbg127()); }
     const corrRes = _simEnforceCorrs(state, anchors);
     if (!corrRes.ok) return corrRes;
-    if (corrRes.moved) any = true;
+    if (corrRes.moved) { any = true; if (_DBG) console.log('[motor] iter', iter, 'tras corrs:', _dbg127()); }
     if (!any) {
+      if (_DBG) console.log('[motor] convergió en iter', iter);
       return _simBuildResult(state, anchors);
     }
   }
