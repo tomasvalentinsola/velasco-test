@@ -4856,6 +4856,7 @@ function _simPushMach(state, anchors) {
       if (!needs) continue;
       const aIsAnchor = anchors.has(A.id);
       const bIsAnchor = anchors.has(B.id);
+      if (window._motorDebug) console.log('[pushMach] par A=#' + A.id + ' (' + A.fecha + ' ' + A.hora_inicio + ', endMach=' + aEnd.date + ' ' + mT(aEnd.time) + ') choca con B=#' + B.id + ' (' + B.fecha + ' ' + B.hora_inicio + '). aAnchor=' + aIsAnchor + ' bAnchor=' + bIsAnchor);
       if (!bIsAnchor) {
         // Caso 1 o 3: mover B despues de A.
         const adj = _simAdjustToWorkingHours(B, aEnd.date, aEnd.time + SIM_GAP);
