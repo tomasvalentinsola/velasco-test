@@ -4675,7 +4675,13 @@ function _simBuildStateItem(a) {
     es_pulmon: !!a.es_pulmon,
     estado: a.estado,
     descripcion: a.descripcion,
-    cliente_id: a.cliente_id
+    cliente_id: a.cliente_id,
+    // v70 Fase 17: fecha/hora reales para actividades completadas. El motor
+    // las usa como fin "duro" en vez del cálculo a partir de duración.
+    fecha_real: a.fecha_real,
+    hora_real_inicio: a.hora_real_inicio,
+    fecha_real_fin: a.fecha_real_fin,
+    hora_real_fin: a.hora_real_fin
   };
 }
 
@@ -4701,6 +4707,13 @@ function _simApplyChange(state, change) {
 
 // Devuelve el end de OPERARIO de un item del state (Dop respetando jornada).
 function _simEndOp(item) {
+  // v70 Fase 17: completadas no se proyectan al futuro (ver _simEndMach).
+  if (item.estado === 'completada') {
+    if (item.fecha_real_fin && item.hora_real_fin) {
+      return { date: item.fecha_real_fin, time: tM(item.hora_real_fin) };
+    }
+    return { date: item.fecha, time: tM(item.hora_inicio) };
+  }
   // Operario ocupado por Dop minutos, respetando jornada.
   let rem = Dop(item), cd = item.fecha, ct = tM(item.hora_inicio), safe = 0;
   while (rem > 0 && safe < 30) {
@@ -4720,6 +4733,15 @@ function _simEndOp(item) {
 // Devuelve el end de MAQUINA de un item del state (D total respetando reglas
 // del tipo: auto-24/7 corre calendar, semi/manual respetan jornada).
 function _simEndMach(item) {
+  // v70 Fase 17: completadas no extienden al futuro. Si tienen tiempos
+  // reales registrados, los usamos. Si no, asumimos puntual en fecha+hora
+  // (no sumamos duración planificada, que sería falsa y mandaría al futuro).
+  if (item.estado === 'completada') {
+    if (item.fecha_real_fin && item.hora_real_fin) {
+      return { date: item.fecha_real_fin, time: tM(item.hora_real_fin) };
+    }
+    return { date: item.fecha, time: tM(item.hora_inicio) };
+  }
   // Reusa realEnd que ya tiene la logica correcta para los 3 tipos
   return realEnd(item);
 }
@@ -4923,15 +4945,16 @@ function simulateChange(changes, options) {
   const pulmonAction = options.pulmonAction || 'cascadear';
 
   // 1. Construir state inicial a partir de acts (excluyendo sin_planificar).
-  // v70 Fase 17: también excluir 'completada'. Una actividad completada ya
-  // sucedió (real e histórica) y no debe participar de cascadas: no empuja
-  // a las que siguen, ni ocupa máquina/operario para fines de planificación
-  // futura. Las correlatividades sí las consideran (en _simEnforceCorrs y
-  // hasPredecessorsReady) leyéndolas desde `acts` directamente.
+  // v70 Fase 17: las actividades completadas SÍ entran al state como
+  // ANCLAS DURAS — no se mueven, pero sirven como bloqueo. Si una activ
+  // modificable cae encima de una completada, el detector de residuales
+  // lo reporta como "conflicto con completada" y el plan se rechaza.
   const state = new Map();
+  const completadasIds = new Set();
   acts.forEach(a => {
-    if (a.estado === 'sin_planificar' || a.estado === 'completada' || a.fecha === '1900-01-01') return;
+    if (a.estado === 'sin_planificar' || a.fecha === '1900-01-01') return;
     state.set(a.id, _simBuildStateItem(a));
+    if (a.estado === 'completada') completadasIds.add(a.id);
   });
 
   // v70 Fase 13: si una activ que viene en `changes` está sin_planificar
@@ -4951,6 +4974,8 @@ function simulateChange(changes, options) {
 
   // 2. Aplicar cambios al state y registrar anchors.
   const anchors = new Set();
+  // v70 Fase 17: las completadas son anclas duras desde el principio.
+  completadasIds.forEach(id => anchors.add(id));
   changes.forEach(c => {
     _simApplyChange(state, c);
     if (!c._delete) anchors.add(c.id);
@@ -5270,12 +5295,29 @@ function _validarInvariantesEnState(state, _applyPlan) {
     if (!claveViejos.has(lo + '-' + hi)) {
       const A = state.get(s.aId), B = state.get(s.bId);
       const aEnd = _simEndMach(A);
-      violaciones.push({
-        tipo: 'solapamiento_maquina',
-        actA: { id: A.id, descripcion: A.descripcion, fecha: A.fecha, hora: A.hora_inicio, finFecha: aEnd.date, finHora: aEnd.time },
-        actB: { id: B.id, descripcion: B.descripcion, fecha: B.fecha, hora: B.hora_inicio },
-        maquina_id: s.machId
-      });
+      // v70 Fase 17: si una de las dos es completada, lo reportamos como
+      // tipo específico (conflicto_con_completada). El mensaje sugiere
+      // desanclar manualmente desde proyectos antes de aplicar el cambio.
+      const aIsComp = A.estado === 'completada';
+      const bIsComp = B.estado === 'completada';
+      if (aIsComp || bIsComp) {
+        const comp = aIsComp ? A : B;
+        const otra = aIsComp ? B : A;
+        violaciones.push({
+          tipo: 'conflicto_con_completada',
+          completada: { id: comp.id, descripcion: comp.descripcion, fecha: comp.fecha, hora: comp.hora_inicio },
+          otra: { id: otra.id, descripcion: otra.descripcion, fecha: otra.fecha, hora: otra.hora_inicio },
+          maquina_id: s.machId,
+          dimension: 'máquina'
+        });
+      } else {
+        violaciones.push({
+          tipo: 'solapamiento_maquina',
+          actA: { id: A.id, descripcion: A.descripcion, fecha: A.fecha, hora: A.hora_inicio, finFecha: aEnd.date, finHora: aEnd.time },
+          actB: { id: B.id, descripcion: B.descripcion, fecha: B.fecha, hora: B.hora_inicio },
+          maquina_id: s.machId
+        });
+      }
     }
   });
 
@@ -5372,7 +5414,8 @@ function _mostrarModalViolaciones(violaciones) {
     solapamiento_maquina:   'Solapamiento en máquina',
     anclada_movida:         'Actividad anclada que se movería',
     anclada_eliminada:      'Actividad anclada que se eliminaría',
-    correlatividad_violada: 'Predecesor que no termina a tiempo'
+    correlatividad_violada: 'Predecesor que no termina a tiempo',
+    conflicto_con_completada: 'Conflicto con actividad ya completada'
   };
   Object.keys(porTipo).forEach(tipo => {
     h += '<div style="margin-bottom:10px;background:#FEF0F0;border:1px solid #FEDADA;border-radius:5px;padding:8px 11px">';
@@ -5388,6 +5431,9 @@ function _mostrarModalViolaciones(violaciones) {
         h += '<b>' + escapeHtml(v.act.descripcion || '?') + '</b> está marcada como hecha y el cambio la eliminaría';
       } else if (tipo === 'correlatividad_violada') {
         h += '<b>' + escapeHtml(v.pred.descripcion || '?') + '</b> termina el ' + v.pred.finFecha + ' a las ' + mT(v.pred.finHora) + ', pero <b>' + escapeHtml(v.suc.descripcion || '?') + '</b> arrancaría antes (' + v.suc.fecha + ' ' + (v.suc.hora || '').substring(0,5) + ')';
+      } else if (tipo === 'conflicto_con_completada') {
+        const maqName = (typeof mN === 'function') ? mN(v.maquina_id) : ('maq #' + v.maquina_id);
+        h += '<b>' + escapeHtml(v.otra.descripcion || '?') + '</b> chocaría con <b>' + escapeHtml(v.completada.descripcion || '?') + '</b> (ya completada el ' + v.completada.fecha + ' ' + (v.completada.hora || '').substring(0,5) + ') en ' + escapeHtml(maqName) + '. Si querés aplicar el cambio, primero desanclá la actividad completada desde Proyectos.';
       }
       h += '</div>';
     });
