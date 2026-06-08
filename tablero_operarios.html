@@ -487,6 +487,53 @@ function fDn(d) {
   return dd + '/' + mm + '/' + yy;
 }
 function toast(m){const t=document.getElementById('to');t.textContent=m;t.classList.add('sh');setTimeout(()=>t.classList.remove('sh'),3500)}
+
+// v70 Fase 17: helpers para reemplazar alert() y confirm() nativos del
+// navegador (que muestran "tomasvalentinsola.github.io dice..."). Devuelven
+// una Promise para usar con await.
+function showAlertModal(titulo, mensaje) {
+  return new Promise(resolve => {
+    const prev = document.getElementById('alert-modal');
+    if (prev) prev.remove();
+    const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'alert-modal';
+    bd.addEventListener('click', e => { if (e.target === bd) { bd.remove(); resolve(); } });
+    const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '460px';
+    const titHtml = titulo ? '<div class="md-t">' + escapeHtml(titulo) + '</div>' : '';
+    // Mensaje: convertir saltos de línea \n en <br>.
+    const msgHtml = '<div style="font-size:13px;color:#3F3E3A;margin-bottom:14px;white-space:pre-wrap">' + escapeHtml(mensaje || '') + '</div>';
+    m.innerHTML = '<button class="md-x" onclick="document.getElementById(\'alert-modal\').remove()">&times;</button>' + titHtml + msgHtml +
+      '<div style="display:flex;gap:8px;justify-content:flex-end"><button class="b" style="background:#0C447C;color:#fff;font-weight:600" id="alert-ok">Aceptar</button></div>';
+    bd.appendChild(m); document.body.appendChild(bd);
+    document.getElementById('alert-ok').onclick = () => { bd.remove(); resolve(); };
+  });
+}
+
+function showConfirmModal(titulo, mensaje, opciones) {
+  opciones = opciones || {};
+  const textoConfirmar = opciones.textoConfirmar || 'Confirmar';
+  const textoCancelar = opciones.textoCancelar || 'Cancelar';
+  const peligro = !!opciones.peligro;
+  return new Promise(resolve => {
+    const prev = document.getElementById('confirm-modal');
+    if (prev) prev.remove();
+    const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'confirm-modal';
+    bd.addEventListener('click', e => { if (e.target === bd) { bd.remove(); resolve(false); } });
+    const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '460px';
+    const titHtml = titulo ? '<div class="md-t">' + escapeHtml(titulo) + '</div>' : '';
+    const msgHtml = '<div style="font-size:13px;color:#3F3E3A;margin-bottom:14px;white-space:pre-wrap">' + escapeHtml(mensaje || '') + '</div>';
+    const okStyle = peligro
+      ? 'background:#A32D2D;color:#fff;font-weight:600'
+      : 'background:#0C447C;color:#fff;font-weight:600';
+    m.innerHTML = '<button class="md-x" onclick="document.getElementById(\'confirm-modal\').remove()">&times;</button>' + titHtml + msgHtml +
+      '<div style="display:flex;gap:8px;justify-content:flex-end">' +
+        '<button class="b" id="confirm-cancel">' + escapeHtml(textoCancelar) + '</button>' +
+        '<button class="b" style="' + okStyle + '" id="confirm-ok">' + escapeHtml(textoConfirmar) + '</button>' +
+      '</div>';
+    bd.appendChild(m); document.body.appendChild(bd);
+    document.getElementById('confirm-cancel').onclick = () => { bd.remove(); resolve(false); };
+    document.getElementById('confirm-ok').onclick = () => { bd.remove(); resolve(true); };
+  });
+}
 function updU(){const b=document.getElementById('bu');if(!b)return;b.disabled=uStack.length===0;document.getElementById('uc').textContent=uStack.length>0?uStack.length+' cambio(s)':''}
 function canPlace(act,machId){if(!act.maquina_ideal_id)return true;if(mN(machId)==='Otra')return true;return act.maquina_ideal_id===machId||(act.maquinas_suplentes_ids||[]).includes(machId)}
 function nwd(ds){const d=new Date(ds+'T12:00:00');do{d.setDate(d.getDate()+1)}while(d.getDay()===0);return dK(d)}
@@ -1377,7 +1424,7 @@ async function placeAct(actId, machId, fecha, startTime, newOpId) {
   // Correlatividad check
   const corrConflict = checkCorrelatividadConflict(actId, fecha, startTime);
   if (corrConflict) {
-    alert(describeCorrelatividadConflict(corrConflict));
+    showAlertModal('Conflicto de correlatividad', describeCorrelatividadConflict(corrConflict));
     return;
   }
 
@@ -1799,7 +1846,7 @@ function placeActWithCheck(actId, machId, fecha, startTime, newOpId, skipOpCheck
         return;
       }
     }
-    alert(describeCorrelatividadConflict(corrConflict));
+    showAlertModal('Conflicto de correlatividad', describeCorrelatividadConflict(corrConflict));
     return;
   }
 
@@ -1856,19 +1903,19 @@ function _runMotorAndApply(changes, options) {
       const sucId = simResult.detail.sucesor_id;
       const pAct = acts.find(a => a.id === predId);
       const sAct = acts.find(a => a.id === sucId);
-      alert('No se puede aplicar este cambio:\n\nLa actividad "' + (sAct ? sAct.descripcion : '#' + sucId) + '" tiene como predecesor a "' + (pAct ? pAct.descripcion : '#' + predId) + '", que no esta planificada todavia. Planifica el predecesor primero.');
+      showAlertModal('No se puede aplicar el cambio', 'La actividad "' + (sAct ? sAct.descripcion : '#' + sucId) + '" tiene como predecesor a "' + (pAct ? pAct.descripcion : '#' + predId) + '", que no está planificada todavía. Planificá el predecesor primero.');
       return;
     }
     if (simResult.error === 'no_converge') {
-      alert('La simulacion no convergio en ' + simResult.detail.iterations + ' iteraciones. Esto es un bug del motor; reportalo a Tomi.');
+      showAlertModal('Error del motor', 'La simulación no convergió en ' + simResult.detail.iterations + ' iteraciones. Esto es un bug; reportalo a Tomi.');
       return;
     }
     if (simResult.error === 'conflicto_no_resoluble') {
       const det = simResult.detail.residual.map(r => {
         if (r.type === 'op') return '• Operario ' + opN(r.opId) + ': activ #' + r.a + ' choca con activ #' + r.b;
-        return '• Maquina ' + mN(r.machId) + ': activ #' + r.a + ' choca con activ #' + r.b;
+        return '• Máquina ' + mN(r.machId) + ': activ #' + r.a + ' choca con activ #' + r.b;
       }).join('\n');
-      alert('No se pudo resolver el cambio sin pisar otras actividades:\n\n' + det + '\n\nProba mover alguna a otra fecha/hora primero.');
+      showAlertModal('No se pudo resolver el cambio', 'No se pudo resolver el cambio sin pisar otras actividades:\n\n' + det + '\n\nProbá mover alguna a otra fecha/hora primero.');
       return;
     }
     if (simResult.error === 'bug_motor_residual') {
@@ -1876,14 +1923,14 @@ function _runMotorAndApply(changes, options) {
       // al menos una de las activ NO es ancla. El motor deberia haberla
       // cascadeado. Mostramos el detalle al usuario pero le pedimos reportar.
       const det = simResult.detail.residual.map(r => {
-        if (r.type === 'op') return '• Operario ' + opN(r.opId) + ': activ #' + r.a + ' choca con activ #' + r.b + (r.bothAnchors ? '' : ' (deberia haberse cascadeado)');
-        return '• Maquina ' + mN(r.machId) + ': activ #' + r.a + ' choca con activ #' + r.b + (r.bothAnchors ? '' : ' (deberia haberse cascadeado)');
+        if (r.type === 'op') return '• Operario ' + opN(r.opId) + ': activ #' + r.a + ' choca con activ #' + r.b + (r.bothAnchors ? '' : ' (debería haberse cascadeado)');
+        return '• Máquina ' + mN(r.machId) + ': activ #' + r.a + ' choca con activ #' + r.b + (r.bothAnchors ? '' : ' (debería haberse cascadeado)');
       }).join('\n');
       console.error('[motor] bug_motor_residual:', simResult.detail.residual);
-      alert('Se detecto un caso que el motor no logro resolver automaticamente. Esto es un bug.\n\nDetalle:\n' + det + '\n\nReportalo a Tomi con la accion que estabas haciendo.');
+      showAlertModal('Bug del motor', 'Se detectó un caso que el motor no logró resolver automáticamente. Esto es un bug.\n\nDetalle:\n' + det + '\n\nReportalo a Tomi con la acción que estabas haciendo.');
       return;
     }
-    alert('Error en simulacion: ' + simResult.error);
+    showAlertModal('Error en simulación', simResult.error);
     return;
   }
 
@@ -3501,7 +3548,12 @@ function showEdit(act, bl) {
   const desBtn = document.getElementById('ed-desanclar');
   if (desBtn) {
     desBtn.onclick = async () => {
-      if (!confirm('La actividad vuelve a ser planificable y deja de ser histórico. Los tiempos reales se borran. ¿Continuar?')) return;
+      const ok = await showConfirmModal(
+        'Desanclar actividad',
+        'La actividad vuelve a ser planificable y deja de ser histórica. Los tiempos reales se borran.\n\n¿Continuar?',
+        { textoConfirmar: 'Desanclar', peligro: true }
+      );
+      if (!ok) return;
       // Si tenía fecha y hora cuando se ancló, vuelve a "pendiente"; si no,
       // a "sin_planificar".
       const teniaPlan = act.fecha && act.fecha !== '1900-01-01' && act.hora_inicio;
@@ -3897,7 +3949,8 @@ async function savePulmon(actId, opId, fecha) {
 }
 
 async function deletePulmon(actId) {
-  if (!confirm('Eliminar este pulmon?')) return;
+  const ok = await showConfirmModal('Eliminar pulmón', '¿Querés eliminar este pulmón?', { textoConfirmar: 'Eliminar', peligro: true });
+  if (!ok) return;
   await sb.from('actividades_tablero').delete().eq('id', actId);
   const idx = acts.findIndex(x => x.id === actId);
   if (idx >= 0) acts.splice(idx, 1);
