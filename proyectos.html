@@ -6339,7 +6339,7 @@ function renderItemDetail() {
   h += '<button class="b b-icon" onclick="duplicarItem(' + item.id + ')" title="Crea una copia del item con todos sus procesos">📑 Duplicar item</button>';
   h += '</div>';
   h += '</div></div>';
-  h += '<div class="section-t">Procesos del item <button class="b b-p" onclick="showProcesoForm(null)">+ Agregar proceso</button> <button class="b" onclick="redefinirPredecesoresItem(' + item.id + ')" title="Asigna predecesores lineales según el orden actual" style="background:#FFF4E0;color:#854F0B;border-color:#E0A800">🔗 Redefinir predecesores</button></div>';
+  h += '<div class="section-t">Procesos del item <div style="display:flex;gap:6px"><button class="b" onclick="redefinirPredecesoresItem(' + item.id + ')" title="Asigna predecesores lineales según el orden actual" style="background:#FFF4E0;color:#854F0B;border-color:#E0A800">🔗 Redefinir predecesores</button><button class="b b-p" onclick="showProcesoForm(null)">+ Agregar proceso</button></div></div>';
   if (procesos.length === 0) {
     h += '<div class="list-empty" style="padding:20px">Aun no hay procesos cargados. Sin procesos, este item no genera actividades en el tablero.</div>';
   } else {
@@ -6509,7 +6509,7 @@ function renderProductoMatrizDetail() {
   }
 
   // Procesos del producto
-  h += '<div class="section-t" style="margin-top:14px">Procesos del producto <button class="b b-p" onclick="showProcesoForm(null, {tipo:\'producto\',parentId:' + prod.id + '})">+ Agregar proceso</button> <button class="b" onclick="redefinirPredecesoresProducto(' + prod.id + ')" title="Asigna predecesores lineales según el orden actual" style="background:#FFF4E0;color:#854F0B;border-color:#E0A800">🔗 Redefinir predecesores</button></div>';
+  h += '<div class="section-t" style="margin-top:14px">Procesos del producto <div style="display:flex;gap:6px"><button class="b" onclick="redefinirPredecesoresProducto(' + prod.id + ')" title="Asigna predecesores lineales según el orden actual" style="background:#FFF4E0;color:#854F0B;border-color:#E0A800">🔗 Redefinir predecesores</button><button class="b b-p" onclick="showProcesoForm(null, {tipo:\'producto\',parentId:' + prod.id + '})">+ Agregar proceso</button></div></div>';
   if (procesos.length === 0) {
     h += '<div class="list-empty" style="padding:20px">Aún no hay procesos cargados. Sin procesos, este producto matriz solo tiene los datos de cabecera.</div>';
   } else {
@@ -10498,8 +10498,10 @@ function _matrizProductoCardHtml(p) {
     h += '<div style="border-top:1px solid #E8E6DF;background:#FAF9F5;padding:10px 16px">';
     h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">';
     h += '<div style="font-size:11px;font-weight:600;color:#5F5E5A">PROCESOS</div>';
+    h += '<div style="display:flex;gap:6px">';
+    h += '<button class="b" style="padding:3px 10px;font-size:11px;background:#FFF4E0;color:#854F0B;border-color:#E0A800" onclick="event.stopPropagation(); redefinirPredecesoresProducto(' + p.id + ')" title="Asigna predecesores lineales según el orden actual">🔗 Redefinir predecesores</button>';
     h += '<button class="b b-p" style="padding:3px 10px;font-size:11px" onclick="showProcesoForm(null, {tipo:\'producto\',parentId:' + p.id + '})">+ Agregar proceso</button>';
-    h += '<button class="b" style="padding:3px 10px;font-size:11px;background:#FFF4E0;color:#854F0B;border-color:#E0A800;margin-left:6px" onclick="event.stopPropagation(); redefinirPredecesoresProducto(' + p.id + ')" title="Asigna predecesores lineales según el orden actual">🔗 Redefinir predecesores</button>';
+    h += '</div>';
     h += '</div>';
     if (procs.length === 0) {
       h += '<div style="font-size:11px;color:#888;font-style:italic;padding:6px 0">Sin procesos cargados.</div>';
