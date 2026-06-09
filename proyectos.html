@@ -1861,14 +1861,23 @@ function renderNewProjectForm() {
     h += '<option value="' + st + '"' + (st === 'Proyectando' ? ' selected' : '') + '>' + st + '</option>';
   });
   h += '</select></div></div>';
-  // v70: Cliente final, justo debajo de Cliente (poco margen). El checkbox
-  // de habilitación va a la derecha del título.
+  // v70 Fase 17: Cliente final como picker buscable (lista de clientes + opción
+  // "+ Nuevo cliente"). Checkbox "Permitir escritura libre" para casos donde
+  // se necesita un nombre que no está en la base (stock interno, alias, etc.).
   h += '<div class="ef" style="margin-top:-5px">';
-  h += '<div class="ef-l" style="display:flex;align-items:center;gap:10px">Cliente final (opcional)';
+  h += '<div class="ef-l" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">Cliente final (opcional)';
   h += '<label style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:400;color:#5F5E5A;cursor:pointer">';
-  h += '<input type="checkbox" id="f-clifinal-hab" onchange="_toggleClienteFinal()"> Habilitar</label></div>';
-  h += '<input type="text" class="ef-i" id="f-clifinal" placeholder="Ej. GDLP" disabled style="background:#F0EFEA;color:#5F5E5A">';
-  h += '<div class="ef-help">Para casos como stock interno donde el destinatario real es otro. Marcá la casilla para habilitarlo.</div></div>';
+  h += '<input type="checkbox" id="f-clifinal-hab" onchange="_toggleClienteFinal()"> Habilitar</label>';
+  h += '<label style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:400;color:#5F5E5A;cursor:pointer">';
+  h += '<input type="checkbox" id="f-clifinal-libre" onchange="_toggleClienteFinalLibre()"> Permitir escritura libre</label></div>';
+  // Modo picker (default): combo buscable con clientes existentes.
+  h += '<div id="f-clifinal-picker" class="combo-wrap" style="position:relative;display:none">';
+  h += '<input type="text" class="ef-i" id="f-clifinal-search" placeholder="Buscar cliente..." autocomplete="off" oninput="renderClienteFinalCombo()" onfocus="renderClienteFinalCombo()" onblur="setTimeout(closeClienteFinalCombo, 200)">';
+  h += '<div id="f-clifinal-list" class="combo-list" style="display:none"></div>';
+  h += '</div>';
+  // Modo texto libre (solo si checkbox "Permitir escritura libre" está activo).
+  h += '<input type="text" class="ef-i" id="f-clifinal" placeholder="Ej. GDLP" disabled style="background:#F0EFEA;color:#5F5E5A;display:none">';
+  h += '<div class="ef-help">Para casos como stock interno donde el destinatario real es otro. Marcá <b>Habilitar</b> para activarlo y, si necesitás un nombre que no está en la base, también <b>Permitir escritura libre</b>.</div></div>';
   // Contacto del proyecto: combo con los contactos del cliente seleccionado.
   // Warning amarillo si no se asigna. Recomendado pero no obligatorio (TácticaSoft).
   h += '<div class="ef"><div class="ef-l">Contacto del proyecto <span style="color:#A32D2D">*</span></div>';
@@ -2478,21 +2487,141 @@ function _toggleContactoWarn(showWarn) {
 }
 
 // v70: habilita/deshabilita el campo "Cliente final" según la casilla.
+// v70 Fase 17: ahora hay dos modos:
+//   - Picker (default): se muestra el combo buscable con clientes existentes.
+//   - Escritura libre: input de texto sin restricciones (segundo checkbox).
 function _toggleClienteFinal() {
   const cb = document.getElementById('f-clifinal-hab');
+  const cbLibre = document.getElementById('f-clifinal-libre');
+  const picker = document.getElementById('f-clifinal-picker');
   const inp = document.getElementById('f-clifinal');
-  if (!cb || !inp) return;
+  if (!cb || !picker || !inp) return;
   if (cb.checked) {
+    const libre = cbLibre && cbLibre.checked;
+    if (libre) {
+      // Modo libre: input visible, picker oculto.
+      inp.style.display = 'block';
+      inp.disabled = false;
+      inp.style.background = '#fff';
+      inp.style.color = '#2C2C2A';
+      picker.style.display = 'none';
+      inp.focus();
+    } else {
+      // Modo picker: combo visible, input oculto.
+      picker.style.display = 'block';
+      inp.style.display = 'none';
+      const search = document.getElementById('f-clifinal-search');
+      if (search) search.focus();
+    }
+  } else {
+    // Habilitar apagado: ocultar todo y limpiar valores.
+    picker.style.display = 'none';
+    inp.style.display = 'none';
+    inp.value = '';
+    const search = document.getElementById('f-clifinal-search');
+    if (search) search.value = '';
+  }
+}
+
+// v70 Fase 17: alterna entre modo picker y modo escritura libre.
+function _toggleClienteFinalLibre() {
+  const cb = document.getElementById('f-clifinal-hab');
+  const cbLibre = document.getElementById('f-clifinal-libre');
+  const picker = document.getElementById('f-clifinal-picker');
+  const inp = document.getElementById('f-clifinal');
+  if (!cb || !cbLibre || !picker || !inp) return;
+  if (!cb.checked) {
+    // Si Habilitar está apagado, no tiene efecto cambiar el modo libre.
+    return;
+  }
+  if (cbLibre.checked) {
+    // Cambiar a modo libre: pasar el valor del picker al input libre.
+    const search = document.getElementById('f-clifinal-search');
+    if (search && search.value.trim()) inp.value = search.value.trim();
+    inp.style.display = 'block';
     inp.disabled = false;
     inp.style.background = '#fff';
     inp.style.color = '#2C2C2A';
+    picker.style.display = 'none';
     inp.focus();
   } else {
-    inp.disabled = true;
-    inp.style.background = '#F0EFEA';
-    inp.style.color = '#5F5E5A';
-    inp.value = '';
+    // Cambiar a modo picker: si el valor del input matchea un cliente, lo cargamos en el search.
+    const search = document.getElementById('f-clifinal-search');
+    if (search) {
+      const valActual = (inp.value || '').trim();
+      const match = valActual ? clientes.find(c => (c.nombre || '').trim() === valActual && c.activo !== false) : null;
+      search.value = match ? match.nombre : '';
+    }
+    inp.style.display = 'none';
+    picker.style.display = 'block';
+    if (search) search.focus();
   }
+}
+
+// v70 Fase 17: combo de cliente final (similar a renderClienteCombo pero
+// independiente para no interferir con el combo principal).
+function renderClienteFinalCombo() {
+  const search = document.getElementById('f-clifinal-search');
+  const list = document.getElementById('f-clifinal-list');
+  if (!search || !list) return;
+  const q = search.value.trim().toLowerCase();
+  const filtered = clientes.filter(c => c.activo !== false && (!q || (c.nombre || '').toLowerCase().includes(q)));
+  let html = '';
+  if (filtered.length === 0) {
+    html += '<div class="combo-empty">No hay clientes que coincidan con "' + escapeHtml(q) + '"</div>';
+  } else {
+    html += filtered.map(c =>
+      '<div class="combo-item" onmousedown="selectClienteFinalCombo(' + c.id + ', \'' + c.nombre.replace(/'/g, "\\'") + '\')">' +
+      escapeHtml(c.nombre) + '</div>'
+    ).join('');
+  }
+  html += '<div class="combo-item" style="border-top:1px solid #E8E6DF;color:#0C447C;font-weight:600" onmousedown="abrirClienteNuevoDesdeComboFinal()">+ Nuevo cliente</div>';
+  list.innerHTML = html;
+  list.style.display = 'block';
+}
+
+function selectClienteFinalCombo(id, nombre) {
+  const search = document.getElementById('f-clifinal-search');
+  if (search) search.value = nombre;
+  // Guardamos también en el input "libre" como respaldo (lo leemos al guardar
+  // siempre de un lugar único — el search del picker si el modo es picker).
+  closeClienteFinalCombo();
+}
+
+function closeClienteFinalCombo() {
+  const list = document.getElementById('f-clifinal-list');
+  if (list) list.style.display = 'none';
+}
+
+// v70 Fase 17: lectura unificada del campo Cliente final. Devuelve el valor
+// como string, o null si el campo no está habilitado.
+function _leerClienteFinal() {
+  const cb = document.getElementById('f-clifinal-hab');
+  if (!cb || !cb.checked) return null;
+  const cbLibre = document.getElementById('f-clifinal-libre');
+  const libre = cbLibre && cbLibre.checked;
+  if (libre) {
+    const inp = document.getElementById('f-clifinal');
+    const v = inp ? inp.value.trim() : '';
+    return v || null;
+  } else {
+    const search = document.getElementById('f-clifinal-search');
+    const v = search ? search.value.trim() : '';
+    // En modo picker, solo aceptamos valores que correspondan a un cliente real.
+    if (!v) return null;
+    const match = clientes.find(c => (c.nombre || '').trim() === v && c.activo !== false);
+    return match ? match.nombre : null;
+  }
+}
+
+// Abre el modal de nuevo cliente. Al guardar, lo selecciona en el picker.
+function abrirClienteNuevoDesdeComboFinal() {
+  window._clienteFormCallback = (newId) => {
+    const c = clientes.find(x => x.id === newId);
+    if (!c) return;
+    selectClienteFinalCombo(c.id, c.nombre);
+  };
+  showClienteForm(null);
 }
 
 function onContactoComboChange() {
@@ -2558,6 +2687,10 @@ function _newProjectCaptureFormValues() {
     cliente: document.getElementById('f-cliente') ? document.getElementById('f-cliente').value : '',
     clienteSearch: document.getElementById('f-cliente-search') ? document.getElementById('f-cliente-search').value : '',
     clifinal: document.getElementById('f-clifinal') ? document.getElementById('f-clifinal').value : '',
+    // v70 Fase 17: persistir también el estado del picker y los checkboxes.
+    clifinalHab: document.getElementById('f-clifinal-hab') ? document.getElementById('f-clifinal-hab').checked : false,
+    clifinalLibre: document.getElementById('f-clifinal-libre') ? document.getElementById('f-clifinal-libre').checked : false,
+    clifinalSearch: document.getElementById('f-clifinal-search') ? document.getElementById('f-clifinal-search').value : '',
     pedido: document.getElementById('f-pedido') ? document.getElementById('f-pedido').value : '',
     desc: document.getElementById('f-desc') ? document.getElementById('f-desc').value : '',
     urg: document.getElementById('f-urg') ? document.getElementById('f-urg').value : '',
@@ -2575,6 +2708,12 @@ function _newProjectRestoreFormValues(v) {
   if (document.getElementById('f-cliente')) document.getElementById('f-cliente').value = v.cliente || '';
   if (document.getElementById('f-cliente-search')) document.getElementById('f-cliente-search').value = v.clienteSearch || '';
   if (document.getElementById('f-clifinal')) document.getElementById('f-clifinal').value = v.clifinal || '';
+  // v70 Fase 17: restaurar checkboxes y search del picker.
+  if (document.getElementById('f-clifinal-hab')) document.getElementById('f-clifinal-hab').checked = !!v.clifinalHab;
+  if (document.getElementById('f-clifinal-libre')) document.getElementById('f-clifinal-libre').checked = !!v.clifinalLibre;
+  if (document.getElementById('f-clifinal-search')) document.getElementById('f-clifinal-search').value = v.clifinalSearch || '';
+  // Aplicar el estado visual según los checkboxes restaurados.
+  _toggleClienteFinal();
   if (document.getElementById('f-pedido')) document.getElementById('f-pedido').value = v.pedido || '';
   if (document.getElementById('f-desc')) document.getElementById('f-desc').value = v.desc || '';
   if (document.getElementById('f-urg')) document.getElementById('f-urg').value = v.urg || '';
@@ -2606,7 +2745,7 @@ async function saveNewProject() {
   const fotoUrl = document.getElementById('photo-url-proj').value.trim() || null;
   const fechaIngreso = document.getElementById('f-fechaing').value || null;
   const fechaEntrega = document.getElementById('f-fechaentrega').value || null;
-  const clienteFinal = document.getElementById('f-clifinal').value.trim() || null;
+  const clienteFinal = _leerClienteFinal();
   // v70: observaciones para el mail estandarizado.
   let obsMail = '';
   try { obsMail = readRichEditor('f-obs-mail') || ''; } catch (e) { obsMail = ''; }
@@ -3003,13 +3142,26 @@ function renderProjectDetail() {
   // de habilitación va a la derecha del título.
   const _cfVal = proj.cliente_final || '';
   const _cfHab = _cfVal.trim() !== '';
+  // v70 Fase 17: detectar si el cliente_final actual coincide con algún cliente
+  // de la base. Si coincide → modo picker. Si no → modo escritura libre.
+  const _cfMatch = _cfVal ? clientes.find(c => (c.nombre || '').trim() === _cfVal.trim() && c.activo !== false) : null;
+  const _cfLibre = _cfHab && !_cfMatch;
   h += '<div class="ef" style="margin-top:-5px">';
-  h += '<div class="ef-l" style="display:flex;align-items:center;gap:10px">Cliente final (opcional)';
+  h += '<div class="ef-l" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">Cliente final (opcional)';
   h += '<label style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:400;color:#5F5E5A;cursor:pointer">';
-  h += '<input type="checkbox" id="f-clifinal-hab"' + (_cfHab ? ' checked' : '') + ' onchange="_toggleClienteFinal()"> Habilitar</label></div>';
-  h += '<input type="text" class="ef-i" id="f-clifinal" value="' + escapeHtml(_cfVal) + '" placeholder="Ej. GDLP"' +
-       (_cfHab ? '' : ' disabled style="background:#F0EFEA;color:#5F5E5A"') + '>';
-  h += '<div class="ef-help">Para casos como stock interno donde el destinatario real es otro. Marcá la casilla para habilitarlo.</div></div>';
+  h += '<input type="checkbox" id="f-clifinal-hab"' + (_cfHab ? ' checked' : '') + ' onchange="_toggleClienteFinal()"> Habilitar</label>';
+  h += '<label style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:400;color:#5F5E5A;cursor:pointer">';
+  h += '<input type="checkbox" id="f-clifinal-libre"' + (_cfLibre ? ' checked' : '') + ' onchange="_toggleClienteFinalLibre()"> Permitir escritura libre</label></div>';
+  // Picker (visible si está habilitado y NO en modo libre).
+  const _pickerVisible = _cfHab && !_cfLibre;
+  h += '<div id="f-clifinal-picker" class="combo-wrap" style="position:relative;display:' + (_pickerVisible ? 'block' : 'none') + '">';
+  h += '<input type="text" class="ef-i" id="f-clifinal-search" value="' + escapeHtml(_cfMatch ? _cfMatch.nombre : '') + '" placeholder="Buscar cliente..." autocomplete="off" oninput="renderClienteFinalCombo()" onfocus="renderClienteFinalCombo()" onblur="setTimeout(closeClienteFinalCombo, 200)">';
+  h += '<div id="f-clifinal-list" class="combo-list" style="display:none"></div>';
+  h += '</div>';
+  // Texto libre (visible si habilitado Y modo libre).
+  const _libreVisible = _cfHab && _cfLibre;
+  h += '<input type="text" class="ef-i" id="f-clifinal" value="' + escapeHtml(_cfVal) + '" placeholder="Ej. GDLP" style="display:' + (_libreVisible ? 'block' : 'none') + '">';
+  h += '<div class="ef-help">Para casos como stock interno donde el destinatario real es otro. Marcá <b>Habilitar</b> para activarlo y, si necesitás un nombre que no está en la base, también <b>Permitir escritura libre</b>.</div></div>';
   // v62: contacto del proyecto — va inmediatamente después de Cliente final.
   h += '<div class="ef"><div class="ef-l">Contacto del proyecto <span style="color:#A32D2D">*</span></div>';
   const contactosCli = contactosDeCliente(proj.cliente_id);
@@ -3318,7 +3470,7 @@ function _projectHasUnsavedChanges() {
   const cliente_id = cliente_id_raw === null
     ? (snap.cliente_id || null)
     : (cliente_id_raw ? parseInt(cliente_id_raw) : null);
-  const cliente_final = (getVal('f-clifinal') || '').trim();
+  const cliente_final = (_leerClienteFinal() || '').toString();
   const fecha_ingreso = _normDate(getVal('f-fechaing') || '');
   const fecha_entrega = _normDate(getVal('f-fechaentrega') || '');
   const contactoSel = document.getElementById('f-contacto');
@@ -3475,7 +3627,7 @@ async function saveProjectMeta() {
   const foto = (fotosProj.length > 0 ? fotosProj[0].url : null);
   const fechaIngreso = document.getElementById('f-fechaing').value || null;
   const fechaEntrega = document.getElementById('f-fechaentrega').value || null;
-  const clienteFinal = document.getElementById('f-clifinal').value.trim() || null;
+  const clienteFinal = _leerClienteFinal();
   // Leer HTML del editor rico (no .value de textarea)
   const obsMail = readRichEditor('f-obs-mail');
   const pedidoNro = document.getElementById('f-pedido').value.trim() || null;
@@ -10355,8 +10507,15 @@ function validarProductoMatriz(productoId) {
   } else {
     procs.forEach((pp, idx) => {
       const n = (idx + 1) + ' (' + (pp.proceso || '?') + ')';
-      if (!pp.duracion_estimada_min || pp.duracion_estimada_min < 1) {
-        problemas.push('Proceso ' + n + ': falta duración estimada');
+      // v70 Fase 17: el validador antes exigía duracion_estimada_min >= 1 min.
+      // Pero el sistema permite decimales (ej. 0.5 min = 30 seg para cortes rápidos)
+      // Y permite operación=0 si todo va en setup (caso Despacho/Cierre).
+      // Regla correcta: el TOTAL (setup + operación + margen) debe ser > 0.
+      const _op = Number(pp.duracion_estimada_min) || 0;
+      const _setup = Number(pp.duracion_operario_min) || 0;
+      const _margen = Number(pp.duracion_margen_min) || 0;
+      if (_op + _setup + _margen <= 0) {
+        problemas.push('Proceso ' + n + ': no tiene tiempos cargados (setup, operación y margen están en 0)');
       }
       // NOTA: la maquina ideal puede ser null/null intencionalmente cuando el
       // usuario eligió "Ninguna" (proceso sin maquina). No es una falla.
