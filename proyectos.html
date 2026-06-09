@@ -6299,7 +6299,7 @@ function renderItemDetail() {
   h += '<button class="b b-icon" onclick="duplicarItem(' + item.id + ')" title="Crea una copia del item con todos sus procesos">📑 Duplicar item</button>';
   h += '</div>';
   h += '</div></div>';
-  h += '<div class="section-t">Procesos del item <button class="b b-p" onclick="showProcesoForm(null)">+ Agregar proceso</button></div>';
+  h += '<div class="section-t">Procesos del item <button class="b b-p" onclick="showProcesoForm(null)">+ Agregar proceso</button> <button class="b" onclick="redefinirPredecesoresItem(' + item.id + ')" title="Asigna predecesores lineales según el orden actual" style="background:#FFF4E0;color:#854F0B;border-color:#E0A800">🔗 Redefinir predecesores</button></div>';
   if (procesos.length === 0) {
     h += '<div class="list-empty" style="padding:20px">Aun no hay procesos cargados. Sin procesos, este item no genera actividades en el tablero.</div>';
   } else {
@@ -6469,7 +6469,7 @@ function renderProductoMatrizDetail() {
   }
 
   // Procesos del producto
-  h += '<div class="section-t" style="margin-top:14px">Procesos del producto <button class="b b-p" onclick="showProcesoForm(null, {tipo:\'producto\',parentId:' + prod.id + '})">+ Agregar proceso</button></div>';
+  h += '<div class="section-t" style="margin-top:14px">Procesos del producto <button class="b b-p" onclick="showProcesoForm(null, {tipo:\'producto\',parentId:' + prod.id + '})">+ Agregar proceso</button> <button class="b" onclick="redefinirPredecesoresProducto(' + prod.id + ')" title="Asigna predecesores lineales según el orden actual" style="background:#FFF4E0;color:#854F0B;border-color:#E0A800">🔗 Redefinir predecesores</button></div>';
   if (procesos.length === 0) {
     h += '<div class="list-empty" style="padding:20px">Aún no hay procesos cargados. Sin procesos, este producto matriz solo tiene los datos de cabecera.</div>';
   } else {
@@ -7611,6 +7611,139 @@ function _mostrarModalCerrarProyecto(proyecto) {
 // Si hay items con cantidad pendiente de remitir, mostrar listado y ofrecer
 // "Cancelar" o "Cerrar igualmente". Si todo OK, dispara el flujo estándar
 // (_abrirModalCerrarProyecto que se encarga de procesos abiertos también).
+// v70 Fase 17: redefinir predecesores lineales según el orden actual de
+// procesos. Borra las correlatividades internas (entre procesos del mismo
+// item/producto) y crea nuevas lineales: proc[n] tiene a proc[n-1] como
+// predecesor. Las correlatividades con procesos de OTROS items quedan intactas.
+
+async function redefinirPredecesoresItem(itemId) {
+  const item = items.find(i => i.id === itemId);
+  if (!item) { toast('Item no encontrado', true); return; }
+  const procs = actividades.filter(a => a.item_id === itemId && !a.proceso_eliminado)
+    .sort((a, b) => (a.orden || 999999) - (b.orden || 999999));
+  if (procs.length === 0) {
+    toast('Este item no tiene procesos', true);
+    return;
+  }
+  if (procs.length === 1) {
+    toast('Solo hay un proceso, no se pueden definir predecesores', true);
+    return;
+  }
+  const ok = await showConfirmModalProy(
+    'Redefinir predecesores',
+    'Se van a borrar todas las correlatividades internas de este item y se crearán nuevas lineales según el orden actual:\n\n' +
+    procs.map((p, i) => (i + 1) + '. ' + (p.proceso || '?')).join('\n') +
+    '\n\nLas correlatividades con procesos de OTROS items NO se tocan.\n\n¿Continuar?',
+    { textoConfirmar: 'Redefinir', peligro: true }
+  );
+  if (!ok) return;
+  showSpinner('Redefiniendo predecesores...');
+  try {
+    const procIds = procs.map(p => p.id);
+    // 1. Borrar correlatividades internas (pred y suc dentro del item).
+    const corrsInternas = correlatividades.filter(c =>
+      procIds.includes(c.predecesor_id) && procIds.includes(c.sucesor_id)
+    );
+    if (corrsInternas.length > 0) {
+      const ids = corrsInternas.map(c => c.id);
+      const { error: errDel } = await sb.from('correlatividades').delete().in('id', ids);
+      if (errDel) { toast('Error al borrar correlatividades: ' + errDel.message, true); return; }
+    }
+    // 2. Crear nuevas correlatividades lineales.
+    const inserts = [];
+    for (let i = 1; i < procs.length; i++) {
+      inserts.push({ predecesor_id: procs[i - 1].id, sucesor_id: procs[i].id });
+    }
+    if (inserts.length > 0) {
+      const { error: errIns } = await sb.from('correlatividades').insert(inserts);
+      if (errIns) { toast('Error al crear correlatividades: ' + errIns.message, true); return; }
+    }
+    await loadAll();
+    toast('Predecesores redefinidos (' + inserts.length + ' correlatividades creadas)');
+    render();
+  } finally {
+    hideSpinner();
+  }
+}
+
+async function redefinirPredecesoresProducto(productoId) {
+  const prod = productosMatriz.find(p => p.id === productoId);
+  if (!prod) { toast('Producto no encontrado', true); return; }
+  const procs = productosMatrizProcesos.filter(p => p.producto_id === productoId)
+    .sort((a, b) => (a.orden || 999999) - (b.orden || 999999));
+  if (procs.length === 0) {
+    toast('Este producto no tiene procesos', true);
+    return;
+  }
+  if (procs.length === 1) {
+    toast('Solo hay un proceso, no se pueden definir predecesores', true);
+    return;
+  }
+  const ok = await showConfirmModalProy(
+    'Redefinir predecesores',
+    'Se van a borrar todas las correlatividades internas de este producto y se crearán nuevas lineales según el orden actual:\n\n' +
+    procs.map((p, i) => (i + 1) + '. ' + (p.proceso || '?')).join('\n') +
+    '\n\n¿Continuar?',
+    { textoConfirmar: 'Redefinir', peligro: true }
+  );
+  if (!ok) return;
+  showSpinner('Redefiniendo predecesores...');
+  try {
+    const procIds = procs.map(p => p.id);
+    const corrsInternas = productosMatrizCorrelatividades.filter(c =>
+      procIds.includes(c.predecesor_id) && procIds.includes(c.sucesor_id)
+    );
+    if (corrsInternas.length > 0) {
+      const ids = corrsInternas.map(c => c.id);
+      const { error: errDel } = await sb.from('productos_matriz_correlatividades').delete().in('id', ids);
+      if (errDel) { toast('Error al borrar correlatividades: ' + errDel.message, true); return; }
+    }
+    const inserts = [];
+    for (let i = 1; i < procs.length; i++) {
+      inserts.push({ predecesor_id: procs[i - 1].id, sucesor_id: procs[i].id });
+    }
+    if (inserts.length > 0) {
+      const { error: errIns } = await sb.from('productos_matriz_correlatividades').insert(inserts);
+      if (errIns) { toast('Error al crear correlatividades: ' + errIns.message, true); return; }
+    }
+    await loadAll();
+    toast('Predecesores redefinidos (' + inserts.length + ' correlatividades creadas)');
+    render();
+  } finally {
+    hideSpinner();
+  }
+}
+
+// Helper local para confirm modal en proyectos (clon del que está en tablero,
+// porque por ahora no compartimos código entre los dos archivos).
+// CUANDO MIGREMOS A REACT: consolidar con el del tablero en src/components/modales/ConfirmModal.tsx
+function showConfirmModalProy(titulo, mensaje, opciones) {
+  opciones = opciones || {};
+  const textoConfirmar = opciones.textoConfirmar || 'Confirmar';
+  const textoCancelar = opciones.textoCancelar || 'Cancelar';
+  const peligro = !!opciones.peligro;
+  return new Promise(resolve => {
+    const prev = document.getElementById('confirm-modal-proy');
+    if (prev) prev.remove();
+    const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'confirm-modal-proy';
+    bd.addEventListener('click', e => { if (e.target === bd) { bd.remove(); resolve(false); } });
+    const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '480px';
+    const titHtml = titulo ? '<div class="md-t">' + escapeHtml(titulo) + '</div>' : '';
+    const msgHtml = '<div style="font-size:13px;color:#3F3E3A;margin-bottom:14px;white-space:pre-wrap">' + escapeHtml(mensaje || '') + '</div>';
+    const okStyle = peligro
+      ? 'background:#A32D2D;color:#fff;font-weight:600'
+      : 'background:#0C447C;color:#fff;font-weight:600';
+    m.innerHTML = '<button class="md-x" onclick="document.getElementById(\'confirm-modal-proy\').remove()">&times;</button>' + titHtml + msgHtml +
+      '<div style="display:flex;gap:8px;justify-content:flex-end">' +
+        '<button class="b" id="confirm-proy-cancel">' + escapeHtml(textoCancelar) + '</button>' +
+        '<button class="b" style="' + okStyle + '" id="confirm-proy-ok">' + escapeHtml(textoConfirmar) + '</button>' +
+      '</div>';
+    bd.appendChild(m); document.body.appendChild(bd);
+    document.getElementById('confirm-proy-cancel').onclick = () => { bd.remove(); resolve(false); };
+    document.getElementById('confirm-proy-ok').onclick = () => { bd.remove(); resolve(true); };
+  });
+}
+
 async function _intentarCerrarProyecto(proyectoId) {
   const proyecto = proyectos.find(p => p.id === proyectoId);
   if (!proyecto) return;
@@ -10326,6 +10459,7 @@ function _matrizProductoCardHtml(p) {
     h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">';
     h += '<div style="font-size:11px;font-weight:600;color:#5F5E5A">PROCESOS</div>';
     h += '<button class="b b-p" style="padding:3px 10px;font-size:11px" onclick="showProcesoForm(null, {tipo:\'producto\',parentId:' + p.id + '})">+ Agregar proceso</button>';
+    h += '<button class="b" style="padding:3px 10px;font-size:11px;background:#FFF4E0;color:#854F0B;border-color:#E0A800;margin-left:6px" onclick="event.stopPropagation(); redefinirPredecesoresProducto(' + p.id + ')" title="Asigna predecesores lineales según el orden actual">🔗 Redefinir predecesores</button>';
     h += '</div>';
     if (procs.length === 0) {
       h += '<div style="font-size:11px;color:#888;font-style:italic;padding:6px 0">Sin procesos cargados.</div>';
