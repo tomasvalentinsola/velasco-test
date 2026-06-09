@@ -1888,6 +1888,10 @@ function renderNewProjectForm() {
   h += '<input type="text" class="ef-i" id="f-pedido" placeholder="Ej. 4130 (de TacticaSoft)">';
   h += '<div class="ef-help">Solo para proyectos confirmados. Si no lo tenes ahora, podes dejarlo vacio y aparecera una advertencia.</div>';
   h += '<div class="ef-err" id="err-pedido" style="display:none"></div></div>';
+  // v70 Fase 17a: Fecha límite para cotizar, solo visible en estado Solicitud.
+  h += '<div class="ef" id="ef-fecha-cotizar" style="display:none"><div class="ef-l">Fecha límite para cotizar</div>';
+  h += '<input type="date" class="ef-i" id="f-fecha-cotizar" value="">';
+  h += '<div class="ef-help">Fecha tope que pidió el cliente para recibir la cotización. Aparece en el mail estandarizado.</div></div>';
   h += '<div class="ef"><div class="ef-l">Descripcion del proyecto <span style="color:#A32D2D">*</span></div>';
   h += '<input type="text" class="ef-i" id="f-desc" placeholder="Ej. Bomba centrifuga AJM2000"></div>';
   h += '<div class="row">';
@@ -2418,6 +2422,9 @@ function newProjectCargarMaterial(initialName) {
 function onStateChangeNew() {
   const estado = document.getElementById('f-estado').value;
   document.getElementById('ef-pedido').style.display = (estado === 'Pedido') ? 'block' : 'none';
+  // v70 Fase 17a: el campo "Fecha límite para cotizar" solo aplica en Solicitud.
+  const efCotizar = document.getElementById('ef-fecha-cotizar');
+  if (efCotizar) efCotizar.style.display = (estado === 'Solicitud') ? 'block' : 'none';
 }
 
 // ========== Cliente combobox ==========
@@ -2778,12 +2785,21 @@ async function saveNewProject() {
   showSpinner('Creando proyecto...');
 
   try {
+    // v70 Fase 17a: paso_por_solicitud se setea true si el proyecto nace en
+    // Solicitud (o más adelante, pero "nacer en Pedido directo" = false).
+    // fecha_limite_cotizar solo se guarda si está en Solicitud (sino null).
+    const fechaLimiteCotizar = (estado === 'Solicitud')
+      ? (document.getElementById('f-fecha-cotizar').value || null)
+      : null;
+    const pasoPorSolicitud = (estado === 'Solicitud');
     // 1. Crear proyecto
     const { data: newProj, error: projErr } = await sb.from('proyectos').insert({
       cliente_id, pedido_nro, descripcion, urgencia, foto_url: fotoUrl,
       fecha_ingreso: fechaIngreso, fecha_entrega: fechaEntrega,
       cliente_final: clienteFinal, estado, contacto_id,
-      observaciones_mail: obsMail || null
+      observaciones_mail: obsMail || null,
+      paso_por_solicitud: pasoPorSolicitud,
+      fecha_limite_cotizar: fechaLimiteCotizar
     }).select().single();
     if (projErr) { toast('Error creando proyecto: ' + projErr.message, true); return; }
 
@@ -3138,6 +3154,15 @@ function renderProjectDetail() {
   }
   h += '<div class="ef" style="flex:1"><div class="ef-l">Numero de pedido' + (PROJ_STATES_REQUIRE_PEDIDO.has(proj.estado) ? ' <span style="color:#A32D2D">*</span>' : '') + '</div>';
   h += '<input type="text" class="ef-i" id="f-pedido" value="' + escapeHtml(proj.pedido_nro || '') + '" placeholder="Ej. 4130"></div></div>';
+  // v70 Fase 17a: Fecha límite para cotizar. Se muestra solo si el proyecto
+  // pasó alguna vez por Solicitud. Editable solo en estado Solicitud (en
+  // otros estados queda read-only para conservar el dato histórico).
+  if (proj.paso_por_solicitud) {
+    const editable = proj.estado === 'Solicitud';
+    h += '<div class="ef" style="margin-top:-5px"><div class="ef-l">Fecha límite para cotizar' + (editable ? '' : ' <span style="font-size:10px;color:#888;font-weight:400">(solo lectura — el proyecto ya no está en Solicitud)</span>') + '</div>';
+    h += '<input type="date" class="ef-i" id="f-fecha-cotizar" value="' + (proj.fecha_limite_cotizar || '') + '"' + (editable ? '' : ' disabled style="background:#F5F3EC;color:#5F5E5A"') + '>';
+    h += '<div class="ef-help">Aparece en el mail estandarizado en la línea "Fecha de Cotización".</div></div>';
+  }
   // v70: Cliente final, justo debajo de Cliente (poco margen). El checkbox
   // de habilitación va a la derecha del título.
   const _cfVal = proj.cliente_final || '';
@@ -3655,13 +3680,24 @@ async function saveProjectMeta() {
   }
   showSpinner('Guardando proyecto...');
   try {
+  // v70 Fase 17a: leer fecha_limite_cotizar solo si el proyecto está en Solicitud
+  // (en otros estados el input está disabled o no existe).
+  let fechaLimiteCotizar = null;
+  const fcInp = document.getElementById('f-fecha-cotizar');
+  if (fcInp && !fcInp.disabled) {
+    fechaLimiteCotizar = fcInp.value || null;
+  } else if (fcInp) {
+    // Si está disabled, conservar el valor original.
+    fechaLimiteCotizar = proj.fecha_limite_cotizar || null;
+  }
   await sb.from('proyectos').update({
     cliente_id: nuevoClienteId,
     descripcion, urgencia, foto_url: foto, fecha_ingreso: fechaIngreso,
     fecha_entrega: fechaEntrega,
     cliente_final: clienteFinal, pedido_nro: pedidoNro,
     observaciones_mail: obsMail,
-    contacto_id
+    contacto_id,
+    fecha_limite_cotizar: fechaLimiteCotizar
   }).eq('id', proj.id);
   await sb.from('items').update({ cliente_id: nuevoClienteId, pedido_nro: pedidoNro }).eq('proyecto_id', proj.id);
   for (const it of proj.items) {
@@ -3827,6 +3863,8 @@ async function saveProjectState(projectId) {
             estado: newEstado, sub_estado_cerrado: newSub, observaciones_anulacion: newObs
           };
           if (pedidoNew) payload.pedido_nro = pedidoNew;
+          // v70 Fase 17a: si pasa a Solicitud, marcar paso_por_solicitud=true.
+          if (newEstado === 'Solicitud') payload.paso_por_solicitud = true;
           await sb.from('proyectos').update(payload).eq('id', projectId);
           await loadAll();
           toast('Estado actualizado');
@@ -3843,6 +3881,8 @@ async function saveProjectState(projectId) {
       estado: newEstado, sub_estado_cerrado: newSub, observaciones_anulacion: newObs
     };
     if (pedidoNew) payload.pedido_nro = pedidoNew;
+    // v70 Fase 17a: si pasa a Solicitud, marcar paso_por_solicitud=true.
+    if (newEstado === 'Solicitud') payload.paso_por_solicitud = true;
     await sb.from('proyectos').update(payload).eq('id', projectId);
     await loadAll();
     const modal = document.getElementById('state-modal');
@@ -14836,7 +14876,20 @@ async function copyProjectForMail(projectId) {
   };
   // Cotizar: "Si" si el proyecto esta en estado Proyectando o Solicitud.
   // Para los demas estados, "No". Esto se puede modificar a mano en el mail.
-  const cotizarVal = (proj.estado === 'Proyectando' || proj.estado === 'Solicitud') ? 'Si' : 'No';
+  // v70 Fase 17a: Cotizar refleja el ciclo de vida del proyecto.
+  // - Estado actual 'Solicitud' → "Sí" (todavía hay que cotizar).
+  // - Pasó directo a Pedido sin Solicitud (paso_por_solicitud=false) → "No".
+  // - Otros casos (pasó por Solicitud y ya no está ahí) → vacío.
+  let cotizarVal;
+  if (proj.estado === 'Solicitud') cotizarVal = 'Sí';
+  else if (!proj.paso_por_solicitud) cotizarVal = 'No';
+  else cotizarVal = '';
+  // Fecha de cotización: muestra fecha_limite_cotizar si existe. Si no pasó
+  // por Solicitud (entró directo a Pedido), muestra "-".
+  let fechaCotizarVal;
+  if (proj.fecha_limite_cotizar) fechaCotizarVal = fmt(proj.fecha_limite_cotizar);
+  else if (!proj.paso_por_solicitud) fechaCotizarVal = '-';
+  else fechaCotizarVal = '';
 
   // Construir HTML
   let html = '<div style="font-family:Arial,sans-serif;font-size:13px;color:#000;line-height:1.45">';
@@ -14860,11 +14913,16 @@ async function copyProjectForMail(projectId) {
     html += line('Cantidad', '');
   }
   html += line('Cotizar', cotizarVal);
-  // Fecha de cotizacion: siempre vacia, la completa Oficina Tecnica a mano
-  html += line('Fecha de Cotización', '');
-  html += line('Cargar Pedido', 'Si');
-  // Fecha de entrega en rojo
-  html += line('Fecha de Entrega', fmt(proj.fecha_entrega), 'color:#A32D2D;font-weight:600');
+  html += line('Fecha de Cotización', fechaCotizarVal);
+  // v70 Fase 17a: si el proyecto tiene pedido_nro cargado, mostrarlo en azul
+  // y con fuente más grande. Si no, "Sí" como antes (todavía falta cargar).
+  if (proj.pedido_nro) {
+    html += '<p style="margin:0"><b>Cargar Pedido:</b> ya cargado. <span style="color:#0C447C;font-weight:700;font-size:1.15em">Pedido ' + escapeHtml(String(proj.pedido_nro)) + '</span></p>';
+  } else {
+    html += line('Cargar Pedido', 'Sí');
+  }
+  // Fecha de entrega en rojo vivo (antes era bordó #A32D2D).
+  html += line('Fecha de Entrega', fmt(proj.fecha_entrega), 'color:#E53935;font-weight:600');
   html += line('Teléfono o mail de Contacto (si se cree relevante)', '');
   // Observaciones desde el campo nuevo observaciones_mail. Puede venir como
   // HTML enriquecido (negritas, colores, tamanos) - lo insertamos directo
@@ -14933,6 +14991,12 @@ async function copyProjectForMail(projectId) {
   plain += 'Cliente: ' + (cli ? cli.nombre : '') + '\n';
   plain += 'Descripción: ' + (proj.descripcion || '') + '\n';
   plain += 'Cotizar: ' + cotizarVal + '\n';
+  plain += 'Fecha de Cotización: ' + fechaCotizarVal + '\n';
+  if (proj.pedido_nro) {
+    plain += 'Cargar Pedido: ya cargado. Pedido ' + proj.pedido_nro + '\n';
+  } else {
+    plain += 'Cargar Pedido: Sí\n';
+  }
   plain += 'Fecha de Entrega: ' + fmt(proj.fecha_entrega) + '\n';
   if (proj.observaciones_mail && proj.observaciones_mail.trim()) {
     // Strip HTML para texto plano fallback
