@@ -6402,7 +6402,9 @@ function generarReporteOperarios() {
   vBlocks.forEach(b => {
     if (b.act.es_pulmon) return;
     if (!fechasSet.has(b.date)) return;
-    const key = b.opId + '|' + b.date;
+    const opId = b.act.operario_id;
+    if (!opId) return;
+    const key = opId + '|' + b.date;
     if (!blocksByOpDate[key]) blocksByOpDate[key] = [];
     blocksByOpDate[key].push(b);
   });
@@ -6428,10 +6430,11 @@ function generarReporteOperarios() {
   html += 'body{font-family:Arial,sans-serif;font-size:11px;color:#000;margin:18px;background:#fff}';
   html += 'h1{font-size:16px;margin:0 0 4px 0}';
   html += '.sub{font-size:11px;color:#666;margin-bottom:14px}';
-  html += 'table{border-collapse:collapse;width:100%;table-layout:fixed}';
+  html += 'table{border-collapse:collapse;width:100%;table-layout:auto}';
   html += 'th,td{border:1px solid #888;padding:5px 7px;vertical-align:top;text-align:left;word-wrap:break-word}';
   html += 'thead th{background:#E8E6DF;font-size:11px}';
-  html += 'tbody td:first-child{background:#F0EFEA;font-weight:600;width:90px;text-align:center;vertical-align:middle}';
+  html += 'tbody td:first-child{background:#F0EFEA;font-weight:600;text-align:center;vertical-align:middle;white-space:nowrap;width:1%}';
+  html += 'thead th:first-child{white-space:nowrap;width:1%}';
   html += '.act{margin-bottom:6px;padding-bottom:5px;border-bottom:1px dashed #DDD}';
   html += '.act:last-child{border-bottom:none;margin-bottom:0;padding-bottom:0}';
   html += '.act-desc{font-weight:600;font-size:11px}';
