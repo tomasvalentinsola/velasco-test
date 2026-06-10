@@ -3152,8 +3152,16 @@ function renderProjectDetail() {
     h += '<div id="f-cliente-list" class="combo-list" style="display:none"></div>';
     h += '</div></div>';
   }
-  h += '<div class="ef" style="flex:1"><div class="ef-l">Numero de pedido' + (PROJ_STATES_REQUIRE_PEDIDO.has(proj.estado) ? ' <span style="color:#A32D2D">*</span>' : '') + '</div>';
-  h += '<input type="text" class="ef-i" id="f-pedido" value="' + escapeHtml(proj.pedido_nro || '') + '" placeholder="Ej. 4130"></div></div>';
+  // v70 Fase 17: el número de pedido solo se muestra en estados post-venta
+  // (Pedido, Cerrado, Anulado). En Proyectando/Solicitud el campo no tiene
+  // sentido (todavía no se cargó el pedido a TacticaSoft) y además la
+  // validación de saveProjectMeta lo rechaza explícitamente.
+  const _estadosConPedido = ['Pedido', 'Cerrado', 'Anulado', 'Perdido'];
+  if (_estadosConPedido.includes(proj.estado)) {
+    h += '<div class="ef" style="flex:1"><div class="ef-l">Numero de pedido' + (PROJ_STATES_REQUIRE_PEDIDO.has(proj.estado) ? ' <span style="color:#A32D2D">*</span>' : '') + '</div>';
+    h += '<input type="text" class="ef-i" id="f-pedido" value="' + escapeHtml(proj.pedido_nro || '') + '" placeholder="Ej. 4130"></div>';
+  }
+  h += '</div>';
   // v70 Fase 17a: Fecha límite para cotizar. Se muestra solo si el proyecto
   // pasó alguna vez por Solicitud. Editable solo en estado Solicitud (en
   // otros estados queda read-only para conservar el dato histórico).
@@ -3487,7 +3495,11 @@ function _projectHasUnsavedChanges() {
   const getVal = id => { const el = document.getElementById(id); return el ? el.value : null; };
   const descripcion = (getVal('f-desc') || '').trim();
   const urgencia = getVal('f-urg') || '';
-  const pedido_nro = (getVal('f-pedido') || '').trim();
+  // v70 Fase 17: el input f-pedido puede no existir si el proyecto está en
+  // Proyectando/Solicitud (ese campo solo se muestra en estados post-venta).
+  // Si no existe, conservamos el valor del snapshot para no detectar falso cambio.
+  const pedidoRaw = getVal('f-pedido');
+  const pedido_nro = pedidoRaw === null ? (snap.pedido_nro || '') : pedidoRaw.trim();
   const cliente_id_raw = getVal('f-cliente');
   // v66: si el cliente está bloqueado (estados Pedido/Cerrado/Anulado), el
   // campo f-cliente no se renderiza. En ese caso, el cliente no puede haber
@@ -3655,7 +3667,10 @@ async function saveProjectMeta() {
   const clienteFinal = _leerClienteFinal();
   // Leer HTML del editor rico (no .value de textarea)
   const obsMail = readRichEditor('f-obs-mail');
-  const pedidoNro = document.getElementById('f-pedido').value.trim() || null;
+  // v70 Fase 17: el input f-pedido solo existe en estados con pedido (Pedido,
+  // Cerrado, Anulado, Perdido). Si no existe, conservamos el valor original.
+  const pedidoInp = document.getElementById('f-pedido');
+  const pedidoNro = pedidoInp ? (pedidoInp.value.trim() || null) : (proj.pedido_nro || null);
   // Cliente_id: solo se lee si el campo no estaba bloqueado (estados Proyectando/Solicitud/Perdido)
   const clienteIdEl = document.getElementById('f-cliente');
   let nuevoClienteId = proj.cliente_id;
@@ -6397,8 +6412,15 @@ function renderItemDetail() {
           cardExtraStyle = ' style="background:#F0F6FB;border-left:3px solid #4787C9"';
         }
       }
+      // v70 Fase 17b: marca visual para procesos individuales clasificados como retrabajo.
+      let retrabajoBadge = '';
+      if (p.es_retrabajo) {
+        retrabajoBadge = ' <span style="display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;background:#FFF4E6;color:#E69138;border:1px solid #E69138;font-weight:700;margin-left:4px">🔁 Retrabajo</span>';
+        // Pisa el estilo de grupo (los retrabajos casi nunca son pieza de un grupo, pero por las dudas).
+        cardExtraStyle = ' style="background:#FFF8EC;border-left:3px solid #E69138"';
+      }
       h += '<div class="proc-card"' + cardExtraStyle + '><div class="proc-card-body">';
-      h += '<div class="proc-card-t"><span style="color:#888780;font-weight:400;margin-right:6px">' + (idx + 1) + '.</span>' + escapeHtml(p.proceso || p.descripcion) + tag + peBadge + piezaBadge;
+      h += '<div class="proc-card-t"><span style="color:#888780;font-weight:400;margin-right:6px">' + (idx + 1) + '.</span>' + escapeHtml(p.proceso || p.descripcion) + tag + peBadge + piezaBadge + retrabajoBadge;
       h += '</div>';
       h += '<div class="proc-card-s">';
       h += '<b>Duracion estimada:</b> ' + dur + setup + '<br>';
@@ -6455,6 +6477,10 @@ function renderItemDetail() {
       h += '<button class="b b-icon" ' + (idx === procesos.length - 1 ? 'disabled' : 'onclick="moveProceso(' + p.id + ',1)"') + ' title="Bajar">▼</button>';
       h += '</div>';
       h += '<button class="b b-icon" onclick="showProcesoForm(' + p.id + ')">Editar</button>';
+      // v70 Fase 17b: duplicar proceso (opcionalmente como retrabajo). Crea
+      // una copia al final de la lista, sin correlatividades, sin_planificar.
+      h += '<button class="b b-icon" onclick="duplicarProceso(' + p.id + ', false)" title="Crear una copia de este proceso al final">📋 Duplicar</button>';
+      h += '<button class="b b-icon" style="background:#FFF4E6;border-color:#E69138;color:#854F0B" onclick="duplicarProceso(' + p.id + ', true)" title="Crear copia marcada como retrabajo, al final">🔁 Crear retrabajo</button>';
       // v70 Fase 10b: marcar como hecho / desanclar.
       if (p.estado === 'completada') {
         h += '<button class="b b-icon" style="background:#FFF4E0;border-color:#E0A800;color:#854F0B" onclick="desanclarProceso(' + p.id + ')" title="Volver a planificable">🔓 Desanclar</button>';
@@ -6666,6 +6692,72 @@ let predSearchTargetId = null;
 let _predMultiSelected = new Set();
 // v70 Fase 8: estado de los filtros del modal de predecesores.
 let _predFiltros = { proyectoId: null, grupoUid: '__todos__', itemId: '__todos__' };
+
+// v70 Fase 17b: duplica un proceso del item al final de la lista. Si
+// asRetrabajo=true, lo marca como retrabajo. La copia queda sin_planificar,
+// sin correlatividades, con todos los demás datos del original.
+async function duplicarProceso(procesoId, asRetrabajo) {
+  const orig = actividades.find(a => a.id === procesoId);
+  if (!orig) { toast('Proceso no encontrado', true); return; }
+  if (!orig.item_id) { toast('Solo se pueden duplicar procesos de items', true); return; }
+  const ok = await showConfirmModalProy(
+    asRetrabajo ? 'Crear retrabajo' : 'Duplicar proceso',
+    asRetrabajo
+      ? 'Se va a crear una copia del proceso "' + (orig.proceso || '?') + '" al final de la lista, marcada como 🔁 retrabajo y sin correlatividades. Después podrás moverla a la posición correcta y redefinir predecesores.\n\n¿Continuar?'
+      : 'Se va a crear una copia del proceso "' + (orig.proceso || '?') + '" al final de la lista, sin correlatividades. Después podrás moverla a la posición correcta y definir predecesores.\n\n¿Continuar?',
+    { textoConfirmar: asRetrabajo ? 'Crear retrabajo' : 'Duplicar', peligro: false }
+  );
+  if (!ok) return;
+  showSpinner(asRetrabajo ? 'Creando retrabajo...' : 'Duplicando proceso...');
+  try {
+    // Calcular el orden: max + 1 entre procesos del mismo item no eliminados.
+    const hermanos = actividades.filter(a => a.item_id === orig.item_id && !a.proceso_eliminado);
+    const maxOrden = hermanos.reduce((m, a) => Math.max(m, a.orden || 0), 0);
+    const payload = {
+      item_id: orig.item_id,
+      cliente_id: orig.cliente_id,
+      pedido_nro: orig.pedido_nro,
+      descripcion: orig.descripcion,
+      descripcion_proyecto: orig.descripcion_proyecto,
+      descripcion_trabajo: orig.descripcion_trabajo,
+      proceso: orig.proceso,
+      duracion_operacion_min: orig.duracion_operacion_min,
+      duracion_estimada_min: orig.duracion_estimada_min,
+      duracion_margen_min: orig.duracion_margen_min,
+      duracion_operario_min: orig.duracion_operario_min,
+      duracion_planificador_min: orig.duracion_planificador_min,
+      tipo: orig.tipo,
+      maquina_ideal_id: orig.maquina_ideal_id,
+      maquina_ideal_nombre: orig.maquina_ideal_nombre,
+      maquinas_suplentes_ids: orig.maquinas_suplentes_ids,
+      operario_ideal_id: orig.operario_ideal_id,
+      operarios_suplentes_ids: orig.operarios_suplentes_ids,
+      urgencia: orig.urgencia,
+      foto_proyecto_url: orig.foto_proyecto_url,
+      foto_url: orig.foto_url,
+      fecha_ingreso: orig.fecha_ingreso,
+      cliente_final: orig.cliente_final,
+      orden: maxOrden + 1,
+      // El duplicado arranca "limpio" para planificar.
+      estado: 'sin_planificar',
+      estado_proceso: 'Planificación Pendiente',
+      fecha: '1900-01-01',
+      hora_inicio: '06:00',
+      proceso_eliminado: false,
+      es_retrabajo: !!asRetrabajo,
+      // Sin tiempos reales (no es el original).
+      fecha_real: null, hora_real_inicio: null,
+      fecha_real_fin: null, hora_real_fin: null
+    };
+    const { data, error } = await sb.from('actividades_tablero').insert(payload).select().single();
+    if (error) { toast('Error: ' + error.message, true); return; }
+    await loadAll();
+    toast(asRetrabajo ? 'Retrabajo creado al final' : 'Proceso duplicado al final');
+    render();
+  } finally {
+    hideSpinner();
+  }
+}
 
 function showAddPredecesorModal(sucesorId) {
   predSearchTargetId = sucesorId;
@@ -7079,6 +7171,17 @@ function showProcesoForm(procesoId, ctx) {
   h += '<div class="ef"><div class="ef-l">Operarios suplentes</div>';
   h += '<div class="chip-wrap" id="chips-op" onclick="document.getElementById(\'chip-add-op\').focus()"></div></div>';
 
+  // v70 Fase 17b: checkbox "Es retrabajo" para procesos individuales del item.
+  // No aplica para matriz (la matriz define el set ideal, no casos puntuales).
+  if (procCtx.tipo === 'item') {
+    const _esRet = proceso.es_retrabajo === true;
+    h += '<div class="ef" style="background:' + (_esRet ? '#FFF4E6' : '#F5F3EC') + ';padding:8px 11px;border-radius:5px;border:1px solid ' + (_esRet ? '#E69138' : '#C8C6BE') + '">';
+    h += '<label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:12px;font-weight:600;color:' + (_esRet ? '#854F0B' : '#3F3E3A') + '">';
+    h += '<input type="checkbox" id="p-es-retrabajo"' + (_esRet ? ' checked' : '') + '> 🔁 Es retrabajo</label>';
+    h += '<div class="ef-help" style="margin-top:4px">Marca este proceso como retrabajo. No afecta el cálculo de remitos (que se hace a nivel item), pero aparece destacado en la vista del item y en el reporte.</div>';
+    h += '</div>';
+  }
+
   if (!isNew && procCtx.tipo === 'item') {
     const procEstado = proceso.estado_proceso || 'Planificación Pendiente';
     const peColor = procStateColor(procEstado);
@@ -7344,7 +7447,9 @@ async function _saveProcesoImpl(procesoId) {
     foto_proyecto_url: proj.foto_url,
     foto_url: item.foto_url,
     fecha_ingreso: proj.fecha_ingreso,
-    cliente_final: proj.cliente_final
+    cliente_final: proj.cliente_final,
+    // v70 Fase 17b: marcar como retrabajo si el checkbox está activado.
+    es_retrabajo: !!(document.getElementById('p-es-retrabajo') && document.getElementById('p-es-retrabajo').checked)
   };
 
   if (procesoId) {
