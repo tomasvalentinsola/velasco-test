@@ -6432,13 +6432,13 @@ function generarReporteOperarios() {
   html += '.sub{font-size:11px;color:#666;margin-bottom:14px}';
   html += 'table{border-collapse:collapse;width:100%;table-layout:fixed}';
   html += 'th,td{border:1px solid #888;padding:5px 7px;vertical-align:top;text-align:left;word-wrap:break-word;overflow:hidden}';
-  html += 'thead th{background:#E8E6DF;font-size:11px;text-align:center}';
-  html += 'tbody td:first-child{background:#F0EFEA;font-weight:600;text-align:center;vertical-align:middle;white-space:nowrap;width:100px}';
-  html += 'thead th:first-child{white-space:nowrap;width:100px}';
+  html += 'thead th{background:#E8E6DF;font-size:20px;text-align:center;padding:8px 7px}';
+  html += 'tbody td:first-child{background:#F0EFEA;font-weight:600;text-align:center;vertical-align:middle;white-space:nowrap;width:130px;font-size:20px}';
+  html += 'thead th:first-child{white-space:nowrap;width:130px}';
   html += '.act{margin-bottom:6px;padding-bottom:5px;border-bottom:1px dashed #DDD}';
   html += '.act:last-child{border-bottom:none;margin-bottom:0;padding-bottom:0}';
   html += '.act-desc{font-weight:600;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}';
-  html += '.act-cli{font-size:10px;color:#444;font-style:italic;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}';
+  html += '.act-cli{font-size:10px;color:#444;font-weight:700;font-style:italic;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}';
   html += '.act-meta{font-size:10px;color:#444;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}';
   html += '.act-done{color:#888;text-decoration:line-through}';
   html += '.act-done .act-meta{color:#999}';
@@ -6472,14 +6472,16 @@ function generarReporteOperarios() {
       procDesc = desc.substring(lastSep + 3);
     }
     const cli = act.cliente_id ? clN(act.cliente_id) : '';
+    const cliFinal = (act.cliente_final || '').trim();
+    const cliCompleto = cli + (cliFinal ? ' (' + cliFinal + ')' : '');
     const maq = act.maquina_id ? mN(act.maquina_id) : '';
     const isCompletada = act.estado === 'completada';
     const procYMaq = (procDesc || act.proceso || '') + (maq ? ' · ' + maq : '');
     // title attr para tooltip nativo cuando el texto se trunca con elipsis.
-    const titleFull = itemDesc + (cli ? ' — ' + cli : '') + (procYMaq ? ' (' + procYMaq + ')' : '');
+    const titleFull = itemDesc + (cliCompleto ? ' — ' + cliCompleto : '') + (procYMaq ? ' (' + procYMaq + ')' : '');
     let h = '<div class="act' + (isCompletada ? ' act-done' : '') + '" title="' + escapeHtml(titleFull) + '">';
     h += '<div class="act-desc">' + escapeHtml(itemDesc) + '</div>';
-    if (cli) h += '<div class="act-cli">' + escapeHtml(cli) + '</div>';
+    if (cliCompleto) h += '<div class="act-cli">' + escapeHtml(cliCompleto) + '</div>';
     h += '<div class="act-meta">' + escapeHtml(procYMaq) + '</div>';
     h += '</div>';
     return h;
