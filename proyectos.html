@@ -14898,7 +14898,9 @@ async function copyProjectForMail(projectId) {
   // Info general
   html += sect('Información General');
   html += line('Cliente', cli ? cli.nombre : '');
-  html += line('Nombre de Contacto', '');
+  // v70 Fase 17: nombre del contacto del proyecto, si está asignado.
+  const _contactoMail = proj.contacto_id ? contN(proj.contacto_id) : '';
+  html += line('Nombre de Contacto', _contactoMail === '?' ? '' : _contactoMail);
   html += line('Descripción', proj.descripcion || '');
   if (projItems.length === 1) {
     html += line('Cantidad', String(projItems[0].cantidad || ''));
@@ -14991,6 +14993,7 @@ async function copyProjectForMail(projectId) {
   // Texto plano fallback
   let plain = 'Información General\n';
   plain += 'Cliente: ' + (cli ? cli.nombre : '') + '\n';
+  plain += 'Nombre de Contacto: ' + (_contactoMail === '?' ? '' : _contactoMail) + '\n';
   plain += 'Descripción: ' + (proj.descripcion || '') + '\n';
   plain += 'Cotizar: ' + cotizarVal + '\n';
   plain += 'Fecha de Cotización: ' + fechaCotizarVal + '\n';
