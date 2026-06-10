@@ -114,6 +114,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
       <button class="b-nav" onclick="navWeek(0)">Hoy</button>
       <button class="b-nav" onclick="navWeek(1)">Sem. sig. →</button>
       <button class="b-nav" onclick="showReorderColsModal()" title="Reordenar columnas del tablero">⇄ Orden</button>
+      <button class="b-nav" onclick="generarReporteOperarios()" title="Reporte imprimible de tareas por operario (hoy + 3 días)">📋 Reporte</button>
     </div>
   </div>
   <div class="hd-r">
@@ -6366,6 +6367,150 @@ async function _finalizarItemGuardar(itemId) {
   } finally {
     if (typeof hideSpinner === 'function') hideSpinner();
   }
+}
+
+// v70 Fase 17: reporte imprimible de tareas por operario para hoy + 3 días.
+// Genera una página HTML en una pestaña nueva con tabla:
+//   - Filas: operarios visibles (en_tablero=true, orden_tablero).
+//   - Columnas: hoy + 3 días siguientes (salteando domingos).
+//   - Celdas: lista de actividades (descripción del item, proceso, máquina).
+// Excluye pulmones. Incluye completadas (en gris tachado).
+function generarReporteOperarios() {
+  // 1. Calcular las 4 fechas (hoy + 3 días, salteando domingos).
+  const hoy = new Date();
+  hoy.setHours(12, 0, 0, 0);
+  const fechas = [];
+  let d = new Date(hoy);
+  while (fechas.length < 4) {
+    if (d.getDay() !== 0) fechas.push(dK(d));
+    d.setDate(d.getDate() + 1);
+  }
+
+  // 2. Operarios visibles en orden actual.
+  const colOps = ops.slice().sort((a, b) => {
+    const oa = (a.orden_tablero === null || a.orden_tablero === undefined) ? Infinity : a.orden_tablero;
+    const ob = (b.orden_tablero === null || b.orden_tablero === undefined) ? Infinity : b.orden_tablero;
+    if (oa !== ob) return oa - ob;
+    return opN(a.id).localeCompare(opN(b.id));
+  });
+
+  // 3. Bloques visuales por (op, fecha). Reusamos computeVB que ya maneja
+  // multi-day y completadas. Filtramos pulmones y dejamos solo las 4 fechas.
+  const vBlocks = computeVB();
+  const fechasSet = new Set(fechas);
+  const blocksByOpDate = {};
+  vBlocks.forEach(b => {
+    if (b.act.es_pulmon) return;
+    if (!fechasSet.has(b.date)) return;
+    const key = b.opId + '|' + b.date;
+    if (!blocksByOpDate[key]) blocksByOpDate[key] = [];
+    blocksByOpDate[key].push(b);
+  });
+  // Ordenar bloques de cada celda por hora de inicio.
+  Object.keys(blocksByOpDate).forEach(k => {
+    blocksByOpDate[k].sort((a, b) => a.startMin - b.startMin);
+  });
+
+  // 4. Formato de fecha amigable para encabezado: "Miércoles 10/06"
+  const dias = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+  const fmtHeader = ds => {
+    const dt = new Date(ds + 'T12:00:00');
+    const dia = dias[dt.getDay()];
+    const dd = String(dt.getDate()).padStart(2, '0');
+    const mm = String(dt.getMonth() + 1).padStart(2, '0');
+    return dia + ' ' + dd + '/' + mm;
+  };
+
+  // 5. Armar HTML.
+  let html = '<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">';
+  html += '<title>Reporte de tareas — ' + fmtHeader(fechas[0]) + '</title>';
+  html += '<style>';
+  html += 'body{font-family:Arial,sans-serif;font-size:11px;color:#000;margin:18px;background:#fff}';
+  html += 'h1{font-size:16px;margin:0 0 4px 0}';
+  html += '.sub{font-size:11px;color:#666;margin-bottom:14px}';
+  html += 'table{border-collapse:collapse;width:100%;table-layout:fixed}';
+  html += 'th,td{border:1px solid #888;padding:5px 7px;vertical-align:top;text-align:left;word-wrap:break-word}';
+  html += 'thead th{background:#E8E6DF;font-size:11px}';
+  html += 'tbody td:first-child{background:#F0EFEA;font-weight:600;width:90px;text-align:center;vertical-align:middle}';
+  html += '.act{margin-bottom:6px;padding-bottom:5px;border-bottom:1px dashed #DDD}';
+  html += '.act:last-child{border-bottom:none;margin-bottom:0;padding-bottom:0}';
+  html += '.act-desc{font-weight:600;font-size:11px}';
+  html += '.act-meta{font-size:10px;color:#444;margin-top:2px}';
+  html += '.act-done{color:#888;text-decoration:line-through}';
+  html += '.act-done .act-meta{color:#999}';
+  html += '.empty{color:#BBB;font-style:italic;font-size:10px}';
+  html += '.nowork{background:#EEE !important;color:#999;font-style:italic;text-align:center;font-size:10px}';
+  html += '@media print { body{margin:8px} h1{font-size:14px} .no-print{display:none} }';
+  html += '.toolbar{margin-bottom:12px}';
+  html += '.toolbar button{background:#0C447C;color:#fff;border:none;padding:7px 14px;border-radius:4px;cursor:pointer;font-weight:600;margin-right:6px}';
+  html += '</style></head><body>';
+  html += '<div class="toolbar no-print">';
+  html += '<button onclick="window.print()">🖨 Imprimir</button>';
+  html += '<button onclick="window.close()" style="background:#888">Cerrar</button>';
+  html += '</div>';
+  html += '<h1>Reporte de tareas por operario</h1>';
+  html += '<div class="sub">Período: ' + fmtHeader(fechas[0]) + ' a ' + fmtHeader(fechas[fechas.length - 1]) + '</div>';
+  html += '<table>';
+  html += '<thead><tr><th>Operario</th>';
+  fechas.forEach(f => {
+    html += '<th>' + escapeHtml(fmtHeader(f)) + '</th>';
+  });
+  html += '</tr></thead><tbody>';
+
+  // Helper para describir una actividad (descripcion del item, proceso, maquina)
+  const formatBlock = (b) => {
+    const act = b.act;
+    // La descripción ya viene formateada con item-proceso, pero quiero
+    // separar el proceso y la máquina para que se vean claros.
+    let desc = act.descripcion || '';
+    // Si descripción es "Item - Proceso", separar proceso.
+    const lastSep = desc.lastIndexOf(' - ');
+    let itemDesc = desc, procDesc = '';
+    if (lastSep > 0) {
+      itemDesc = desc.substring(0, lastSep);
+      procDesc = desc.substring(lastSep + 3);
+    }
+    const maq = act.maquina_id ? mN(act.maquina_id) : '';
+    const isCompletada = act.estado === 'completada';
+    let h = '<div class="act' + (isCompletada ? ' act-done' : '') + '">';
+    h += '<div class="act-desc">' + escapeHtml(itemDesc) + '</div>';
+    h += '<div class="act-meta">' + escapeHtml(procDesc || act.proceso || '') + (maq ? ' · ' + escapeHtml(maq) : '') + '</div>';
+    h += '</div>';
+    return h;
+  };
+
+  colOps.forEach(op => {
+    html += '<tr><td>' + escapeHtml(opN(op.id)) + '</td>';
+    fechas.forEach(f => {
+      const dt = new Date(f + 'T12:00:00');
+      const dow = dt.getDay();
+      // Sábado y operario no trabaja sábado → celda gris "no trabaja"
+      const noTrabajaSab = dow === 6 && (!op.horario_sabado_inicio || !op.horario_sabado_fin);
+      if (noTrabajaSab) {
+        html += '<td class="nowork">No trabaja</td>';
+        return;
+      }
+      const blocks = blocksByOpDate[op.id + '|' + f] || [];
+      if (blocks.length === 0) {
+        html += '<td><span class="empty">Sin tareas</span></td>';
+      } else {
+        html += '<td>' + blocks.map(formatBlock).join('') + '</td>';
+      }
+    });
+    html += '</tr>';
+  });
+  html += '</tbody></table>';
+  html += '<div class="sub" style="margin-top:14px">Generado el ' + new Date().toLocaleString('es-AR') + '</div>';
+  html += '</body></html>';
+
+  // 6. Abrir en pestaña nueva.
+  const w = window.open('', '_blank');
+  if (!w) {
+    toast('No se pudo abrir el reporte. Revisá si el navegador bloqueó pop-ups.', true);
+    return;
+  }
+  w.document.write(html);
+  w.document.close();
 }
 
 init();
