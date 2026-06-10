@@ -5988,6 +5988,20 @@ async function _importarProductoCore(productoId, valores, ignorarValidaciones) {
   const { data: newItem, error: itErr } = await sb.from('items').insert(itemPayload).select().single();
   if (itErr) { console.error('Error creando item:', itErr); return { error: itErr.message }; }
 
+  // v70 Fase 17: si el item heredó foto del producto matriz, insertarla
+  // también en la tabla `fotos` polimórfica. Sin esto, la galería del item
+  // sale vacía al entrar a su vista de detalle (el listado del proyecto sí
+  // la muestra porque lee directo de items.foto_url). Mismo patrón que
+  // usa _crearItemDesdeBuffer al crear items en un proyecto nuevo.
+  if (newItem.foto_url) {
+    await sb.from('fotos').insert({
+      entidad_tipo: 'item',
+      entidad_id: newItem.id,
+      url: newItem.foto_url,
+      orden: 0
+    });
+  }
+
   // 2. Ubicaciones (batch)
   const ubics = productosMatrizUbicaciones.filter(u => u.producto_id === productoId);
   if (ubics.length > 0) {
