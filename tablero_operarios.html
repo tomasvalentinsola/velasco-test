@@ -799,7 +799,7 @@ function dayBlocks(machId, dateStr, excludeId) {
 function calcInsertTime(machId, dateStr, dropMin, excludeId) {
   const blocks = dayBlocks(machId, dateStr, excludeId);
   const act = acts.find(a => a.id === excludeId);
-  const opStart = act && act.operario_id ? sS(act.operario_id, cd) : 360;
+  const opStart = act && act.operario_id ? sS(act.operario_id, dateStr) : 360;
   if (blocks.length === 0) return opStart;
   if (dropMin < blocks[0].s) {
     if (blocks[0].s > opStart + GAP) {
@@ -1600,11 +1600,17 @@ function checkCorrelatividadConflict(actId, fecha, startTime) {
     if (ss === 'Cerrado') continue;
     // Unplaced successor doesn't block (it'll be placed later respecting our new end)
     if (sa.estado === 'sin_planificar') continue;
-    const sStart = tM(sa.hora_inicio);
-    // Compare successor start vs predecessor (this) end
-    if (sa.fecha < newEndDate || (sa.fecha === newEndDate && sStart < newEndTime)) {
-      return { type: 'suc-overlap', other: sa };
+    // v70 Fase 17: si el sucesor es completada (ancla dura), bloqueamos porque
+    // no se puede mover automáticamente. Para sucesores pendientes/planificados,
+    // dejamos pasar — el motor de cascada los va a empujar correctamente.
+    if (sa.estado === 'completada') {
+      const sStart = tM(sa.hora_inicio);
+      if (sa.fecha < newEndDate || (sa.fecha === newEndDate && sStart < newEndTime)) {
+        return { type: 'suc-overlap', other: sa };
+      }
     }
+    // Para sucesores no-completados: no bloqueamos acá. El motor de cascada
+    // se encarga de empujarlos al fin de este nuevo placement.
   }
   return null;
 }
@@ -3155,6 +3161,12 @@ function showTip(e, act, bl) {
     h += '<div>Operario: ' + opN(act.operario_id) + '</div>';
   } else {
     h += '<div style="font-weight:700;font-size:12px;margin-bottom:6px">' + act.descripcion + '</div>';
+    // v70 Fase 17: imagen de la actividad en el tooltip, útil cuando el bloque
+    // es muy chico y no se llega a leer la descripción completa.
+    const fotoTip = act.foto_url || act.foto_proyecto_url;
+    if (fotoTip) {
+      h += '<img src="' + fotoTip + '" style="display:block;max-width:200px;max-height:140px;border-radius:4px;margin-bottom:6px;background:#fff" onerror="this.style.display=\'none\'">';
+    }
     h += '<div>' + clN(act.cliente_id) + (act.pedido_nro ? ' - Ped. ' + act.pedido_nro : '') + '</div>';
     h += '<div>Urgencia: ' + (act.urgencia || '-') + '</div>';
     h += '<div>Maquina: ' + mN(act.maquina_id) + '</div>';

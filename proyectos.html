@@ -14919,7 +14919,7 @@ async function copyProjectForMail(projectId) {
   // v70 Fase 17a: si el proyecto tiene pedido_nro cargado, mostrarlo en azul
   // y con fuente más grande. Si no, "Sí" como antes (todavía falta cargar).
   if (proj.pedido_nro) {
-    html += '<p style="margin:0"><b>Cargar Pedido:</b> ya cargado. <span style="color:#0C447C;font-weight:700;font-size:1.15em">Pedido ' + escapeHtml(String(proj.pedido_nro)) + '</span></p>';
+    html += '<p style="margin:0"><b>Cargar Pedido:</b> ya cargado. <span style="color:rgb(0,0,255);font-weight:700;font-size:1.175em">Pedido ' + escapeHtml(String(proj.pedido_nro)) + '</span></p>';
   } else {
     html += line('Cargar Pedido', 'Sí');
   }
