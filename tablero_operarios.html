@@ -6430,15 +6430,16 @@ function generarReporteOperarios() {
   html += 'body{font-family:Arial,sans-serif;font-size:11px;color:#000;margin:18px;background:#fff}';
   html += 'h1{font-size:16px;margin:0 0 4px 0}';
   html += '.sub{font-size:11px;color:#666;margin-bottom:14px}';
-  html += 'table{border-collapse:collapse;width:100%;table-layout:auto}';
-  html += 'th,td{border:1px solid #888;padding:5px 7px;vertical-align:top;text-align:left;word-wrap:break-word}';
-  html += 'thead th{background:#E8E6DF;font-size:11px}';
-  html += 'tbody td:first-child{background:#F0EFEA;font-weight:600;text-align:center;vertical-align:middle;white-space:nowrap;width:1%}';
-  html += 'thead th:first-child{white-space:nowrap;width:1%}';
+  html += 'table{border-collapse:collapse;width:100%;table-layout:fixed}';
+  html += 'th,td{border:1px solid #888;padding:5px 7px;vertical-align:top;text-align:left;word-wrap:break-word;overflow:hidden}';
+  html += 'thead th{background:#E8E6DF;font-size:11px;text-align:center}';
+  html += 'tbody td:first-child{background:#F0EFEA;font-weight:600;text-align:center;vertical-align:middle;white-space:nowrap;width:100px}';
+  html += 'thead th:first-child{white-space:nowrap;width:100px}';
   html += '.act{margin-bottom:6px;padding-bottom:5px;border-bottom:1px dashed #DDD}';
   html += '.act:last-child{border-bottom:none;margin-bottom:0;padding-bottom:0}';
-  html += '.act-desc{font-weight:600;font-size:11px}';
-  html += '.act-meta{font-size:10px;color:#444;margin-top:2px}';
+  html += '.act-desc{font-weight:600;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}';
+  html += '.act-cli{font-size:10px;color:#444;font-style:italic;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}';
+  html += '.act-meta{font-size:10px;color:#444;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}';
   html += '.act-done{color:#888;text-decoration:line-through}';
   html += '.act-done .act-meta{color:#999}';
   html += '.empty{color:#BBB;font-style:italic;font-size:10px}';
@@ -6460,24 +6461,26 @@ function generarReporteOperarios() {
   });
   html += '</tr></thead><tbody>';
 
-  // Helper para describir una actividad (descripcion del item, proceso, maquina)
+  // Helper para describir una actividad (descripcion del item, cliente, proceso, maquina)
   const formatBlock = (b) => {
     const act = b.act;
-    // La descripción ya viene formateada con item-proceso, pero quiero
-    // separar el proceso y la máquina para que se vean claros.
     let desc = act.descripcion || '';
-    // Si descripción es "Item - Proceso", separar proceso.
     const lastSep = desc.lastIndexOf(' - ');
     let itemDesc = desc, procDesc = '';
     if (lastSep > 0) {
       itemDesc = desc.substring(0, lastSep);
       procDesc = desc.substring(lastSep + 3);
     }
+    const cli = act.cliente_id ? clN(act.cliente_id) : '';
     const maq = act.maquina_id ? mN(act.maquina_id) : '';
     const isCompletada = act.estado === 'completada';
-    let h = '<div class="act' + (isCompletada ? ' act-done' : '') + '">';
+    const procYMaq = (procDesc || act.proceso || '') + (maq ? ' · ' + maq : '');
+    // title attr para tooltip nativo cuando el texto se trunca con elipsis.
+    const titleFull = itemDesc + (cli ? ' — ' + cli : '') + (procYMaq ? ' (' + procYMaq + ')' : '');
+    let h = '<div class="act' + (isCompletada ? ' act-done' : '') + '" title="' + escapeHtml(titleFull) + '">';
     h += '<div class="act-desc">' + escapeHtml(itemDesc) + '</div>';
-    h += '<div class="act-meta">' + escapeHtml(procDesc || act.proceso || '') + (maq ? ' · ' + escapeHtml(maq) : '') + '</div>';
+    if (cli) h += '<div class="act-cli">' + escapeHtml(cli) + '</div>';
+    h += '<div class="act-meta">' + escapeHtml(procYMaq) + '</div>';
     h += '</div>';
     return h;
   };
