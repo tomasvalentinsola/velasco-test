@@ -7174,7 +7174,7 @@ function showProcesoForm(procesoId, ctx) {
   // v70 Fase 17b: checkbox "Es retrabajo" para procesos individuales del item.
   // No aplica para matriz (la matriz define el set ideal, no casos puntuales).
   if (procCtx.tipo === 'item') {
-    const _esRet = proceso.es_retrabajo === true;
+    const _esRet = !!(proceso && proceso.es_retrabajo === true);
     h += '<div class="ef" style="background:' + (_esRet ? '#FFF4E6' : '#F5F3EC') + ';padding:8px 11px;border-radius:5px;border:1px solid ' + (_esRet ? '#E69138' : '#C8C6BE') + '">';
     h += '<label style="display:flex;align-items:center;gap:7px;cursor:pointer;font-size:12px;font-weight:600;color:' + (_esRet ? '#854F0B' : '#3F3E3A') + '">';
     h += '<input type="checkbox" id="p-es-retrabajo"' + (_esRet ? ' checked' : '') + '> 🔁 Es retrabajo</label>';
