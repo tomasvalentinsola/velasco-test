@@ -2527,26 +2527,16 @@ async function moveActOp(actId, newOpId, fecha, dropMin) {
   }
   console.log('[drop] calcInsertTimeForOp returned=' + mT(rawStart) + ' adjusted=' + mT(startTime));
 
-  // v70 Fase 9c: chequeo extra de máquina. La grilla del tablero es por
-  // operario, pero la MÁQUINA puede estar ocupada por una semi/auto del
-  // mismo (o de otro) operario aunque su carril de operario se vea libre
-  // (porque el operario quedó libre tras el setup). Si la posición elegida
-  // solapa con la ocupación real de la máquina, reposicionar al fin de la
-  // otra + GAP. Después el motor decide si hay cascada.
-  const incomingDur = D(act);
-  const incomingEnd = startTime + incomingDur;
-  const machBlocks = dayBlocks(act.maquina_id, fecha, actId);
-  for (const mb of machBlocks) {
-    const solapa = !(incomingEnd <= mb.s || startTime >= mb.e);
-    if (solapa) {
-      // Reposicionar al final del bloque solapado + GAP.
-      const ajuste = mb.e + GAP;
-      console.log('[drop] machine overlap with ' + (mb.act ? mb.act.descripcion : '?') + ' [' + mT(mb.s) + '-' + mT(mb.e) + '] → ajuste a ' + mT(ajuste));
-      // Si el ajuste cae fuera de jornada, lo limita el motor más adelante.
-      startTime = ajuste;
-      break;
-    }
-  }
+  // v70 Fase 17: el pre-chequeo de solapamiento de máquina que había acá
+  // (anterior fase 9c) fue eliminado. Hacía un cálculo simple "startTime +
+  // duracion_planificador_min" que ignoraba multi-day y multi-part, dando
+  // falsos positivos. Ejemplo del bug: dragueás Manguito (duración total 430)
+  // a las 06:00, su parte del día llegaría hasta ~15:00 (jornada), pero el
+  // cálculo plano daba "13:10" y chocaba contra una activ de las 10:55. El
+  // motor de cascada que se ejecuta más adelante ya maneja correctamente
+  // multi-day, cascade, conflictos con completadas, etc. Si hace falta
+  // empujar, lo hace ahí.
+
   // Si bajamos startTime, hay que asegurar que sigue dentro del turno.
   if (startTime < opStart) startTime = opStart;
 
