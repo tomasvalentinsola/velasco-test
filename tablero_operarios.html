@@ -4753,6 +4753,7 @@ function _simApplyChange(state, change) {
       if (k === '_delete') return;
       if (change[k] !== undefined) existing[k] = change[k];
     });
+    if (window._motorDebug) console.log('[motor] applyChange UPDATE existing #' + change.id + ' → fecha=' + existing.fecha + ' hora=' + existing.hora_inicio + ' tipo=' + existing.tipo + ' Dop=' + Dop(existing));
   } else {
     // v70 Fase 17: nueva activ en el state. Esto pasa cuando se activa una
     // actividad sin_planificar (no estaba en el state inicial). Hay que
@@ -4767,6 +4768,7 @@ function _simApplyChange(state, change) {
     });
     if (!item.id) item.id = change.id;
     state.set(change.id, item);
+    if (window._motorDebug) console.log('[motor] applyChange CREATE new #' + change.id + ' → fecha=' + item.fecha + ' hora=' + item.hora_inicio + ' tipo=' + item.tipo + ' op=' + item.operario_id + ' maq=' + item.maquina_id + ' Dop=' + Dop(item) + ' D=' + D(item));
   }
 }
 
@@ -4872,6 +4874,7 @@ function _simCascadeOp(state, anchors) {
       let needs = false;
       if (bDate < endA.date) needs = true;
       else if (bDate === endA.date && bTime < endA.time + SIM_GAP) needs = true;
+      if (window._motorDebug) console.log('[cascadeOp] op=' + opId + ' par A=#' + A.id + ' (' + A.fecha + ' ' + A.hora_inicio + ', tipo=' + A.tipo + ', Dop=' + Dop(A) + ', endOp=' + endA.date + ' ' + mT(endA.time) + ') vs B=#' + B.id + ' (' + bDate + ' ' + B.hora_inicio + ') → needs=' + needs);
       if (!needs) continue;
       // v70 Fase 14: si una de las dos es auto/semi con setup_solapable=true
       // y la otra es manual, no aplicar empuje: el setup puede ocupar el
