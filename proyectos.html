@@ -15572,7 +15572,7 @@ body { font-family: Arial, sans-serif; font-size: 11px; color: #000; }
     </div>
     <table class="cover-info">
       <tr><td class="label">CLIENTE:</td><td class="cliente-big value-fit" colspan="3"><div class="fit-content">${escapeHtml(clienteDisplay)}</div></td></tr>
-      <tr class="shade"><td class="label">PROYECTO:</td><td class="pieza-big value-fit" colspan="3"><div class="fit-content">${escapeHtml(meta.descripcion || '—')}</div></td></tr>
+      <tr class="shade"><td class="label">PROYECTO:</td><td class="pieza-big value-fit" colspan="3"><div class="fit-content">${escapeHtml(_flat(meta.descripcion) || '—')}</div></td></tr>
       <tr><td class="label">ITEM:</td><td class="pieza-big value-fit" colspan="3"><div class="fit-content">${escapeHtml(_flat(item.descripcion))}</div></td></tr>
       <tr class="shade">
         <td class="label">NUMERO DE PEDIDO:</td><td class="value pedido-big">${escapeHtml(item.pedido_nro || '—')}</td>
@@ -18044,13 +18044,13 @@ function renderOT(p, idx, total, item, meta, clienteDisplay) {
       </tr>
       <tr class="row-proj">
         <td class="lblb lblb-small">PROYECTO</td>
-        <td class="valb valb-small value-fit"><div class="fit-content">${escapeHtml((meta.descripcion || '').toUpperCase())}</div></td>
+        <td class="valb valb-small value-fit"><div class="fit-content">${escapeHtml(_flat(meta.descripcion).toUpperCase())}</div></td>
         <td class="lblb lblb-narrow">PEDIDO</td>
         <td class="valb valb-narrow value-fit ot-pedido"><div class="fit-content">${escapeHtml((item.pedido_nro || '').toString().toUpperCase())}</div></td>
       </tr>
       <tr>
         <td class="lblb desc-tall" rowspan="2">DESCRIPCIÓN</td>
-        <td class="valb desc-cell" rowspan="2"><div class="fit-content-multi desc-content">${escapeHtml((item.descripcion || '').toUpperCase())}</div></td>
+        <td class="valb desc-cell" rowspan="2"><div class="fit-content-multi desc-content">${escapeHtml(_flat(item.descripcion).toUpperCase())}</div></td>
         <td class="lblb lblb-narrow">CANTIDAD</td>
         <td class="valb valb-narrow">${item.cantidad}</td>
       </tr>
