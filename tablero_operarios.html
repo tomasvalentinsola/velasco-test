@@ -1835,6 +1835,7 @@ function machineSlicesOfState(a) { return machineSlicesOf(a); }
 // =============================================================
 
 function placeActWithCheck(actId, machId, fecha, startTime, newOpId, skipOpCheck) {
+  if (window._motorDebug) console.log('[place] placeActWithCheck actId=' + actId + ' machId=' + machId + ' fecha=' + fecha + ' startTime=' + (startTime !== undefined ? mT(startTime) : '?') + ' newOpId=' + newOpId);
   const act = acts.find(a => a.id === actId);
   if (!act) return;
   const effectiveOpId = (newOpId !== undefined && newOpId !== null) ? newOpId : act.operario_id;
@@ -1902,7 +1903,9 @@ function placeActWithCheck(actId, machId, fecha, startTime, newOpId, skipOpCheck
 function _runMotorAndApply(changes, options) {
   options = options || {};
   const pulmonAction = options.pulmonAction || pulmonActionPref;
+  if (window._motorDebug) console.log('[motor] entrada con changes=', JSON.parse(JSON.stringify(changes)));
   const simResult = simulateChange(changes, { pulmonAction });
+  if (window._motorDebug) console.log('[motor] simResult=', JSON.parse(JSON.stringify(simResult)));
 
   if (!simResult.ok) {
     if (simResult.error === 'predecesor_no_planificado') {
