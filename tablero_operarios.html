@@ -178,6 +178,11 @@ let maq=[],ops=[],cls=[],acts=[],items=[],proys=[],corrs=[],uStack=[],dragD=null
 function escapeHtml(s) {
   return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
+// v70 Fase 17: aplana saltos de línea. Las descripciones de actividades pueden
+// venir multilínea (heredadas de items con descripción multilínea, formato
+// TacticaSoft). En el tablero todas las celdas son acotadas y necesitan
+// el texto en una sola línea.
+function _flat(s){return String(s==null?'':s).replace(/\r?\n/g,' ').replace(/\s+/g,' ').trim();}
 // Sticky preference for what to do with pulmones in the way of a move.
 // 'cascadear' (default) treats them like any activity and shifts them forward.
 // 'pisar' deletes them when they overlap. Persisted in localStorage.
@@ -1264,7 +1269,7 @@ function showCascadePreview(act, targetOpId, targetFecha, startMin, machId, over
   const fDate = ds => fDn(ds);
   const cList = overlapping.map(c => '<div style="margin:3px 0">• <b>' + c.descripcion + '</b> — Ped. ' + (c.pedido_nro||'-') + ' — ' + mN(c.maquina_id) + ' — ' + c.hora_inicio.substring(0,5) + '</div>').join('');
   m.innerHTML = '<div class="md-t" style="color:#9B7500">⚠ Confirmar cascada</div>' +
-    '<div style="font-size:13px;margin-bottom:12px;line-height:1.5">Al setear <b>' + act.descripcion + '</b> a las <b>' + mT(startMin) + '</b> del <b>' + fDate(targetFecha) + '</b>, las siguientes actividades de <b>' + opN(targetOpId) + '</b> se moveran hacia adelante:</div>' +
+    '<div style="font-size:13px;margin-bottom:12px;line-height:1.5">Al setear <b>' + escapeHtml(_flat(act.descripcion)) + '</b> a las <b>' + mT(startMin) + '</b> del <b>' + fDate(targetFecha) + '</b>, las siguientes actividades de <b>' + opN(targetOpId) + '</b> se moveran hacia adelante:</div>' +
     '<div style="font-size:12px;margin-bottom:12px;padding:10px;background:#FFF8E1;border-radius:6px;border:1px solid #F9A825">' + cList + '</div>' +
     '<div style="font-size:11px;color:#5F5E5A;margin-bottom:12px">Si alguna actividad desplazada queda en un horario donde su maquina esta ocupada, se mostrara otro aviso.</div>' +
     '<div style="display:flex;gap:8px;justify-content:flex-end">' +
@@ -1543,7 +1548,7 @@ async function placeAct(actId, machId, fecha, startTime, newOpId) {
   uStack.push(undoBatch); updU();
   const casc = undoBatch.length - 1;
   if (!suppressNextToast) {
-    let msg = act.descripcion + ' → ' + opN(act.operario_id) + ' ' + mT(startTime);
+    let msg = _flat(act.descripcion) + ' → ' + opN(act.operario_id) + ' ' + mT(startTime);
     if (casc > 0) msg += ' (cascada: ' + casc + ' actividad' + (casc > 1 ? 'es' : '') + ' movida' + (casc > 1 ? 's' : '') + ')';
     toast(msg);
   }
@@ -2855,9 +2860,11 @@ function render() {
           // Title: "Item - Proceso" → item in bold, proceso in normal weight.
           // The descripcion field is already formatted as "<Item> - <Proceso>"
           // by the projects module. Split on the first " - " for display.
+          // v70 Fase 17: aplanar saltos de línea (las descripciones pueden
+          // venir multilínea desde items con formato TacticaSoft).
           const titleDiv = document.createElement('div');
           titleDiv.className = 'bt';
-          const fullDesc = act.descripcion || '';
+          const fullDesc = _flat(act.descripcion);
           const sepIdx = fullDesc.indexOf(' - ');
           if (sepIdx > 0) {
             const itemPart = fullDesc.substring(0, sepIdx);
@@ -3151,7 +3158,7 @@ function showTip(e, act, bl) {
     h += '<div>Maquina: ' + mN(act.maquina_id) + '</div>';
     h += '<div>Operario: ' + opN(act.operario_id) + '</div>';
   } else {
-    h += '<div style="font-weight:700;font-size:12px;margin-bottom:6px">' + act.descripcion + '</div>';
+    h += '<div style="font-weight:700;font-size:12px;margin-bottom:6px">' + escapeHtml(_flat(act.descripcion)) + '</div>';
     // v70 Fase 17: imagen de la actividad en el tooltip, útil cuando el bloque
     // es muy chico y no se llega a leer la descripción completa.
     const fotoTip = act.foto_url || act.foto_proyecto_url;
@@ -4030,7 +4037,7 @@ function showPulmonDecisionModal(actId, machId, fecha, startTime, newOpId, pulmo
   const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'pulmon-decision';
   const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '520px';
   let h = '<div class="md-t">Pulmones afectados</div>';
-  h += '<div style="font-size:12px;color:#5F5E5A;margin-bottom:12px">El movimiento de "<b>' + escapeHtml(act.descripcion) + '</b>" se cruza con ' + pulmones.length + ' pulmon(es) del operario <b>' + escapeHtml(opN(act.operario_id)) + '</b> ese dia.</div>';
+  h += '<div style="font-size:12px;color:#5F5E5A;margin-bottom:12px">El movimiento de "<b>' + escapeHtml(_flat(act.descripcion)) + '</b>" se cruza con ' + pulmones.length + ' pulmon(es) del operario <b>' + escapeHtml(opN(act.operario_id)) + '</b> ese dia.</div>';
   h += '<div style="background:#FFF4D5;border:1px solid #F5C842;border-radius:5px;padding:10px;margin-bottom:14px;max-height:160px;overflow-y:auto">';
   pulmones.forEach(p => {
     const ps = tM(p.hora_inicio);
@@ -4341,7 +4348,7 @@ function chooseMachineForAssign(actId, opId, fecha) {
   const m = document.createElement('div'); m.className = 'md';
   let h = '<button class="md-x" onclick="this.closest(\'.mo\').remove()">&times;</button>';
   h += '<div class="md-t">Elegir maquina</div>';
-  h += '<div style="font-size:12px;color:#5F5E5A;margin-bottom:14px"><b>' + act.descripcion + '</b> — Ped. ' + (act.pedido_nro || '-') + ' — ' + opN(opId) + ' — ' + fecha + '</div>';
+  h += '<div style="font-size:12px;color:#5F5E5A;margin-bottom:14px"><b>' + escapeHtml(_flat(act.descripcion)) + '</b> — Ped. ' + (act.pedido_nro || '-') + ' — ' + opN(opId) + ' — ' + fecha + '</div>';
   // v70 Fase 14: checkbox de setup solapable solo para auto/semi.
   if (act.tipo === 'automatica' || act.tipo === 'semi_automatica') {
     const _solChk = act.setup_solapable ? 'checked' : '';
@@ -5507,9 +5514,9 @@ function _mostrarModalViolaciones(violaciones) {
         const maqName = (typeof mN === 'function') ? mN(v.maquina_id) : ('maq #' + v.maquina_id);
         h += '<b>' + escapeHtml(v.actA.descripcion || '?') + '</b> termina el ' + v.actA.finFecha + ' a las ' + mT(v.actA.finHora) + ' en ' + escapeHtml(maqName) + ', pero <b>' + escapeHtml(v.actB.descripcion || '?') + '</b> arrancaría el ' + v.actB.fecha + ' a las ' + (v.actB.hora || '').substring(0,5);
       } else if (tipo === 'anclada_movida') {
-        h += '<b>' + escapeHtml(v.act.descripcion || '?') + '</b> está marcada como hecha el ' + v.act.oldFecha + ' a las ' + (v.act.oldHora || '').substring(0,5) + ', pero el cambio la movería al ' + v.act.newFecha + ' a las ' + (v.act.newHora || '').substring(0,5);
+        h += '<b>' + escapeHtml(_flat(v.act.descripcion) || '?') + '</b> está marcada como hecha el ' + v.act.oldFecha + ' a las ' + (v.act.oldHora || '').substring(0,5) + ', pero el cambio la movería al ' + v.act.newFecha + ' a las ' + (v.act.newHora || '').substring(0,5);
       } else if (tipo === 'anclada_eliminada') {
-        h += '<b>' + escapeHtml(v.act.descripcion || '?') + '</b> está marcada como hecha y el cambio la eliminaría';
+        h += '<b>' + escapeHtml(_flat(v.act.descripcion) || '?') + '</b> está marcada como hecha y el cambio la eliminaría';
       } else if (tipo === 'correlatividad_violada') {
         h += '<b>' + escapeHtml(v.pred.descripcion || '?') + '</b> termina el ' + v.pred.finFecha + ' a las ' + mT(v.pred.finHora) + ', pero <b>' + escapeHtml(v.suc.descripcion || '?') + '</b> arrancaría antes (' + v.suc.fecha + ' ' + (v.suc.hora || '').substring(0,5) + ')';
       } else if (tipo === 'conflicto_con_completada') {
@@ -6472,7 +6479,7 @@ function generarReporteOperarios() {
   // Helper para describir una actividad (descripcion del item, cliente, proceso, maquina)
   const formatBlock = (b) => {
     const act = b.act;
-    let desc = act.descripcion || '';
+    let desc = _flat(act.descripcion);
     const lastSep = desc.lastIndexOf(' - ');
     let itemDesc = desc, procDesc = '';
     if (lastSep > 0) {

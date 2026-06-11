@@ -672,6 +672,11 @@ function opFullName(o){
   return ap ? (o.nombre+' '+ap) : (o.nombre||'?');
 }
 function escapeHtml(s){if(s===null||s===undefined)return'';return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c])}
+// v70 Fase 17: aplana saltos de línea a una sola línea separada por espacios.
+// Las descripciones de items y productos matriz ahora pueden tener saltos de
+// línea (replica formato TacticaSoft). En contextos donde la altura debe
+// mantenerse acotada (tarjetas, tablero, generar carpeta), usamos _flat.
+function _flat(s){if(s===null||s===undefined)return'';return String(s).replace(/\r?\n/g,' ').replace(/\s+/g,' ').trim();}
 function validCuit(s){return /^\d{11}$/.test(s)}
 
 // =============================================================================
@@ -1331,7 +1336,7 @@ function renderProjectsListBody(filteredProjects) {
     h += '</div>';
     h += img;
     h += '<div class="card-body" style="flex:1">';
-    h += '<div class="card-t">' + escapeHtml(p.descripcion || '(sin descripcion)') + urg + stBadge + warnHtml + '</div>';
+    h += '<div class="card-t">' + escapeHtml(_flat(p.descripcion) || '(sin descripcion)') + urg + stBadge + warnHtml + '</div>';
     h += '<div class="card-s"><b>' + escapeHtml(clN(p.cliente_id)) + '</b>';
     h += ' · Pr. ' + p.id;
     h += p.pedido_nro ? ' · Ped. ' + escapeHtml(p.pedido_nro) : '';
@@ -1345,7 +1350,7 @@ function renderProjectsListBody(filteredProjects) {
         p.items.forEach((it, idx) => {
           const sep = idx < p.items.length - 1 ? ';border-bottom:1px solid #EAE8DF' : '';
           h += '<div style="padding:4px 0;display:flex;justify-content:space-between;align-items:center;gap:10px;cursor:pointer' + sep + '" onclick="event.stopPropagation();navigate({view:\'item\',projectId:' + p.id + ',itemId:' + it.id + '})" title="Ver item">';
-          h += '<span><b>' + escapeHtml(it.descripcion || '(sin descripcion)') + '</b>';
+          h += '<span><b>' + escapeHtml(_flat(it.descripcion) || '(sin descripcion)') + '</b>';
           if (it.cantidad) h += ' · cant. ' + it.cantidad;
           h += '</span>';
           h += '<span style="color:#5F5E5A;font-size:11px">' + escapeHtml(it.estado || 'Espera MP') + '</span>';
@@ -1417,7 +1422,7 @@ function renderItemsListBody(filteredProjects) {
     h += '</div>';
     h += img;
     h += '<div class="card-body" style="flex:1">';
-    h += '<div class="card-t">' + escapeHtml(item.descripcion || '(sin descripcion)') + urg + retBadge + dispBadge + itemEstadoBadge + stBadge + '</div>';
+    h += '<div class="card-t">' + escapeHtml(_flat(item.descripcion) || '(sin descripcion)') + urg + retBadge + dispBadge + itemEstadoBadge + stBadge + '</div>';
     h += '<div class="card-s"><b>' + escapeHtml(clN(proyecto.cliente_id)) + '</b>';
     h += ' · Pr. ' + proyecto.id + ' · ' + escapeHtml(proyecto.descripcion || '');
     if (proyecto.pedido_nro) h += ' · Ped. ' + escapeHtml(proyecto.pedido_nro);
@@ -1441,7 +1446,7 @@ function renderItemsListBody(filteredProjects) {
           h += '<div style="padding:4px 0;display:flex;justify-content:space-between;align-items:center;gap:10px;overflow:hidden' + sep + '">';
           h += '<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0">';
           h += '<b>' + escapeHtml(p.proceso || '—') + '</b>';
-          if (p.descripcion) h += ' · ' + escapeHtml(p.descripcion);
+          if (p.descripcion) h += ' · ' + escapeHtml(_flat(p.descripcion));
           h += '</span>';
           h += '<span style="color:#5F5E5A;font-size:11px;flex-shrink:0">' + durStr + '</span>';
           h += '</div>';
@@ -2112,7 +2117,7 @@ function _renderNpItemLeaf(idx, it, insideGroup) {
     h += '<div style="width:42px;height:42px;background:#E8E6DF;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:20px;flex:0 0 auto">🔧</div>';
   }
   h += '<div style="flex:1;min-width:0">';
-  h += '<div style="font-weight:600;font-size:13px">' + escapeHtml(it.descripcion || '(sin descripción)') + fromMatrizChip + '</div>';
+  h += '<div style="font-weight:600;font-size:13px">' + escapeHtml(_flat(it.descripcion) || '(sin descripción)') + fromMatrizChip + '</div>';
   const subInfo = [matLbl, it.codigo_cliente, it.presentacion_mat_prima].filter(Boolean).join(' · ');
   if (subInfo) h += '<div style="font-size:11px;color:#888;margin-top:2px">' + escapeHtml(subInfo) + procsInfo + '</div>';
   h += '</div>';
@@ -2231,7 +2236,7 @@ function showNewProjectItemForm(idx) {
   // La descripción se bloquea si viene de matriz, salvo producto genérico.
   const readonly = (it.fromMatriz && !_itEsGenerico) ? ' readonly style="background:#F0EEE7"' : '';
   h += '<div class="ef"><div class="ef-l">Descripción <span style="color:#A32D2D">*</span></div>';
-  h += '<input type="text" class="ef-i" id="np-it-desc" value="' + escapeHtml(it.descripcion || '') + '"' + readonly + '></div>';
+  h += '<textarea class="ef-i" id="np-it-desc" rows="3" placeholder="Ej. Eje principal&#10;Podés agregar detalles en otro renglón" style="resize:vertical;font-family:inherit"' + readonly + '>' + escapeHtml(it.descripcion || '') + '</textarea></div>';
 
   h += '<div class="row">';
   h += '<div class="ef" style="flex:1"><div class="ef-l">Cantidad <span style="color:#A32D2D">*</span></div>';
@@ -3302,7 +3307,7 @@ function renderProjectDetail() {
       }
       c += img;
       c += '<div style="flex:1;min-width:0">';
-      c += '<div style="font-size:13px;font-weight:600">' + escapeHtml(it.descripcion) + retBadge + dispBadge + itBadge + '</div>';
+      c += '<div style="font-size:13px;font-weight:600">' + escapeHtml(_flat(it.descripcion)) + retBadge + dispBadge + itBadge + '</div>';
       c += '<div style="font-size:11px;color:#5F5E5A">' + procCount + ' proceso(s)</div>';
       c += '</div>';
       c += '<div style="display:flex;gap:4px;flex-shrink:0">';
@@ -4193,7 +4198,7 @@ function _renderItemModal(item, proj) {
   // Fila 1: Descripcion + Cantidad
   h += '<div class="row">';
   h += '<div class="ef" style="flex:3"><div class="ef-l">Descripción <span style="color:#A32D2D">*</span></div>';
-  h += '<input type="text" class="ef-i" id="i-desc" value="' + escapeHtml(v.descripcion) + '" placeholder="Ej. Eje principal"></div>';
+  h += '<textarea class="ef-i" id="i-desc" rows="3" placeholder="Ej. Eje principal&#10;Podés agregar detalles en otro renglón" style="resize:vertical;font-family:inherit">' + escapeHtml(v.descripcion) + '</textarea></div>';
   h += '<div class="ef" style="flex:1"><div class="ef-l">Cantidad</div>';
   h += '<input type="number" class="ef-i" id="i-cant" value="' + v.cantidad + '" min="1" step="1"></div>';
   h += '</div>';
@@ -5021,7 +5026,7 @@ function _afmRenderProductoLeaf(p, cantOpt) {
     h += '<div style="width:32px;height:32px;background:#E8E6DF;border-radius:3px;display:flex;align-items:center;justify-content:center;font-size:14px;flex:0 0 auto">🔧</div>';
   }
   h += '<div style="flex:1;min-width:0">';
-  h += '<div style="font-weight:600;font-size:12px">' + escapeHtml(p.descripcion || '') + warn + cantSuffix + '</div>';
+  h += '<div style="font-weight:600;font-size:12px">' + escapeHtml(_flat(p.descripcion) || '') + warn + cantSuffix + '</div>';
   const meta = [cliLbl, p.codigo_cliente, matLbl, procsCnt + ' proceso(s)'].filter(Boolean).join(' · ');
   h += '<div style="color:#888;font-size:10px;margin-top:1px">' + escapeHtml(meta) + '</div>';
   h += '</div>';
@@ -5533,7 +5538,7 @@ function _mostrarModalImportarGrupal(opts) {
     const v = validarProductoMatriz(prodId);
     const warn = v.ok ? '' : ' <span title="' + escapeHtml(v.problemas.join('\n')) + '">⚠️</span>';
     h += '<div style="display:flex;justify-content:space-between;padding:2px 0">';
-    h += '<span>' + escapeHtml(p.descripcion) + warn + '</span>';
+    h += '<span>' + escapeHtml(_flat(p.descripcion)) + warn + '</span>';
     h += '<span style="color:#0C447C;font-weight:600">x' + cant + '</span>';
     h += '</div>';
   });
@@ -5852,7 +5857,7 @@ function _mostrarModalImportar(opts) {
   const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'import-prod-modal';
   const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '520px'; m.style.zIndex = '1100';
 
-  let h = '<div class="md-t">Importar "' + escapeHtml(prod.descripcion) + '"</div>';
+  let h = '<div class="md-t">Importar "' + escapeHtml(_flat(prod.descripcion)) + '"</div>';
 
   // Si hay validaciones fallidas, mostrar advertencias.
   if (!validacion.ok) {
@@ -6348,7 +6353,7 @@ function renderItemDetail() {
   let h = '<button class="b" style="margin-bottom:10px" onclick="navigate({view:\'project\',projectId:' + nav.projectId + '})">← Volver al proyecto</button>';
   h += '<div class="form">';
   h += '<div class="form-t" style="display:flex;justify-content:space-between;align-items:center">';
-  h += '<span>Item: ' + escapeHtml(item.descripcion) + (item.cantidad > 1 ? ' <span style="color:#5F5E5A;font-weight:400;font-size:13px">×' + item.cantidad + '</span>' : '') + itBadge + '</span>';
+  h += '<span>Item: ' + escapeHtml(_flat(item.descripcion)) + (item.cantidad > 1 ? ' <span style="color:#5F5E5A;font-weight:400;font-size:13px">×' + item.cantidad + '</span>' : '') + itBadge + '</span>';
   h += '<button class="b b-p" ' + (procesos.length === 0 ? 'disabled title="Agrega procesos para generar la carpeta"' : 'onclick="generateCarpeta(' + item.id + ')"') + '>📄 Generar carpeta</button>';
   h += '</div>';
   h += '<div style="display:flex;gap:20px;margin-bottom:14px"><div style="flex-shrink:0;max-width:330px">';
@@ -6526,7 +6531,7 @@ function renderProductoMatrizDetail() {
   let h = '<button class="b" style="margin-bottom:10px" onclick="navigate({view:\'recursos\',tab:\'matriz\'})">← Volver a Matriz</button>';
   h += '<div class="form">';
   h += '<div class="form-t" style="display:flex;justify-content:space-between;align-items:center">';
-  h += '<span>Producto: ' + escapeHtml(prod.descripcion) + '</span>';
+  h += '<span>Producto: ' + escapeHtml(_flat(prod.descripcion)) + '</span>';
   h += '</div>';
   h += '<div style="display:flex;gap:20px;margin-bottom:14px"><div style="flex-shrink:0;max-width:330px">';
   h += '<div class="ef-l">Fotos del producto</div>' + buildPhotoGalleryHtml('producto_matriz', prod.id, 'pm-detail');
@@ -6829,7 +6834,7 @@ function _predFiltrosHtml() {
     return true;
   }).sort((a, b) => (a.descripcion || '').localeCompare(b.descripcion || ''))
     .forEach(it => {
-      h += '<option value="' + it.id + '"' + (_predFiltros.itemId === it.id ? ' selected' : '') + '>' + escapeHtml(it.descripcion || ('Item ' + it.id)) + '</option>';
+      h += '<option value="' + it.id + '"' + (_predFiltros.itemId === it.id ? ' selected' : '') + '>' + escapeHtml(_flat(it.descripcion) || ('Item ' + it.id)) + '</option>';
     });
   h += '</select></div>';
   h += '</div>';
@@ -7693,7 +7698,7 @@ function _mostrarModalFinalizarItem(item) {
   const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'finitem-modal';
   const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '420px';
   let h = '<div class="md-t">Item con todos los procesos hechos</div>';
-  h += '<div style="font-size:12px;color:#5F5E5A;margin-bottom:12px"><b>' + escapeHtml(item.descripcion || '(sin descripción)') + '</b><br>Se completó el último proceso pendiente. ¿Qué estado le ponés al item?</div>';
+  h += '<div style="font-size:12px;color:#5F5E5A;margin-bottom:12px"><b>' + escapeHtml(_flat(item.descripcion) || '(sin descripción)') + '</b><br>Se completó el último proceso pendiente. ¿Qué estado le ponés al item?</div>';
   const opciones = [
     { val: 'Terminado', label: 'Terminado', desc: 'El item está listo, pendiente de envío o stockeo.' },
     { val: 'Stockeado', label: 'Stockeado', desc: 'El item quedó guardado en stock.' },
@@ -10598,7 +10603,7 @@ function _matrizProductoCardHtml(p) {
   h += '<div style="flex:1;min-width:0">';
   const validacion = validarProductoMatriz(p.id);
   const warnIcon = validacion.ok ? '' : _warningIconHtml('Producto incompleto o desactualizado:\n' + validacion.problemas.join('\n'));
-  h += '<div class="card-t" style="cursor:pointer" onclick="navigate({view:\'productoMatriz\',productoId:' + p.id + '})">' + escapeHtml(p.descripcion || '(sin descripción)') + warnIcon + '</div>';
+  h += '<div class="card-t" style="cursor:pointer" onclick="navigate({view:\'productoMatriz\',productoId:' + p.id + '})">' + escapeHtml(_flat(p.descripcion) || '(sin descripción)') + warnIcon + '</div>';
   // Rutas (una por línea si hay varias ubicaciones), o "Productos Genéricos" si no tiene
   if (ubics.length === 0) {
     h += '<div class="card-s" style="margin-top:2px"><span style="color:#5F5E5A">Productos Genéricos</span> · <span>' + procs.length + ' proceso(s)</span></div>';
@@ -11043,7 +11048,7 @@ function _matrizRenderProductoCardNested(p, contextoUbic) {
   h += '<div style="flex:1;min-width:0">';
   const validacion = validarProductoMatriz(p.id);
   const warnIcon = validacion.ok ? '' : _warningIconHtml('Producto incompleto o desactualizado:\n' + validacion.problemas.join('\n'));
-  h += '<div style="font-weight:600;font-size:12px">' + escapeHtml(p.descripcion || '(sin descripción)') + cantidadChip + warnIcon + '</div>';
+  h += '<div style="font-weight:600;font-size:12px">' + escapeHtml(_flat(p.descripcion) || '(sin descripción)') + cantidadChip + warnIcon + '</div>';
   const matLbl = p.material_id ? ((materiales.find(m => m.id === p.material_id) || {}).nombre || '') : '';
   const meta = [p.codigo_cliente, matLbl, procs.length + ' proceso(s)'].filter(Boolean).join(' · ');
   if (meta) h += '<div style="color:#888;font-size:10px;margin-top:1px">' + escapeHtml(meta) + '</div>';
@@ -13660,7 +13665,7 @@ function _renderPmModal(prod) {
   h += '<div style="font-size:12px;font-weight:600;color:#5F5E5A;margin-bottom:8px">Datos del producto</div>';
   h += '<div class="row">';
   h += '<div class="ef" style="flex:3"><div class="ef-l">Descripción <span style="color:#A32D2D">*</span></div>';
-  h += '<input type="text" class="ef-i" id="pm-desc" value="' + escapeHtml(v.descripcion) + '" placeholder="Ej. Eje SAE 1045 Ø50mm L=200"></div>';
+  h += '<textarea class="ef-i" id="pm-desc" rows="3" placeholder="Ej. Eje SAE 1045 Ø50mm L=200&#10;Podés agregar detalles en otro renglón" style="resize:vertical;font-family:inherit">' + escapeHtml(v.descripcion) + '</textarea></div>';
   h += '<div class="ef" style="flex:1"><div class="ef-l">Código del cliente</div>';
   h += '<input type="text" class="ef-i" id="pm-cod-cli" value="' + escapeHtml(v.codigo_cliente) + '" placeholder="Ej. 4517-AB"></div>';
   h += '</div>';
@@ -14446,7 +14451,7 @@ function showPmPredecesorPicker(procesoId) {
   const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '600px'; m.style.zIndex = '1100';
   let h = '<div class="md-t">Elegir predecesor para "' + escapeHtml(proceso.proceso || '?') + '"</div>';
   h += '<div style="font-size:11px;color:#5F5E5A;margin-bottom:8px">';
-  h += 'Producto actual: <b>' + escapeHtml(prod.descripcion) + '</b>. ';
+  h += 'Producto actual: <b>' + escapeHtml(_flat(prod.descripcion)) + '</b>. ';
   h += 'Cliente: <b>' + escapeHtml(cliId ? ((clientes.find(c => c.id === cliId) || {}).nombre || '?') : 'Genérico') + '</b>. ';
   h += 'Mostrando procesos del mismo cliente. Podés elegir uno (click en la fila o botón Elegir) o varios con los checkboxes.';
   h += '</div>';
@@ -15031,7 +15036,9 @@ async function copyProjectForMail(projectId) {
     projItems.forEach(it => {
       const desc = (it.descripcion || '').trim() || '(sin descripción)';
       const cant = it.cantidad ? it.cantidad : '?';
-      lista += '<div style="margin-left:8px">• ' + escapeHtml(desc) + ': <b>' + escapeHtml(String(cant)) + '</b></div>';
+      // v70 Fase 17: preservar saltos de línea de la descripción.
+      const descHtml = escapeHtml(desc).replace(/\n/g, '<br>');
+      lista += '<div style="margin-left:8px">• ' + descHtml + ': <b>' + escapeHtml(String(cant)) + '</b></div>';
     });
     html += '<p style="margin:6px 0 2px 0"><b>Cantidad:</b></p>' + lista;
   } else {
@@ -15072,7 +15079,7 @@ async function copyProjectForMail(projectId) {
       .sort((a, b) => (a.orden || 999999) - (b.orden || 999999));
     const cant = it.cantidad ? ' (Cant.: ' + it.cantidad + ')' : '';
     const verFoto = it.foto_url ? ' (Ver foto ' + (idx + 1) + ')' : '';
-    html += '<li style="margin-bottom:2px"><b>' + escapeHtml((it.descripcion || '').toUpperCase()) + '</b>' + escapeHtml(cant + verFoto);
+    html += '<li style="margin-bottom:2px"><b>' + escapeHtml((it.descripcion || '').toUpperCase()).replace(/\n/g, '<br>') + '</b>' + escapeHtml(cant + verFoto);
     if (procs.length > 0) {
       html += '<ul style="margin:2px 0 4px 0;padding-left:24px">';
       // Si un proceso aparece más de una vez en el item, lo numeramos
@@ -15366,7 +15373,7 @@ function generateCarpeta(itemId) {
     (meta.cliente_final ? ' (para ' + meta.cliente_final + ')' : '');
 
   let html = `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
-<title>Carpeta - ${escapeHtml(item.descripcion)} - Ped. ${escapeHtml(item.pedido_nro)}</title>
+<title>Carpeta - ${escapeHtml(_flat(item.descripcion))} - Ped. ${escapeHtml(item.pedido_nro)}</title>
 <style>
 @page { size: A4; margin: 4mm; }
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -15566,7 +15573,7 @@ body { font-family: Arial, sans-serif; font-size: 11px; color: #000; }
     <table class="cover-info">
       <tr><td class="label">CLIENTE:</td><td class="cliente-big value-fit" colspan="3"><div class="fit-content">${escapeHtml(clienteDisplay)}</div></td></tr>
       <tr class="shade"><td class="label">PROYECTO:</td><td class="pieza-big value-fit" colspan="3"><div class="fit-content">${escapeHtml(meta.descripcion || '—')}</div></td></tr>
-      <tr><td class="label">ITEM:</td><td class="pieza-big value-fit" colspan="3"><div class="fit-content">${escapeHtml(item.descripcion)}</div></td></tr>
+      <tr><td class="label">ITEM:</td><td class="pieza-big value-fit" colspan="3"><div class="fit-content">${escapeHtml(_flat(item.descripcion))}</div></td></tr>
       <tr class="shade">
         <td class="label">NUMERO DE PEDIDO:</td><td class="value pedido-big">${escapeHtml(item.pedido_nro || '—')}</td>
         <td class="label label-r">CONTACTO:</td><td class="value value-fit"><div class="fit-content">${escapeHtml(_contactoNombre)}</div></td>
@@ -16094,7 +16101,7 @@ function _neRenderItemsList() {
     h += '<div style="margin-bottom:7px">';
     h += '<div style="display:flex;gap:8px;align-items:center">';
     h += '<input type="number" class="ef-i" min="0" step="1" value="' + escapeHtml(String(it.cantidad)) + '" data-ne-cant="' + idx + '" style="width:70px;text-align:center">';
-    h += '<input type="text" class="ef-i" value="' + escapeHtml(it.descripcion) + '" data-ne-desc="' + idx + '" style="flex:1" placeholder="Descripción del ítem"' + (bloqueada ? ' readonly style="flex:1;background:#F0EFEA;color:#5F5E5A"' : '') + '>';
+    h += '<textarea class="ef-i" data-ne-desc="' + idx + '" rows="2" style="flex:1;resize:vertical;font-family:inherit' + (bloqueada ? ';background:#F0EFEA;color:#5F5E5A' : '') + '" placeholder="Descripción del ítem"' + (bloqueada ? ' readonly' : '') + '>' + escapeHtml(it.descripcion) + '</textarea>';
     h += '<button class="b b-icon b-d" type="button" onclick="_neRemoveItem(' + idx + ')" title="Quitar" style="width:30px;padding:2px 0">✕</button>';
     h += '</div>';
     if (vinculada) {
@@ -17128,7 +17135,7 @@ body {
 table.ne-tabla { width: 100%; border-collapse: collapse; margin-top: 4px; }
 table.ne-tabla td { padding: 6px 9px; font-size: 14px; vertical-align: top; }
 table.ne-tabla td.ne-c { text-align: center; width: 100px; }
-table.ne-tabla td.ne-d { text-align: left; }
+table.ne-tabla td.ne-d { text-align: left; white-space: pre-wrap; }
 
 /* Pie (siempre al fondo de la hoja) */
 .ne-obs { margin-bottom: 6px; font-size: 14px; line-height: 1.4; }
@@ -17345,11 +17352,17 @@ function _neBuildDocx(docx, d) {
       children: [par(txt('Descripción', { bold: true, size: 29 }))] })
   ]})];
   (d.items || []).forEach(it => {
+    // v70 Fase 17: descripción con saltos de línea. Cada \n se traduce a un
+    // Paragraph independiente para que docx lo respete (TextRun no rompe línea
+    // por sí solo).
+    const descLineas = (it.descripcion || '').split(/\r?\n/);
+    const descPars = descLineas.map(l => par(txt(esc(l), { size: 29 })));
+    if (descPars.length === 0) descPars.push(par(txt('', { size: 29 })));
     itemRows.push(new TableRow({ children: [
       new TableCell({ borders: sinBordes, margins: { top: 40, bottom: 40, left: 100, right: 100 },
         children: [par(txt(String(it.cantidad), { size: 29 }), { alignment: AlignmentType.CENTER })] }),
       new TableCell({ borders: sinBordes, margins: { top: 40, bottom: 40, left: 100, right: 100 },
-        children: [par(txt(esc(it.descripcion), { size: 29 }))] })
+        children: descPars })
     ]}));
   });
   const itemsTable = new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, borders: sinBordes, rows: itemRows });
@@ -17781,7 +17794,7 @@ function _rmRenderListaNota() {
     h += '<div style="width:46px;text-align:center"><input type="checkbox" data-rmn-inc="' + idx + '" onchange="_rmToggleNota(' + idx + ')"' + (it.incluir ? ' checked' : '') + '></div>';
     h += '<div style="width:120px;font-size:12px;font-weight:600">' + escapeHtml(it.numeroNota) + '</div>';
     h += '<div style="width:64px;text-align:center;font-size:14px;font-weight:700">' + it.cantidad + '</div>';
-    h += '<div style="flex:1;min-width:0;font-size:12px">' + escapeHtml(it.descripcion) + '</div>';
+    h += '<div style="flex:1;min-width:0;font-size:12px;white-space:pre-wrap">' + escapeHtml(it.descripcion) + '</div>';
     h += '</div>';
   });
   return h;
@@ -17801,7 +17814,7 @@ function _rmRenderListaDirecto() {
     h += '<div style="width:46px;text-align:center"><input type="checkbox" data-rmd-inc="' + idx + '" onchange="_rmToggleDirecto(' + idx + ')"' + (it.incluir ? ' checked' : '') + '></div>';
     h += '<input type="number" class="ef-i" min="0" step="1" max="' + it.total + '" value="' + escapeHtml(String(it.cantidad)) + '" data-rmd-cant="' + idx + '" data-rmd-max="' + it.total + '" oninput="_rmCantInput(this)" style="width:64px;text-align:center"' + (it.incluir ? '' : ' disabled') + '>';
     h += '<div style="flex:1;min-width:0">';
-    h += '<div style="font-size:12px;font-weight:600">' + escapeHtml(it.descripcion) + '</div>';
+    h += '<div style="font-size:12px;font-weight:600;white-space:pre-wrap">' + escapeHtml(it.descripcion) + '</div>';
     h += '<div style="font-size:10px;color:#5F5E5A">En el proyecto: ' + it.total + ' · pendiente: ' + it.pendiente + '</div>';
     h += '</div></div>';
   });
