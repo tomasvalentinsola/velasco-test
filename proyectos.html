@@ -3120,6 +3120,8 @@ function renderProjectDetail() {
   h += '<button class="b" onclick="copyProjectForMail(' + proj.id + ')" title="Copia el proyecto formateado para pegar en el mail estandarizado">✉ Copiar mail</button>';
   h += '<button class="b" onclick="showRemitoModal(' + proj.id + ')" title="Cargar un remito para este proyecto">🚚 Cargar remito</button>';
   h += '<button class="b" onclick="showNotaEnvioModal(' + proj.id + ')" title="Generar nota de envío para este proyecto">🚚 Nota de envío</button>';
+  // v70 Fase 17d: cargar nota de envío externa (no generada por el sistema).
+  h += '<button class="b" onclick="showNotaEnvioExternaModal(' + proj.id + ')" title="Registrar una nota de envío que se confeccionó fuera del sistema" style="background:#F5F3EC;border-color:#888780">📥 Cargar nota externa</button>';
   h += '<button class="b" onclick="showEtiquetaModalProyecto(' + proj.id + ')" title="Generar etiqueta de envío para imprimir">🏷 Etiqueta de envío</button>';
   h += '<button class="b" onclick="copyProject(' + proj.id + ')" title="Crea un proyecto nuevo con todos estos datos">📑 Duplicar proyecto</button>';
   h += '</div>';
@@ -15809,7 +15811,15 @@ function _remitoCubrePorProyecto(projId) {
 }
 
 // Abre el modal en modo "nuevo" con los datos del proyecto precargados.
-function showNotaEnvioModal(projId) {
+// v70 Fase 17d: registrar una nota de envío "externa" (la nota física se hizo
+// fuera del sistema, en un Word manipulado a mano). Reusa todo el flujo de
+// showNotaEnvioModal pasando esExterna=true.
+function showNotaEnvioExternaModal(projId) {
+  showNotaEnvioModal(projId, true);
+}
+
+function showNotaEnvioModal(projId, esExterna) {
+  esExterna = !!esExterna;
   const proj = getProject(projId) || proyectos.find(p => p.id === projId);
   if (!proj) { toast('Proyecto no encontrado', true); return; }
   const cliente = clientes.find(c => c.id === proj.cliente_id);
@@ -15880,6 +15890,7 @@ function showNotaEnvioModal(projId) {
   const abrir = (itemsParaModal, aviso) => {
     _neRenderModal({
       mode: 'nuevo', projId: projId, notaId: null, numero: null, clienteId: proj.cliente_id,
+      esExterna: esExterna,
       tituloCliente: clN(proj.cliente_id),
       aviso: aviso || '',
       datos: {
@@ -15934,6 +15945,7 @@ function editarNotaEnvio(notaId) {
   if (!n) { toast('Nota no encontrada', true); return; }
   _neRenderModal({
     mode: 'editar', projId: n.proyecto_id, notaId: n.id, numero: n.numero, clienteId: n.cliente_id,
+    esExterna: !!n.es_externa,
     tituloCliente: n.cliente_nombre || clN(n.cliente_id) || '',
     aviso: '',
     datos: {
@@ -15955,10 +15967,15 @@ function editarNotaEnvio(notaId) {
 function _neRenderModal(cfg) {
   _neState = {
     mode: cfg.mode, projId: cfg.projId, notaId: cfg.notaId,
-    numero: cfg.numero, clienteId: cfg.clienteId, items: cfg.items.slice()
+    numero: cfg.numero, clienteId: cfg.clienteId, items: cfg.items.slice(),
+    // v70 Fase 17d: flag para notas externas (no generadas por el sistema).
+    // Cuando true: no se genera PDF/Word, no se pide contacto, el modo de
+    // guardado escribe es_externa=true en la base.
+    esExterna: !!cfg.esExterna
   };
   const d = cfg.datos;
   const esEditar = cfg.mode === 'editar';
+  const esExt = !!_neState.esExterna;
 
   const prev = document.getElementById('ne-modal');
   if (prev) prev.remove();
@@ -15968,11 +15985,13 @@ function _neRenderModal(cfg) {
   m.style.maxWidth = '620px'; m.style.maxHeight = '92vh'; m.style.overflowY = 'auto';
 
   let h = '<div class="md-t">' + (esEditar
-    ? 'Editar nota de envío ' + escapeHtml(cfg.numero)
-    : 'Nota de envío — ' + escapeHtml(cfg.tituloCliente)) + '</div>';
+    ? (esExt ? 'Editar nota externa ' : 'Editar nota de envío ') + escapeHtml(cfg.numero || '')
+    : (esExt ? '📥 Cargar nota externa — ' : 'Nota de envío — ') + escapeHtml(cfg.tituloCliente)) + '</div>';
   h += '<div style="font-size:11px;color:#5F5E5A;margin-bottom:10px">' + (esEditar
-    ? 'Editás el contenido de la nota. El número <b>' + escapeHtml(cfg.numero) + '</b> se mantiene.'
-    : 'Revisá los datos y los ítems. Lo que edites acá <b>solo afecta a la nota</b>, no modifica el proyecto.') + '</div>';
+    ? 'Editás el contenido de la nota. El número se mantiene.'
+    : (esExt
+       ? 'Registrá una nota de envío que se confeccionó <b>fuera del sistema</b> (típicamente un Word a mano). No se genera PDF ni Word. Solo se guarda para llevar el control de piezas entregadas.'
+       : 'Revisá los datos y los ítems. Lo que edites acá <b>solo afecta a la nota</b>, no modifica el proyecto.')) + '</div>';
 
   // v70 Fase 6: aviso de productos ya remitidos en otras notas.
   if (cfg.aviso) {
@@ -16043,7 +16062,9 @@ function _neRenderModal(cfg) {
   if (esEditar) {
     h += '<button class="b" onclick="descargarNotaEnvioWord(' + cfg.notaId + ')" title="Descargar la nota en formato Word">📄 Descargar Word</button>';
   }
-  h += '<button class="b b-p" onclick="generarNotaEnvio()">' + (esEditar ? '💾 Guardar y ver PDF' : '🚚 Generar nota de envío') + '</button></div>';
+  h += '<button class="b b-p" onclick="generarNotaEnvio()">' + (esEditar
+    ? (esExt ? '💾 Guardar cambios' : '💾 Guardar y ver PDF')
+    : (esExt ? '📥 Registrar nota externa' : '🚚 Generar nota de envío')) + '</button></div>';
   // v70 Fase 6b: eliminar la nota desde el propio modal de edición.
   if (esEditar) {
     h += '<div style="margin-top:10px;text-align:right;border-top:1px solid #E8E6DF;padding-top:10px">';
@@ -16208,6 +16229,14 @@ async function generarNotaEnvio() {
     });
   if (!itemsClean.length) { toast('Agregá al menos un ítem con descripción', true); return; }
 
+  // v70 Fase 17d: si es nota externa, el número impreso es OBLIGATORIO
+  // (es el único identificador para vincularla con la nota física existente).
+  const esExt = !!(_neState && _neState.esExterna);
+  if (esExt && !numeroImpreso) {
+    toast('Cargá el número impreso de la nota externa (es obligatorio)', true);
+    return;
+  }
+
   let numero;
   if (_neState.mode === 'nuevo') {
     numero = await _neReservarNumero();
@@ -16219,11 +16248,12 @@ async function generarNotaEnvio() {
       cliente_cuit: cuit || null, cliente_contacto: contacto || null,
       cliente_direccion: direccion || null, observaciones: obs || null,
       numero_impreso: numeroImpreso,
-      items: itemsClean
+      items: itemsClean,
+      es_externa: esExt
     };
     const { error } = await sb.from('notas_envio').insert(payload);
     if (error) { toast('Error al guardar la nota: ' + error.message, true); return; }
-    toast('Nota de envío ' + numero + ' generada');
+    toast(esExt ? ('Nota externa ' + numeroImpreso + ' registrada') : ('Nota de envío ' + numero + ' generada'));
   } else {
     numero = _neState.numero;
     const payload = {
@@ -16236,14 +16266,14 @@ async function generarNotaEnvio() {
     };
     const { error } = await sb.from('notas_envio').update(payload).eq('id', _neState.notaId);
     if (error) { toast('Error al guardar la nota: ' + error.message, true); return; }
-    toast('Nota ' + numero + ' actualizada');
+    toast('Nota ' + (numeroImpreso || numero) + ' actualizada');
   }
 
   await loadAll();
-  // v70: solo abre el PDF si se cargó el número impreso. Si no, avisa.
-  if (numeroImpreso) {
+  // v70 Fase 17d: las notas externas NO abren PDF automáticamente (no se genera).
+  if (!esExt && numeroImpreso) {
     _neAbrirPdf({ numero: numeroImpreso, nombre, razon, cuit, contacto, direccion, fecha, obs, pedido, items: itemsClean });
-  } else {
+  } else if (!esExt) {
     toast('Nota guardada. Cargá el número impreso para imprimir o generar Word.');
   }
 
@@ -16327,6 +16357,9 @@ function _neSeccionProyectoHtml(projId) {
     // muestra solo el interno en negrita.
     const impreso = (n.numero_impreso || '').trim();
     const interno = (n.numero || '').trim();
+    // v70 Fase 17d: badge para notas externas + omitir botones PDF/Word/Etiqueta
+    // (esos no aplican porque la nota se hizo fuera del sistema).
+    const esExt = !!n.es_externa;
     let labelHtml;
     if (impreso) {
       labelHtml = '<span style="font-weight:700">' + escapeHtml(impreso) + '</span>' +
@@ -16334,14 +16367,19 @@ function _neSeccionProyectoHtml(projId) {
     } else {
       labelHtml = '<span style="font-weight:700">' + escapeHtml(interno) + '</span>';
     }
+    if (esExt) {
+      labelHtml += ' <span style="display:inline-block;margin-left:6px;padding:1px 7px;background:#F0EFEA;color:#5F5E5A;border:1px solid #888780;border-radius:3px;font-size:10px;font-weight:700">📥 Externa</span>';
+    }
     h += '<div style="display:flex;align-items:center;gap:10px;padding:7px 12px;background:#fff;border:1px solid #E8E6DF;border-radius:4px;margin-bottom:5px">';
     h += '<div style="flex:1;min-width:0">';
     h += '<div style="font-size:13px">' + labelHtml + '</div>';
     h += '<div style="font-size:11px;color:#5F5E5A">' + escapeHtml(_neFmtFechaCorta(n.fecha)) + ' · ' + cant + ' ítem(s)</div>';
     h += '</div>';
-    h += '<button class="b b-icon" onclick="_neVerPdf(' + n.id + ')" title="Abrir el PDF en otra pestaña">Ver PDF</button>';
-    h += '<button class="b b-icon" onclick="descargarNotaEnvioWord(' + n.id + ')" title="Descargar la nota en formato Word">Word</button>';
-    h += '<button class="b b-icon" onclick="showEtiquetaModalNota(' + n.id + ')" title="Generar etiqueta de envío con esta nota">🏷 Etiqueta</button>';
+    if (!esExt) {
+      h += '<button class="b b-icon" onclick="_neVerPdf(' + n.id + ')" title="Abrir el PDF en otra pestaña">Ver PDF</button>';
+      h += '<button class="b b-icon" onclick="descargarNotaEnvioWord(' + n.id + ')" title="Descargar la nota en formato Word">Word</button>';
+      h += '<button class="b b-icon" onclick="showEtiquetaModalNota(' + n.id + ')" title="Generar etiqueta de envío con esta nota">🏷 Etiqueta</button>';
+    }
     h += '<button class="b b-icon" onclick="editarNotaEnvio(' + n.id + ')" title="Editar esta nota">Editar</button>';
     h += '<button class="b b-icon" onclick="_neIrANota(' + n.id + ')" title="Ir a la pestaña Notas de envío filtrada por esta nota">Ir →</button>';
     h += '</div>';
@@ -16966,25 +17004,31 @@ function _neListaHtml() {
   h += '<div style="width:90px">Pedido</div><div style="width:54px;text-align:center">Ítems</div><div style="width:392px"></div></div>';
   rows.forEach(n => {
     const cant = Array.isArray(n.items) ? n.items.length : 0;
+    // v70 Fase 17d: notas externas se identifican con badge y omiten PDF/Word/Etiqueta.
+    const esExt = !!n.es_externa;
     // v70: notas sin número impreso se resaltan en amarillo y bloquean PDF/Word.
-    const faltaImp = !n.numero_impreso;
-    const bgRow = faltaImp ? '#FFF8E1' : '#fff';
-    const bordRow = faltaImp ? '#E0A800' : '#E8E6DF';
+    // (Las externas no se resaltan porque su flujo no genera PDF — el num impreso es del Word manual).
+    const faltaImp = !n.numero_impreso && !esExt;
+    const bgRow = esExt ? '#F5F3EC' : (faltaImp ? '#FFF8E1' : '#fff');
+    const bordRow = esExt ? '#888780' : (faltaImp ? '#E0A800' : '#E8E6DF');
     h += '<div style="display:flex;gap:10px;align-items:center;padding:7px 12px;background:' + bgRow + ';border:1px solid ' + bordRow + ';border-radius:4px;margin-bottom:5px">';
     h += '<div style="width:130px;font-weight:700;font-size:12px">' + escapeHtml(n.numero_impreso || n.numero || '');
-    if (faltaImp) h += '<div style="font-size:9px;font-weight:600;color:#854F0B;background:#FFE5A0;border-radius:3px;padding:1px 4px;display:inline-block;margin-top:2px">FALTA Nº IMPRESO</div>';
+    if (esExt) h += '<div style="font-size:9px;font-weight:600;color:#5F5E5A;background:#E8E6DF;border-radius:3px;padding:1px 4px;display:inline-block;margin-top:2px">📥 EXTERNA</div>';
+    else if (faltaImp) h += '<div style="font-size:9px;font-weight:600;color:#854F0B;background:#FFE5A0;border-radius:3px;padding:1px 4px;display:inline-block;margin-top:2px">FALTA Nº IMPRESO</div>';
     h += '</div>';
     h += '<div style="width:96px;font-size:12px">' + escapeHtml(_neFmtFechaCorta(n.fecha)) + '</div>';
     h += '<div style="flex:1;min-width:0;font-size:12px">' + escapeHtml(n.cliente_nombre || clN(n.cliente_id) || '—') + '</div>';
     h += '<div style="width:90px;font-size:12px">' + escapeHtml(n.pedido_nro || '—') + '</div>';
     h += '<div style="width:54px;text-align:center;font-size:12px">' + cant + '</div>';
     h += '<div style="width:392px;display:flex;gap:3px;justify-content:flex-end">';
-    const disStyle = faltaImp ? ' style="opacity:0.4;cursor:not-allowed"' : '';
-    const disAttr = faltaImp ? ' disabled' : '';
-    const tipImp = faltaImp ? ' (falta número impreso)' : '';
-    h += '<button class="b b-icon"' + disAttr + disStyle + ' onclick="_neVerPdf(' + n.id + ')" title="Abrir el PDF' + tipImp + '">Ver PDF</button>';
-    h += '<button class="b b-icon"' + disAttr + disStyle + ' onclick="descargarNotaEnvioWord(' + n.id + ')" title="Descargar en formato Word' + tipImp + '">Word</button>';
-    h += '<button class="b b-icon" onclick="showEtiquetaModalNota(' + n.id + ')" title="Generar etiqueta de envío con esta nota">🏷</button>';
+    if (!esExt) {
+      const disStyle = faltaImp ? ' style="opacity:0.4;cursor:not-allowed"' : '';
+      const disAttr = faltaImp ? ' disabled' : '';
+      const tipImp = faltaImp ? ' (falta número impreso)' : '';
+      h += '<button class="b b-icon"' + disAttr + disStyle + ' onclick="_neVerPdf(' + n.id + ')" title="Abrir el PDF' + tipImp + '">Ver PDF</button>';
+      h += '<button class="b b-icon"' + disAttr + disStyle + ' onclick="descargarNotaEnvioWord(' + n.id + ')" title="Descargar en formato Word' + tipImp + '">Word</button>';
+      h += '<button class="b b-icon" onclick="showEtiquetaModalNota(' + n.id + ')" title="Generar etiqueta de envío con esta nota">🏷</button>';
+    }
     h += (n.proyecto_id ? '<button class="b b-icon" onclick="navigate({view:\'project\',projectId:' + n.proyecto_id + '})" title="Ir al proyecto enlazado">Proyecto</button>' : '');
     h += '<button class="b b-icon" onclick="editarNotaEnvio(' + n.id + ')" title="Editar">Editar</button>';
     h += '<button class="b b-icon b-d" onclick="_neEliminar(' + n.id + ')" title="Eliminar">🗑</button>';
