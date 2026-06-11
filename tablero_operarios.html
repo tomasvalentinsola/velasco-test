@@ -4754,9 +4754,18 @@ function _simApplyChange(state, change) {
       if (change[k] !== undefined) existing[k] = change[k];
     });
   } else {
-    // Nueva activ: copiar todo el cambio como item
-    const item = { ...change };
-    delete item._delete;
+    // v70 Fase 17: nueva activ en el state. Esto pasa cuando se activa una
+    // actividad sin_planificar (no estaba en el state inicial). Hay que
+    // hidratar desde acts para no perder tipo, duraciones, setup, etc.
+    // Sin esto, Dop/realEnd dan NaN y la cascada hace cosas raras (ej.
+    // empuja actividades que no chocan).
+    const baseAct = (typeof acts !== 'undefined') ? acts.find(a => a.id === change.id) : null;
+    const item = baseAct ? _simBuildStateItem(baseAct) : {};
+    Object.keys(change).forEach(k => {
+      if (k === '_delete') return;
+      if (change[k] !== undefined) item[k] = change[k];
+    });
+    if (!item.id) item.id = change.id;
     state.set(change.id, item);
   }
 }
