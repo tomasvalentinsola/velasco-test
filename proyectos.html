@@ -893,12 +893,16 @@ function getProject(projectId) {
 }
 
 // Estados disponibles
-const PROJ_STATES = ['Proyectando', 'Solicitud', 'Pedido', 'Anulado', 'Perdido', 'Cerrado'];
+// v70 Fase 18: "Mantenimiento" es post-venta como Pedido pero sin cotización
+// ni pedido_nro. Solo se llega desde Proyectando, y solo sale a Cerrado/Anulado.
+const PROJ_STATES = ['Proyectando', 'Solicitud', 'Pedido', 'Mantenimiento', 'Anulado', 'Perdido', 'Cerrado'];
 const PROJ_STATES_SUB_CERRADO = ['Enviado', 'Terminado', 'Stockeado'];
 // In which states should we show the "missing pedido_nro" warning?
+// Mantenimiento NO requiere pedido_nro (es interno, no se factura como pedido).
 const PROJ_STATES_REQUIRE_PEDIDO = new Set(['Pedido', 'Anulado', 'Cerrado']);
 // In which states do the activities of this project show up in the tablero "+"?
-const PROJ_STATES_ACTIVE_TABLERO = new Set(['Pedido']);
+// Mantenimiento sí planifica como Pedido.
+const PROJ_STATES_ACTIVE_TABLERO = new Set(['Pedido', 'Mantenimiento']);
 
 // Item states. Order matters for display.
 const ITEM_STATES = ['Espera MP', 'Llegó MP', 'Proceso', 'Enviar a TT', 'TT', 'Llegó TT', 'Terminado', 'Enviado', 'Stockeado', 'Anulado'];
@@ -921,6 +925,7 @@ function projStateColor(estado) {
     case 'Proyectando': return { bg: '#E6F1FB', fg: '#0C447C' };  // azul claro
     case 'Solicitud': return { bg: '#FFF4D5', fg: '#854F0B' };  // amarillo claro
     case 'Pedido': return { bg: '#E5F5E1', fg: '#1B6B1B' };  // verde
+    case 'Mantenimiento': return { bg: '#E1F5F4', fg: '#0B6962' };  // turquesa
     case 'Anulado': return { bg: '#FEDADA', fg: '#A32D2D' };  // rojo
     case 'Perdido': return { bg: '#E8E6DF', fg: '#5F5E5A' };  // gris
     case 'Cerrado': return { bg: '#1A1A1A', fg: '#fff' };  // negro
@@ -1207,7 +1212,9 @@ function renderProjectsList() {
   const activeCount = countActiveAdvFilters(advFilters);
 
   // Boton + Nuevo Proyecto (movido del header en Entrega A)
-  let h = '<div style="display:flex;justify-content:flex-end;margin-bottom:10px">';
+  // v70 Fase 18: agregado "+ Mantenimiento rápido" a la izquierda.
+  let h = '<div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:10px">';
+  h += '<button class="b" onclick="crearMantenimientoRapido()" title="Crear un proyecto de mantenimiento con datos precargados" style="background:#E1F5F4;color:#0B6962;border-color:#0B6962;font-weight:600">+ Mantenimiento rápido</button>';
   h += '<button class="b b-p" onclick="navigate({view:\'newProject\'})">+ Nuevo proyecto</button>';
   h += '</div>';
 
@@ -2748,6 +2755,67 @@ function closeClienteCombo() {
   if (list) list.style.display = 'none';
 }
 
+// v70 Fase 18: crea un proyecto de mantenimiento con datos precargados.
+// Cliente "Metalúrgica Velasco" (interno), contacto "Tomás Valentín Sola",
+// urgencia media, ingreso y entrega = hoy. Después abre la vista del proyecto
+// para que el usuario complete descripción y agregue items.
+async function crearMantenimientoRapido() {
+  // Buscar cliente "Metalúrgica Velasco".
+  const cliente = clientes.find(c =>
+    (c.nombre || '').trim().toLowerCase() === 'metalúrgica velasco'
+    || (c.nombre || '').trim().toLowerCase() === 'metalurgica velasco'
+  );
+  if (!cliente) {
+    toast('No se encontró el cliente "Metalúrgica Velasco" en la base. Cargalo desde Recursos > Clientes.', true);
+    return;
+  }
+  // Buscar contacto "Tomás Valentín Sola" del cliente.
+  const contacto = clienteContactos.find(c =>
+    c.cliente_id === cliente.id
+    && c.activo !== false
+    && ((c.nombre || '').trim().toLowerCase().includes('tomás') || (c.nombre || '').trim().toLowerCase().includes('tomas'))
+    && (c.apellido || '').trim().toLowerCase().includes('sola')
+  );
+  if (!contacto) {
+    toast('No se encontró el contacto "Tomás Valentín Sola" para Metalúrgica Velasco. Cargalo desde Recursos > Clientes.', true);
+    return;
+  }
+  const ok = await showConfirmModalProy(
+    'Crear mantenimiento rápido',
+    'Se va a crear un proyecto nuevo con:\n\n' +
+    '• Cliente: ' + cliente.nombre + '\n' +
+    '• Contacto: ' + (contacto.nombre || '') + ' ' + (contacto.apellido || '') + '\n' +
+    '• Urgencia: Media\n' +
+    '• Estado: Mantenimiento\n' +
+    '• Fecha ingreso/entrega: hoy\n\n' +
+    'Después podés editar la descripción y agregar items.\n\n¿Continuar?',
+    { textoConfirmar: 'Crear', peligro: false }
+  );
+  if (!ok) return;
+  showSpinner('Creando proyecto de mantenimiento...');
+  try {
+    const hoy = new Date().toISOString().slice(0, 10);
+    const payload = {
+      cliente_id: cliente.id,
+      contacto_id: contacto.id,
+      urgencia: 'Media',
+      estado: 'Mantenimiento',
+      fecha_ingreso: hoy,
+      fecha_entrega: hoy,
+      descripcion: 'Mantenimiento',
+      pedido_nro: null,
+      paso_por_solicitud: false
+    };
+    const { data: newProj, error } = await sb.from('proyectos').insert(payload).select().single();
+    if (error) { toast('Error: ' + error.message, true); return; }
+    await loadAll();
+    toast('Proyecto de mantenimiento creado');
+    navigate({ view: 'project', projectId: newProj.id });
+  } finally {
+    hideSpinner();
+  }
+}
+
 async function saveNewProject() {
   const cliente_id = parseInt(document.getElementById('f-cliente').value);
   const pedido_nro = document.getElementById('f-pedido').value.trim() || null;
@@ -3771,14 +3839,18 @@ async function confirmDeleteProject() {
 
 // ========== PROJECT STATE CHANGE MODAL ==========
 // Reglas de transicion:
-// - Proyectando -> Pedido, Perdido (NO se puede ir directo a Cerrado/Anulado)
-// - Pedido -> Cerrado, Anulado, Perdido
+// - Proyectando -> Solicitud, Pedido, Mantenimiento, Perdido
+// - Solicitud -> Proyectando, Pedido, Perdido
+// - Pedido -> Cerrado, Anulado
+// - Mantenimiento -> Cerrado, Anulado (v70 Fase 18)
 // - Cerrado -> Pedido (reabrir; v70 Fase 10)
 // - Anulado -> Pedido (reabrir; v70 Fase 10)
 // - Perdido -> Pedido (reactivar)
 function _allowedNextStates(currentEstado) {
-  if (currentEstado === 'Proyectando') return ['Proyectando', 'Pedido', 'Perdido'];
-  if (currentEstado === 'Pedido') return ['Pedido', 'Cerrado', 'Anulado', 'Perdido'];
+  if (currentEstado === 'Proyectando') return ['Proyectando', 'Solicitud', 'Pedido', 'Mantenimiento', 'Perdido'];
+  if (currentEstado === 'Solicitud') return ['Solicitud', 'Proyectando', 'Pedido', 'Perdido'];
+  if (currentEstado === 'Pedido') return ['Pedido', 'Cerrado', 'Anulado'];
+  if (currentEstado === 'Mantenimiento') return ['Mantenimiento', 'Cerrado', 'Anulado'];
   if (currentEstado === 'Cerrado') return ['Cerrado', 'Pedido'];   // reabrir
   if (currentEstado === 'Anulado') return ['Anulado', 'Pedido'];   // reabrir
   if (currentEstado === 'Perdido') return ['Perdido', 'Pedido'];
@@ -3865,6 +3937,18 @@ async function saveProjectState(projectId) {
   // Perdido es para cuando un presupuesto no se concretó en venta.
   if (newEstado === 'Perdido' && proj.estado !== 'Proyectando' && proj.estado !== 'Solicitud') {
     toast('No se puede cambiar a "Perdido" desde "' + proj.estado + '". "Perdido" solo aplica a proyectos que estaban en presupuesto.', true);
+    return;
+  }
+
+  // v70 Fase 18: "Mantenimiento" solo se permite desde "Proyectando".
+  if (newEstado === 'Mantenimiento' && proj.estado !== 'Proyectando') {
+    toast('No se puede cambiar a "Mantenimiento" desde "' + proj.estado + '". Solo se puede llegar desde "Proyectando".', true);
+    return;
+  }
+
+  // v70 Fase 18: desde "Mantenimiento" solo se puede salir a Cerrado o Anulado.
+  if (proj.estado === 'Mantenimiento' && newEstado !== 'Cerrado' && newEstado !== 'Anulado' && newEstado !== 'Mantenimiento') {
+    toast('Desde "Mantenimiento" solo se puede pasar a "Cerrado" o "Anulado".', true);
     return;
   }
 
