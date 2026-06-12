@@ -15505,7 +15505,19 @@ body { font-family: Arial, sans-serif; font-size: 11px; color: #000; }
    auto-shrink para que entre en ese espacio. */
 .ot-info-big td.desc-tall { height: 44px; max-height: 44px; vertical-align: middle; padding-left: 4px; padding-right: 4px; font-size: 10.5px; letter-spacing: 0.2px; }
 .ot-info-big td.desc-cell { height: 44px; max-height: 44px; padding: 4px 8px; overflow: hidden; vertical-align: middle; }
-.ot-info-big td.desc-cell .desc-content { line-height: 1.2; max-height: 36px; overflow: hidden; }
+/* v70 Fase 17: descripcion del item truncada a 2 líneas con elipsis. La OT
+   no es el lugar para ver el detalle completo (eso está en portada/notas).
+   Si el item tiene descripción larga (lista de partes, etc.), acá se ve
+   recortada para que la OT mantenga su tamaño fijo de 142mm. */
+.ot-info-big td.desc-cell .desc-content {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  line-height: 1.2;
+  max-height: 36px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 /* Line clamp helpers (legacy, kept for backward compat) */
 .line-clamp-1 { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.15; max-height: 1.15em; }
 .line-clamp-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.2; max-height: 2.4em; }
@@ -15696,10 +15708,14 @@ function fitTrabajo(el) {
 window.onload = function() {
   // Auto-shrink en todos los .fit-content (single-line)
   document.querySelectorAll('.fit-content').forEach(function(el){ fitOne(el, 12); });
-  // Auto-shrink en .fit-content-multi (multilinea, descripcion)
+  // Auto-shrink en .fit-content-multi (multilinea)
   document.querySelectorAll('.fit-content-multi').forEach(function(el){
     if (el.classList.contains('ot-trabajo-text')) fitTrabajo(el);
-    else fitOne(el, 12);
+    // v70 Fase 17: desc-content NO se procesa con fitOne. Tiene CSS de
+    // line-clamp que trunca a 2 líneas con elipsis. Si pasamos por fitOne,
+    // el cálculo de scrollHeight de un elemento con -webkit-line-clamp
+    // arroja valores raros y termina achicando la fuente sin necesidad.
+    else if (!el.classList.contains('desc-content')) fitOne(el, 12);
   });
   setTimeout(function() { window.print(); }, 400);
 };
