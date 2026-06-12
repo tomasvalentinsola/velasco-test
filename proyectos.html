@@ -15472,19 +15472,25 @@ function generateCarpeta(itemId) {
   const itemFoto = item.foto_url || meta.foto_proyecto_url || null;
   const clienteDisplay = (cliente ? cliente.nombre : '?') +
     (meta.cliente_final ? ' (para ' + meta.cliente_final + ')' : '');
+  // v70 Fase 17: truncar descripciones largas. Si el texto es muy largo,
+  // Chrome al imprimir aplica auto-fit que achata todo el contenido.
+  // Truncamos a un largo seguro y agregamos "…" para indicar que hay más.
+  // El detalle completo se ve desde la app, en notas de envío, etc.
+  const _truncCarpeta = (s, max) => {
+    s = _flat(s);
+    if (s.length <= max) return s;
+    return s.substring(0, max - 1).trimEnd() + '…';
+  };
+  const itemDescCover = _truncCarpeta(item.descripcion || '', 70);
+  const projDescCover = _truncCarpeta(meta.descripcion || '', 40);
 
   let html = `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
-<title>Carpeta - ${escapeHtml(_flat(item.descripcion))} - Ped. ${escapeHtml(item.pedido_nro)}</title>
+<title>Carpeta - ${escapeHtml(itemDescCover)} - Ped. ${escapeHtml(item.pedido_nro)}</title>
 <style>
 @page { size: A4; margin: 4mm; }
 * { box-sizing: border-box; margin: 0; padding: 0; }
-/* v70 Fase 17: body y .page con ancho fijo A4 menos márgenes. Si dejamos
-   ancho fluido (100% de viewport), en una ventana ancha el contenido se
-   renderiza a ~1400px y al imprimir Chrome aplica auto-fit reduciendo todo
-   al 53%. Eso achata las OTs proporcionalmente. Forzando 202mm (210 - 8 de
-   margen) el ancho del browser ya no afecta al print. */
-body { font-family: Arial, sans-serif; font-size: 11px; color: #000; width: 202mm; margin: 0 auto; }
-.page { page-break-after: always; width: 202mm; }
+body { font-family: Arial, sans-serif; font-size: 11px; color: #000; }
+.page { page-break-after: always; }
 .page:last-child { page-break-after: auto; }
 
 /* ===== PORTADA ===== */
@@ -15548,14 +15554,11 @@ body { font-family: Arial, sans-serif; font-size: 11px; color: #000; width: 202m
 .cover-photo img { max-width: 100%; max-height: 320px; object-fit: contain; border: 1px solid #000; }
 
 /* ===== ORDEN DE TRABAJO (mitad de hoja) ===== */
-/* v70 Fase 17: altura reducida de 142mm a 141mm para evitar overflow de 1px
-   que disparaba el auto-escalado de Chrome al imprimir. Con 141mm × 2 + 5mm
-   ot-cut = 287mm, dejando 2mm de margen sobre el A4 disponible (289mm). */
-.ot { border: 1.5px solid #000; padding: 0; display: flex; flex-direction: column; height: 141mm; min-height: 141mm; max-height: 141mm; overflow: hidden; position: relative; page-break-inside: avoid; box-sizing: border-box; }
+.ot { border: 1.5px solid #000; padding: 0; display: flex; flex-direction: column; height: 142mm; min-height: 142mm; max-height: 142mm; overflow: hidden; position: relative; page-break-inside: avoid; box-sizing: border-box; }
 /* .ot.grew: la OT necesito crecer porque el detalle no entraba ni a 9pt.
    Quitamos el max-height y el page-break-inside para que pueda extenderse;
    la OT ocupara toda su pagina por su cuenta. */
-.ot.grew { height: auto; min-height: 141mm; max-height: none; page-break-inside: auto; }
+.ot.grew { height: auto; min-height: 142mm; max-height: none; page-break-inside: auto; }
 .ot-page { display: flex; flex-direction: column; gap: 0; }
 .ot-cut { border: none; height: 5mm; margin: 0; position: relative; display: flex; align-items: center; justify-content: center; z-index: 5; flex-shrink: 0; }
 .ot-cut::before { content: '\\2702 - - - - - - - - - - - - cortar aqui - - - - - - - - - - - -'; font-size: 9px; color: #888; letter-spacing: 1px; background: #fff; padding: 0 8px; }
@@ -15605,7 +15608,7 @@ body { font-family: Arial, sans-serif; font-size: 11px; color: #000; width: 202m
 .ot-info-big td.ot-pedido { font-style: italic; }
 /* Smaller variants for the PROYECTO row */
 .ot-info-big td.lblb-small { padding: 2px 8px; font-size: 10px; letter-spacing: 0.3px; }
-.ot-info-big td.valb-small { padding: 2px 8px; font-size: 11px; font-weight: 600; }
+.ot-info-big td.valb-small { padding: 2px 8px; font-size: 11px; font-weight: 600; min-width: 0; overflow: hidden; }
 /* Lower variant for "ingreso" (lowercase, smaller) */
 .ot-info-big td.lblb-lower { font-size: 9.5px; font-weight: 700; text-transform: none; letter-spacing: 0; }
 .ot-info-big td.valb-lower { font-size: 11px; font-weight: 600; }
@@ -15617,7 +15620,11 @@ body { font-family: Arial, sans-serif; font-size: 11px; color: #000; width: 202m
 /* v70 Fase 17: descripcion del item truncada a 2 líneas con elipsis. La OT
    no es el lugar para ver el detalle completo (eso está en portada/notas).
    Si el item tiene descripción larga (lista de partes, etc.), acá se ve
-   recortada para que la OT mantenga su tamaño fijo de 142mm. */
+   recortada para que la OT mantenga su tamaño fijo de 142mm.
+   word-break: break-word + min-width:0 evita que el browser pida un ancho
+   mínimo basado en la palabra/línea más larga del contenido, lo cual al
+   imprimir provocaba auto-fit de Chrome que achataba toda la OT. */
+.ot-info-big td.desc-cell { min-width: 0; }
 .ot-info-big td.desc-cell .desc-content {
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -15626,6 +15633,9 @@ body { font-family: Arial, sans-serif; font-size: 11px; color: #000; width: 202m
   max-height: 36px;
   overflow: hidden;
   text-overflow: ellipsis;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  min-width: 0;
 }
 /* Line clamp helpers (legacy, kept for backward compat) */
 .line-clamp-1 { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.15; max-height: 1.15em; }
@@ -15693,8 +15703,8 @@ body { font-family: Arial, sans-serif; font-size: 11px; color: #000; width: 202m
     </div>
     <table class="cover-info">
       <tr><td class="label">CLIENTE:</td><td class="cliente-big value-fit" colspan="3"><div class="fit-content">${escapeHtml(clienteDisplay)}</div></td></tr>
-      <tr class="shade"><td class="label">PROYECTO:</td><td class="pieza-big value-fit" colspan="3"><div class="fit-content">${escapeHtml(_flat(meta.descripcion) || '—')}</div></td></tr>
-      <tr><td class="label">ITEM:</td><td class="pieza-big value-fit" colspan="3"><div class="fit-content">${escapeHtml(_flat(item.descripcion))}</div></td></tr>
+      <tr class="shade"><td class="label">PROYECTO:</td><td class="pieza-big value-fit" colspan="3"><div class="fit-content">${escapeHtml(projDescCover) || '—'}</div></td></tr>
+      <tr><td class="label">ITEM:</td><td class="pieza-big value-fit" colspan="3"><div class="fit-content">${escapeHtml(itemDescCover)}</div></td></tr>
       <tr class="shade">
         <td class="label">NUMERO DE PEDIDO:</td><td class="value pedido-big">${escapeHtml(item.pedido_nro || '—')}</td>
         <td class="label label-r">CONTACTO:</td><td class="value value-fit"><div class="fit-content">${escapeHtml(_contactoNombre)}</div></td>
@@ -18096,6 +18106,18 @@ const DESPACHO_CHECKLIST = [
 
 function renderOT(p, idx, total, item, meta, clienteDisplay) {
   const fmt = d => { if (!d) return ''; const [y, m, da] = d.split('-'); return da + '/' + m + '/' + y; };
+  // v70 Fase 17: truncar descripciones largas para la OT. Si el texto es muy
+  // largo, Chrome al imprimir aplica auto-fit que achata toda la OT al ~66%.
+  // Truncando manualmente a un largo seguro evitamos ese comportamiento.
+  // 100 caracteres ≈ 2 líneas en la celda DESCRIPCIÓN; el detalle completo
+  // sigue siendo accesible desde la portada y las notas de envío.
+  const _truncOT = (s, max) => {
+    s = _flat(s);
+    if (s.length <= max) return s;
+    return s.substring(0, max - 1).trimEnd() + '…';
+  };
+  const itemDescOT = _truncOT(item.descripcion || '', 50);
+  const projDescOT = _truncOT(meta.descripcion || '', 50);
   // v66: resolver el material del item (FK a materiales + fallback a campo legacy)
   const itemMatLbl = item.material_id ? ((materiales.find(m => m.id === item.material_id) || {}).nombre || '') : (item.material || '');
   const tarea = (p.proceso || p.descripcion || '').toUpperCase();
@@ -18169,13 +18191,13 @@ function renderOT(p, idx, total, item, meta, clienteDisplay) {
       </tr>
       <tr class="row-proj">
         <td class="lblb lblb-small">PROYECTO</td>
-        <td class="valb valb-small value-fit"><div class="fit-content">${escapeHtml(_flat(meta.descripcion).toUpperCase())}</div></td>
+        <td class="valb valb-small value-fit"><div class="fit-content">${escapeHtml(projDescOT.toUpperCase())}</div></td>
         <td class="lblb lblb-narrow">PEDIDO</td>
         <td class="valb valb-narrow value-fit ot-pedido"><div class="fit-content">${escapeHtml((item.pedido_nro || '').toString().toUpperCase())}</div></td>
       </tr>
       <tr>
         <td class="lblb desc-tall" rowspan="2">DESCRIPCIÓN</td>
-        <td class="valb desc-cell" rowspan="2"><div class="fit-content-multi desc-content">${escapeHtml(_flat(item.descripcion).toUpperCase())}</div></td>
+        <td class="valb desc-cell" rowspan="2"><div class="fit-content-multi desc-content">${escapeHtml(itemDescOT.toUpperCase())}</div></td>
         <td class="lblb lblb-narrow">CANTIDAD</td>
         <td class="valb valb-narrow">${item.cantidad}</td>
       </tr>
