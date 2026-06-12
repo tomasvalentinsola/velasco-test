@@ -1293,9 +1293,10 @@ function renderProjectsList() {
   h += '</div>';   // fin sticky bar
 
   // Listado: aplica primero filtro de estado, luego advFilters.
-  // '__activos__' = Proyectando/Solicitud/Pedido; '__todos__' = sin filtro;
+  // '__activos__' = Proyectando/Solicitud/Pedido/Mantenimiento; '__todos__' = sin filtro;
   // cualquier otro valor = ese estado puntual.
-  const _activos = ['Proyectando', 'Solicitud', 'Pedido'];
+  // v70 Fase 18: Mantenimiento es trabajo en curso, va con los activos.
+  const _activos = ['Proyectando', 'Solicitud', 'Pedido', 'Mantenimiento'];
   const filteredProjects = applyAdvFilters(getProjects().filter(p => {
     const est = p.estado || 'Pedido';
     if (projectFilterValue === '__todos__') return true;
@@ -2240,32 +2241,28 @@ function showNewProjectItemForm(idx) {
   h += '<div style="flex-shrink:0"><div class="ef-l">Foto del item</div>' + buildPhotoWrapHtml(it.foto_url || null, 'np-item') + '</div>';
   h += '<div style="flex:1">';
 
-  // La descripción se bloquea si viene de matriz, salvo producto genérico.
-  const readonly = (it.fromMatriz && !_itEsGenerico) ? ' readonly style="background:#F0EEE7"' : '';
+  // v70 Fase 18: items importados de matriz NO se bloquean. Se conservan
+  // el vínculo (imported_from_matriz_id) y los datos iniciales como template,
+  // pero el usuario puede editar todo libremente. Cada item del proyecto es
+  // independiente del producto matriz una vez creado.
+  const readonly = '';
   h += '<div class="ef"><div class="ef-l">Descripción <span style="color:#A32D2D">*</span></div>';
-  h += '<textarea class="ef-i" id="np-it-desc" rows="3" placeholder="Ej. Eje principal&#10;Podés agregar detalles en otro renglón" style="resize:vertical;font-family:inherit"' + readonly + '>' + escapeHtml(it.descripcion || '') + '</textarea></div>';
+  h += '<textarea class="ef-i" id="np-it-desc" rows="3" placeholder="Ej. Eje principal&#10;Podés agregar detalles en otro renglón" style="resize:vertical;font-family:inherit">' + escapeHtml(it.descripcion || '') + '</textarea></div>';
 
   h += '<div class="row">';
   h += '<div class="ef" style="flex:1"><div class="ef-l">Cantidad <span style="color:#A32D2D">*</span></div>';
   h += '<input type="number" class="ef-i" id="np-it-cant" value="' + (it.cantidad || 1) + '" min="1" step="1"></div>';
   h += '<div class="ef" style="flex:1"><div class="ef-l">Código del cliente</div>';
-  h += '<input type="text" class="ef-i" id="np-it-codcli" value="' + escapeHtml(it.codigo_cliente || '') + '"' + readonly + '></div>';
+  h += '<input type="text" class="ef-i" id="np-it-codcli" value="' + escapeHtml(it.codigo_cliente || '') + '"></div>';
   h += '</div>';
 
-  // Material: si viene de matriz, solo lectura. Si no, picker.
-  if (it.fromMatriz) {
-    const matLbl = it.material_id ? ((materiales.find(m => m.id === it.material_id) || {}).nombre || '') : '';
-    h += '<div class="ef"><div class="ef-l">Material</div>';
-    h += '<input type="text" class="ef-i" value="' + escapeHtml(matLbl) + '" readonly style="background:#F0EEE7">';
-    h += '<input type="hidden" id="np-it-material-value" value="' + (it.material_id || '') + '"></div>';
-  } else {
-    h += '<div class="ef"><div class="ef-l">Material</div>';
-    h += '<div class="combo-wrap" style="position:relative">';
-    h += '<input type="text" class="ef-i" id="np-it-material-search" placeholder="Buscar material..." autocomplete="off" oninput="renderNpItMaterialCombo()" onfocus="renderNpItMaterialCombo()" onblur="setTimeout(closeNpItMaterialCombo, 200)" value="' + (it.material_id ? escapeHtml(((materiales.find(m => m.id === it.material_id) || {}).nombre || '')) : '') + '">';
-    h += '<input type="hidden" id="np-it-material-value" value="' + (it.material_id || '') + '">';
-    h += '<div id="np-it-material-list" class="combo-list" style="display:none"></div>';
-    h += '</div></div>';
-  }
+  // Material: siempre picker editable (antes se bloqueaba si venía de matriz).
+  h += '<div class="ef"><div class="ef-l">Material</div>';
+  h += '<div class="combo-wrap" style="position:relative">';
+  h += '<input type="text" class="ef-i" id="np-it-material-search" placeholder="Buscar material..." autocomplete="off" oninput="renderNpItMaterialCombo()" onfocus="renderNpItMaterialCombo()" onblur="setTimeout(closeNpItMaterialCombo, 200)" value="' + (it.material_id ? escapeHtml(((materiales.find(m => m.id === it.material_id) || {}).nombre || '')) : '') + '">';
+  h += '<input type="hidden" id="np-it-material-value" value="' + (it.material_id || '') + '">';
+  h += '<div id="np-it-material-list" class="combo-list" style="display:none"></div>';
+  h += '</div></div>';
 
   h += '<div class="ef"><div class="ef-l">Presentación de materia prima</div>';
   h += '<input type="text" class="ef-i" id="np-it-pres" value="' + escapeHtml(it.presentacion_mat_prima || '') + '" placeholder="Ej. Barra Ø50 x 6mts"></div>';
@@ -4230,7 +4227,11 @@ function showItemForm(itemId) {
   itFormState = {
     itemId: itemId,
     ubicacionesPendientes: ubicaciones,
-    importedFromMatriz: !!(item && item.imported_from_matriz_id)
+    // v70 Fase 18: items importados de matriz se desacoplan al editarse.
+    // El vínculo (imported_from_matriz_id) se conserva como info histórica
+    // pero el form ya no aplica readonly, ni sincronización, ni warnings.
+    // Cada item es independiente una vez creado.
+    importedFromMatriz: false
   };
 
   _renderItemModal(item, proj);

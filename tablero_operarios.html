@@ -188,6 +188,22 @@ function escapeHtml(s) {
 // TacticaSoft). En el tablero todas las celdas son acotadas y necesitan
 // el texto en una sola línea.
 function _flat(s){return String(s==null?'':s).replace(/\r?\n/g,' ').replace(/\s+/g,' ').trim();}
+// v70 Fase 18: resuelve la foto del item asociado a la actividad. En lugar
+// de leerla del snapshot (act.foto_url, que se setea al crear el proceso),
+// la consulta en items en tiempo real. Si el item tiene foto, la usa; si
+// no, cae al fallback de la foto del proyecto. Esto evita que actividades
+// creadas antes de subir la foto del item queden con foto desactualizada.
+function _actFotoActual(act) {
+  if (!act) return null;
+  if (act.item_id && typeof items !== 'undefined') {
+    const it = items.find(i => i.id === act.item_id);
+    if (it && it.foto_url) return it.foto_url;
+  }
+  // Fallback: snapshot foto del item (por si items global no está listo)
+  if (act.foto_url) return act.foto_url;
+  // Último recurso: foto del proyecto
+  return act.foto_proyecto_url || null;
+}
 // Sticky preference for what to do with pulmones in the way of a move.
 // 'cascadear' (default) treats them like any activity and shifts them forward.
 // 'pisar' deletes them when they overlap. Persisted in localStorage.
@@ -200,7 +216,8 @@ function setPulmonActionPref(v) {
   try { localStorage.setItem('velasco_pulmonAction', v); } catch (e) {}
 }
 // States that allow an activity to appear in the "+" picker
-const PROJ_ACTIVE_FOR_TABLERO = new Set(['Pedido']);
+// v70 Fase 18: Mantenimiento se planifica como Pedido en el tablero.
+const PROJ_ACTIVE_FOR_TABLERO = new Set(['Pedido', 'Mantenimiento']);
 const ITEM_ACTIVE_FOR_TABLERO = new Set(['Espera MP', 'Llegó MP', 'Proceso', 'Enviar a TT', 'TT', 'Llegó TT']);
 function isActAvailableForPlanning(a) {
   if (a.estado !== 'sin_planificar') return false;
@@ -2865,7 +2882,7 @@ function render() {
           block.addEventListener('mousemove', e => { if (tipEl) { tipEl.style.left = Math.min(e.clientX + 12, window.innerWidth - 290) + 'px'; tipEl.style.top = (e.clientY + 16) + 'px'; } });
 
           const bE = bl.startMin + bl.dur;
-          const foto = act.foto_url || act.foto_proyecto_url;
+          const foto = _actFotoActual(act);
           const showPhoto = !act.es_pulmon && bl.dur >= 150 && blockH >= 56 && foto;
 
           if (showPhoto) {
@@ -3201,7 +3218,7 @@ function showTip(e, act, bl) {
     h += '<div style="font-weight:700;font-size:12px;margin-bottom:6px">' + escapeHtml(_flat(act.descripcion)) + '</div>';
     // v70 Fase 17: imagen de la actividad en el tooltip, útil cuando el bloque
     // es muy chico y no se llega a leer la descripción completa.
-    const fotoTip = act.foto_url || act.foto_proyecto_url;
+    const fotoTip = _actFotoActual(act);
     if (fotoTip) {
       h += '<img src="' + fotoTip + '" style="display:block;max-width:200px;max-height:140px;border-radius:4px;margin-bottom:6px;background:#fff" onerror="this.style.display=\'none\'">';
     }
@@ -3266,7 +3283,7 @@ function showEdit(act, bl) {
   const m = document.createElement('div'); m.className = 'md';
   const bE = bl.startMin + bl.dur;
   const tot = D(act);
-  const foto = act.foto_url || act.foto_proyecto_url;
+  const foto = _actFotoActual(act);
 
   // Build operator options: ideal first, then suplentes (in order)
   const opIdealId = act.operario_ideal_id;
@@ -4294,7 +4311,7 @@ function toggleOpSelMachFilter(id) {
 
 function opSelectorItem(a, opId, fecha) {
   const dt = Math.floor(a.duracion_estimada_min / 60) + 'h' + (a.duracion_estimada_min % 60 ? ' ' + a.duracion_estimada_min % 60 + 'm' : '');
-  const foto = a.foto_url || a.foto_proyecto_url;
+  const foto = _actFotoActual(a);
   const urgColor = a.urgencia === 'urgente' ? '#1A1A1A' : a.urgencia === 'alta' ? '#C62828' : a.urgencia === 'media' ? '#854F0B' : '#1B6B1B';
   // Check if predecessors are ready (Planificado or Cerrado).
   // If not, the activity is shown but disabled with grey overlay.
