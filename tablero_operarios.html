@@ -48,6 +48,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 /* Cartel rojo "proceso eliminado": emoji de prohibido (U+26D4) tambien con
    punta visual mas natural. */
 .bk-deleted{position:absolute;top:0;left:1px;font-size:13px;line-height:1;z-index:6;pointer-events:none;text-shadow:0 0 2px rgba(255,255,255,.8)}
+/* v70 Fase 18: badge naranja "⚠ Inconsistente" para activs cuyo predecesor
+   quedó sin planificar (típicamente por edición de correlatividades en
+   Proyectos después de planificar el sucesor). Esquina superior derecha
+   para no chocar con los otros warnings (que están en la izquierda). */
+.bk-incons{position:absolute;top:0;right:1px;font-size:13px;line-height:1;z-index:6;pointer-events:none;text-shadow:0 0 2px rgba(255,255,255,.9);color:#E69138}
 .tip{position:fixed;background:#2C2C2A;color:#fff;padding:10px 14px;border-radius:8px;font-size:11px;line-height:1.5;z-index:400;max-width:320px;pointer-events:none}
 .mo{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.15);z-index:200;display:flex;align-items:center;justify-content:center}
 /* Allow clicks on background to pass through when modal is dragged/resized,
@@ -271,6 +276,29 @@ function hasPredecessorsReady(actId) {
     return false;
   }
   return true;
+}
+
+// v70 Fase 18: detecta si una activ planificada (pendiente/completada con
+// fecha real) tiene predecesores sin planificar. Eso es una inconsistencia
+// resultado de modificar correlatividades desde Proyectos después de haber
+// planificado el sucesor. Devuelve la lista de predecesores sin planificar
+// o null si no hay inconsistencia.
+function _predsSinPlanificar(actId) {
+  const act = acts.find(a => a.id === actId);
+  if (!act) return null;
+  if (act.estado === 'sin_planificar') return null;
+  if (!act.fecha || act.fecha === '1900-01-01') return null;
+  const predIds = corrs.filter(c => c.sucesor_id === actId).map(c => c.predecesor_id);
+  if (predIds.length === 0) return null;
+  const sinPlanificar = [];
+  for (const pid of predIds) {
+    const pa = acts.find(a => a.id === pid);
+    if (!pa) continue;
+    if (pa.estado === 'sin_planificar' || !pa.fecha || pa.fecha === '1900-01-01') {
+      sinPlanificar.push(pa);
+    }
+  }
+  return sinPlanificar.length > 0 ? sinPlanificar : null;
 }
 let alertCounter = 0;
 let suppressNextToast = false;
@@ -2795,6 +2823,18 @@ function render() {
                 block.appendChild(warn);
               }
             }
+            // v70 Fase 18: badge naranja en esquina superior derecha si la
+            // activ planificada tiene predecesores sin planificar.
+            const predsIncons = _predsSinPlanificar(act.id);
+            if (predsIncons) {
+              const incons = document.createElement('div');
+              incons.className = 'bk-incons';
+              incons.textContent = '⚠';
+              incons.title = 'Inconsistente: esta actividad fue planificada antes de que su predecesor "'
+                + predsIncons.map(p => _flat(p.descripcion)).join(', ')
+                + '" tuviera fecha. Replanificá esta actividad o planificá el predecesor primero.';
+              block.appendChild(incons);
+            }
           }
 
           block.style.left = 'calc(' + pL(bl.startMin) + '% + 1px)';
@@ -5005,6 +5045,13 @@ function _simEnforceCorrs(state, anchors) {
       // no debe bloquear — ya se hizo, no hay nada que esperar.
       const predAct = acts.find(a => a.id === corr.predecesor_id);
       if (predAct && predAct.estado === 'completada') continue;
+      // v70 Fase 18: si el predecesor está sin_planificar, lo ignoramos en
+      // el motor. El sucesor planificado queda donde está. La activ va a
+      // mostrarse con badge "⚠ Inconsistente" en el tablero. Antes (fase 10)
+      // este caso bloqueaba el motor entero con 'predecesor_no_planificado',
+      // pero eso impedía mover OTRAS activs no relacionadas. Mejor permitir
+      // el movimiento y avisar visualmente al usuario.
+      if (predAct && (predAct.estado === 'sin_planificar' || !predAct.fecha || predAct.fecha === '1900-01-01')) continue;
       // Sucesor planificado pero predecesor no existe en state: bloqueo.
       return { ok: false, error: 'predecesor_no_planificado', detail: { sucesor_id: corr.sucesor_id, predecesor_id: corr.predecesor_id } };
     }

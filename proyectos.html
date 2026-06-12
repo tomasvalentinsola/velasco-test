@@ -6510,8 +6510,25 @@ function renderItemDetail() {
         // Pisa el estilo de grupo (los retrabajos casi nunca son pieza de un grupo, pero por las dudas).
         cardExtraStyle = ' style="background:#FFF8EC;border-left:3px solid #E69138"';
       }
+      // v70 Fase 18: badge "⚠ Inconsistente" cuando el proceso está
+      // planificado pero alguno de sus predecesores está sin planificar.
+      // Eso genera una inconsistencia en el motor del tablero.
+      let inconsBadge = '';
+      if (isPlanificada) {
+        const predsIncons = myPreds.filter(c => {
+          const pa = actividades.find(a => a.id === c.predecesor_id);
+          return pa && (pa.estado === 'sin_planificar' || !pa.fecha || pa.fecha === '1900-01-01');
+        });
+        if (predsIncons.length > 0) {
+          const predsDesc = predsIncons.map(c => {
+            const pa = actividades.find(a => a.id === c.predecesor_id);
+            return pa ? (pa.proceso || pa.descripcion || '?') : '?';
+          }).join(', ');
+          inconsBadge = ' <span style="display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;background:#FFE5B0;color:#854F0B;border:1px solid #E69138;font-weight:700;margin-left:4px" title="Este proceso está planificado en el tablero pero su predecesor (' + predsDesc + ') no lo está. Replanificá este proceso o planificá el predecesor primero.">⚠ Inconsistente</span>';
+        }
+      }
       h += '<div class="proc-card"' + cardExtraStyle + '><div class="proc-card-body">';
-      h += '<div class="proc-card-t"><span style="color:#888780;font-weight:400;margin-right:6px">' + (idx + 1) + '.</span>' + escapeHtml(p.proceso || p.descripcion) + tag + peBadge + piezaBadge + retrabajoBadge;
+      h += '<div class="proc-card-t"><span style="color:#888780;font-weight:400;margin-right:6px">' + (idx + 1) + '.</span>' + escapeHtml(p.proceso || p.descripcion) + tag + peBadge + piezaBadge + retrabajoBadge + inconsBadge;
       h += '</div>';
       h += '<div class="proc-card-s">';
       h += '<b>Duracion estimada:</b> ' + dur + setup + '<br>';
