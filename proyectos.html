@@ -6518,14 +6518,17 @@ function renderItemDetail() {
       if (isPlanificada) {
         const predsIncons = myPreds.filter(c => {
           const pa = actividades.find(a => a.id === c.predecesor_id);
-          return pa && (pa.estado === 'sin_planificar' || !pa.fecha || pa.fecha === '1900-01-01');
+          if (!pa) return false;
+          // v70 Fase 18: completada no genera inconsistencia.
+          if (pa.estado === 'completada') return false;
+          return pa.estado === 'sin_planificar' || !pa.fecha || pa.fecha === '1900-01-01';
         });
         if (predsIncons.length > 0) {
           const predsDesc = predsIncons.map(c => {
             const pa = actividades.find(a => a.id === c.predecesor_id);
             return pa ? (pa.proceso || pa.descripcion || '?') : '?';
           }).join(', ');
-          inconsBadge = ' <span style="display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;background:#FFE5B0;color:#854F0B;border:1px solid #E69138;font-weight:700;margin-left:4px" title="Este proceso está planificado en el tablero pero su predecesor (' + predsDesc + ') no lo está. Replanificá este proceso o planificá el predecesor primero.">⚠ Inconsistente</span>';
+          inconsBadge = ' <span style="display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;background:#FBE7E7;color:#A32D2D;border:1px solid #C92A2A;font-weight:700;margin-left:4px" title="Este proceso está planificado en el tablero pero su predecesor (' + predsDesc + ') no lo está. Replanificá este proceso o planificá el predecesor primero.">⛔ Inconsistente</span>';
         }
       }
       h += '<div class="proc-card"' + cardExtraStyle + '><div class="proc-card-body">';

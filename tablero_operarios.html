@@ -48,11 +48,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 /* Cartel rojo "proceso eliminado": emoji de prohibido (U+26D4) tambien con
    punta visual mas natural. */
 .bk-deleted{position:absolute;top:0;left:1px;font-size:13px;line-height:1;z-index:6;pointer-events:none;text-shadow:0 0 2px rgba(255,255,255,.8)}
-/* v70 Fase 18: badge naranja "⚠ Inconsistente" para activs cuyo predecesor
+/* v70 Fase 18: badge "⚠ Inconsistente" en rojo para activs cuyo predecesor
    quedó sin planificar (típicamente por edición de correlatividades en
    Proyectos después de planificar el sucesor). Esquina superior derecha
-   para no chocar con los otros warnings (que están en la izquierda). */
-.bk-incons{position:absolute;top:0;right:1px;font-size:13px;line-height:1;z-index:6;pointer-events:none;text-shadow:0 0 2px rgba(255,255,255,.9);color:#E69138}
+   para no chocar con los otros warnings (que están en la izquierda).
+   Rojo porque es un cambio crítico que requiere atención. */
+.bk-incons{position:absolute;top:0;right:1px;font-size:13px;line-height:1;z-index:6;pointer-events:none;text-shadow:0 0 2px rgba(255,255,255,.9);color:#C92A2A}
 .tip{position:fixed;background:#2C2C2A;color:#fff;padding:10px 14px;border-radius:8px;font-size:11px;line-height:1.5;z-index:400;max-width:320px;pointer-events:none}
 .mo{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.15);z-index:200;display:flex;align-items:center;justify-content:center}
 /* Allow clicks on background to pass through when modal is dragged/resized,
@@ -311,6 +312,10 @@ function _predsSinPlanificar(actId) {
   for (const pid of predIds) {
     const pa = acts.find(a => a.id === pid);
     if (!pa) continue;
+    // v70 Fase 18: si el predecesor está marcado como hecho (completada),
+    // NO genera inconsistencia, esté planificado o no. Lo que importa es
+    // que esté terminado; el orden ya se respetó.
+    if (pa.estado === 'completada') continue;
     if (pa.estado === 'sin_planificar' || !pa.fecha || pa.fecha === '1900-01-01') {
       sinPlanificar.push(pa);
     }
@@ -2846,7 +2851,7 @@ function render() {
             if (predsIncons) {
               const incons = document.createElement('div');
               incons.className = 'bk-incons';
-              incons.textContent = '⚠';
+              incons.textContent = '⛔';
               incons.title = 'Inconsistente: esta actividad fue planificada antes de que su predecesor "'
                 + predsIncons.map(p => _flat(p.descripcion)).join(', ')
                 + '" tuviera fecha. Replanificá esta actividad o planificá el predecesor primero.';
