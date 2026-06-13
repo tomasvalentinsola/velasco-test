@@ -15651,6 +15651,13 @@ body { font-family: Arial, sans-serif; font-size: 11px; color: #000; }
 .ot-trabajo { flex: 1; padding: 6px 10px; min-height: 50px; font-size: 13px; line-height: 1.35; white-space: pre-wrap; border-bottom: 1px solid #000; }
 .ot-trabajo-fit { /* la altura se controla por flex:1 del .ot, el contenido tiene auto-shrink */ }
 .ot-trabajo-text { line-height: 1.35; }
+/* v70 Fase 18: el editor rico del campo "Trabajo a realizar" genera <p>, <div>
+   o similar para cada línea. Por defecto algunos browsers les ponen margen
+   vertical que crea un renglón en blanco entre líneas. Forzamos margin:0 y
+   un min-height pequeño para que las líneas vacías (Enter en blanco) sigan
+   ocupando UN solo renglón, no dos. */
+.ot-trabajo-text p, .ot-trabajo-text div { margin: 0; padding: 0; }
+.ot-trabajo-text p:empty::before, .ot-trabajo-text div:empty::before { content: "\\A0"; }
 .ot-trabajo-empty { color: #888; font-style: italic; }
 
 /* Checklist for Despacho/Cierre - texto con ancho fijo + checkbox pegado.
