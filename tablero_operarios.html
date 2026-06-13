@@ -5025,6 +5025,7 @@ function _simPushMach(state, anchors) {
       let needs = false;
       if (bDate < aEnd.date) needs = true;
       else if (bDate === aEnd.date && bTime < aEnd.time + SIM_GAP) needs = true;
+      if (window._motorDebug && needs) console.log('[pushMach] maq=' + (A.maquina_id || '?') + ' A=#' + A.id + ' (' + A.fecha + ' ' + A.hora_inicio + ' end=' + aEnd.date + ' ' + mT(aEnd.time) + ') empuja B=#' + B.id + ' (' + bDate + ' ' + B.hora_inicio + ')');
       if (!needs) continue;
       const aIsAnchor = anchors.has(A.id);
       const bIsAnchor = anchors.has(B.id);
@@ -5100,6 +5101,7 @@ function _simEnforceCorrs(state, anchors) {
 function simulateChange(changes, options) {
   options = options || {};
   const pulmonAction = options.pulmonAction || 'cascadear';
+  if (window._motorDebug) console.log('[motor] simulateChange changes=', JSON.parse(JSON.stringify(changes)));
 
   // 1. Construir state inicial a partir de acts (excluyendo sin_planificar).
   // v70 Fase 17: las actividades completadas SÍ entran al state como
