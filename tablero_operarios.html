@@ -322,6 +322,91 @@ function _predsSinPlanificar(actId) {
   }
   return sinPlanificar.length > 0 ? sinPlanificar : null;
 }
+
+// v70 Fase 18: detecta si una actividad solapa con otra del mismo operario
+// o de la misma máquina. Solapamientos preexistentes en el tablero (creados
+// por cambios desde Proyectos que modifican duraciones, por ejemplo) hay
+// que mostrarlos para que el usuario los resuelva antes de mover otras cosas.
+// Sin esta detección, el motor cascadea esos overlaps en cada simulación
+// y arroja "Actividades afectadas" que no tienen que ver con el movimiento
+// que el usuario está haciendo.
+//
+// Reglas:
+// - Excluye actividades completadas (no se mueven, no son problema).
+// - Excluye actividades sin_planificar (no están en el tablero).
+// - Excluye actividades es_pulmon (los pulmones pueden ser pisados por diseño).
+// - Excepción setup_solapable: si A y B comparten solo el setup de una
+//   auto/semi con setup_solapable=true, NO es overlap (es válido).
+//
+// Devuelve array de las otras activs con las que solapa, o null si no hay.
+function _actOverlaps(actId) {
+  const A = acts.find(a => a.id === actId);
+  if (!A) return null;
+  if (A.estado === 'sin_planificar' || A.estado === 'completada') return null;
+  if (!A.fecha || A.fecha === '1900-01-01') return null;
+  if (A.es_pulmon) return null;
+
+  // Helpers para calcular fin de A en términos de minutos absolutos desde
+  // el inicio del año (para comparar entre diferentes fechas).
+  // Usamos fecha + hora_inicio + duracion como rango ocupado.
+  // _simEndOp/_simEndMach están en otra parte del archivo y devuelven {date, time}.
+  // Para evitar dependencia, calculamos en epoch min.
+  const epochDayMin = ds => {
+    if (!ds) return 0;
+    const [y, m, d] = ds.split('-').map(Number);
+    // Aproximación lineal suficiente: días*1440 desde 1970.
+    return Math.floor(new Date(y, m - 1, d).getTime() / 60000);
+  };
+  const rangoOp = act => {
+    const startMin = epochDayMin(act.fecha) + tM(act.hora_inicio);
+    const dur = Dop(act); // duración operario
+    return { start: startMin, end: startMin + dur };
+  };
+  const rangoMaq = act => {
+    const startMin = epochDayMin(act.fecha) + tM(act.hora_inicio);
+    const dur = D(act); // duración total
+    return { start: startMin, end: startMin + dur };
+  };
+
+  const aRangeOp = rangoOp(A);
+  const aRangeMaq = rangoMaq(A);
+  const aIsAutoSolap = (effTipo(A) === 'automatica' || effTipo(A) === 'semi_automatica') && !!A.setup_solapable;
+
+  const overlaps = [];
+  for (const B of acts) {
+    if (B.id === A.id) continue;
+    if (B.estado === 'sin_planificar' || B.estado === 'completada') continue;
+    if (!B.fecha || B.fecha === '1900-01-01') continue;
+    if (B.es_pulmon) continue;
+
+    // Operario: solo si comparten operario.
+    if (A.operario_id && B.operario_id && A.operario_id === B.operario_id) {
+      const bRangeOp = rangoOp(B);
+      const crossOp = aRangeOp.start < bRangeOp.end && bRangeOp.start < aRangeOp.end;
+      if (crossOp) {
+        const bIsAutoSolap = (effTipo(B) === 'automatica' || effTipo(B) === 'semi_automatica') && !!B.setup_solapable;
+        const aIsManual = effTipo(A) === 'manual' || !effTipo(A);
+        const bIsManual = effTipo(B) === 'manual' || !effTipo(B);
+        // Excepción setup_solapable: si una es auto/semi solapable y la otra
+        // es manual, NO es overlap (el setup se monta sobre la manual).
+        const setupSolapableException = (aIsAutoSolap && bIsManual) || (bIsAutoSolap && aIsManual);
+        if (!setupSolapableException) {
+          if (!overlaps.find(o => o.id === B.id)) overlaps.push(B);
+          continue;
+        }
+      }
+    }
+    // Máquina: solo si comparten máquina.
+    if (A.maquina_id && B.maquina_id && A.maquina_id === B.maquina_id) {
+      const bRangeMaq = rangoMaq(B);
+      const crossMaq = aRangeMaq.start < bRangeMaq.end && bRangeMaq.start < aRangeMaq.end;
+      if (crossMaq) {
+        if (!overlaps.find(o => o.id === B.id)) overlaps.push(B);
+      }
+    }
+  }
+  return overlaps.length > 0 ? overlaps : null;
+}
 let alertCounter = 0;
 let suppressNextToast = false;
 
@@ -2845,16 +2930,29 @@ function render() {
                 block.appendChild(warn);
               }
             }
-            // v70 Fase 18: badge naranja en esquina superior derecha si la
-            // activ planificada tiene predecesores sin planificar.
+            // v70 Fase 18: badge rojo ⛔ en esquina superior derecha si la
+            // activ planificada tiene problemas críticos:
+            // - Predecesores sin planificar (inconsistencia desde Proyectos).
+            // - Solapamiento con otra activ del mismo operario o máquina.
+            // Se muestra un solo badge con tooltip combinado.
             const predsIncons = _predsSinPlanificar(act.id);
-            if (predsIncons) {
+            const overlapsList = _actOverlaps(act.id);
+            if (predsIncons || overlapsList) {
               const incons = document.createElement('div');
               incons.className = 'bk-incons';
               incons.textContent = '⛔';
-              incons.title = 'Inconsistente: esta actividad fue planificada antes de que su predecesor "'
-                + predsIncons.map(p => _flat(p.descripcion)).join(', ')
-                + '" tuviera fecha. Replanificá esta actividad o planificá el predecesor primero.';
+              const titulos = [];
+              if (predsIncons) {
+                titulos.push('Inconsistente: predecesor sin planificar — "'
+                  + predsIncons.map(p => _flat(p.descripcion)).join(', ')
+                  + '". Replanificá esta actividad o planificá el predecesor primero.');
+              }
+              if (overlapsList) {
+                titulos.push('Solapa con: ' + overlapsList.map(o =>
+                  _flat(o.descripcion) + ' (' + o.fecha + ' ' + (o.hora_inicio || '').substring(0, 5) + ')'
+                ).join('; ') + '. Resolvé el solapamiento antes de mover otras actividades.');
+              }
+              incons.title = titulos.join('\n\n');
               block.appendChild(incons);
             }
           }
@@ -4950,7 +5048,6 @@ function _simCascadeOp(state, anchors) {
       let needs = false;
       if (bDate < endA.date) needs = true;
       else if (bDate === endA.date && bTime < endA.time + SIM_GAP) needs = true;
-      if (window._motorDebug && needs) console.log('[cascadeOp] op=' + opId + ' A=#' + A.id + ' (' + A.fecha + ' ' + A.hora_inicio + ' endOp=' + endA.date + ' ' + mT(endA.time) + ' Dop=' + Dop(A) + ' tipo=' + (A.tipo || '?') + ') vs B=#' + B.id + ' (' + bDate + ' ' + B.hora_inicio + ' tipo=' + (B.tipo || '?') + ')');
       if (!needs) continue;
       // v70 Fase 14: si una de las dos es auto/semi con setup_solapable=true
       // y la otra es manual, no aplicar empuje: el setup puede ocupar el
@@ -5026,7 +5123,6 @@ function _simPushMach(state, anchors) {
       let needs = false;
       if (bDate < aEnd.date) needs = true;
       else if (bDate === aEnd.date && bTime < aEnd.time + SIM_GAP) needs = true;
-      if (window._motorDebug && needs) console.log('[pushMach] maq=' + (A.maquina_id || '?') + ' A=#' + A.id + ' (' + A.fecha + ' ' + A.hora_inicio + ' end=' + aEnd.date + ' ' + mT(aEnd.time) + ') empuja B=#' + B.id + ' (' + bDate + ' ' + B.hora_inicio + ')');
       if (!needs) continue;
       const aIsAnchor = anchors.has(A.id);
       const bIsAnchor = anchors.has(B.id);
@@ -5102,7 +5198,6 @@ function _simEnforceCorrs(state, anchors) {
 function simulateChange(changes, options) {
   options = options || {};
   const pulmonAction = options.pulmonAction || 'cascadear';
-  if (window._motorDebug) console.log('[motor] simulateChange changes=', JSON.parse(JSON.stringify(changes)));
 
   // 1. Construir state inicial a partir de acts (excluyendo sin_planificar).
   // v70 Fase 17: las actividades completadas SÍ entran al state como
