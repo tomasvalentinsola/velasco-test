@@ -412,15 +412,22 @@ let suppressNextToast = false;
 
 // ========== DATE/TIME HELPERS ==========
 function getDays(){
+  // v70 Fase 18: ventana de 10 días: 2 atrás + hoy + 7 adelante, saltando
+  // domingos. weekOffset desplaza la ventana entera de a 7 días.
+  // Antes era 8 días alineados a la semana (lunes a sábado + extras),
+  // pero eso mostraba más días pasados que futuros cuando avanzaba la semana.
   const today=new Date();today.setHours(12,0,0,0);
   const days=[];
-  const baseMonday=new Date(today);baseMonday.setDate(today.getDate()-((today.getDay()+6)%7));
-  const firstDay=new Date(baseMonday);firstDay.setDate(baseMonday.getDate()+(weekOffset*7)-1);
-  for(let i=0;i<8;i++){
+  // Punto de partida: hoy - 2 días + desplazamiento del usuario.
+  const firstDay=new Date(today);firstDay.setDate(today.getDate()-2+(weekOffset*7));
+  let added=0, i=0;
+  while(added<10 && i<20){
     const d=new Date(firstDay);d.setDate(firstDay.getDate()+i);
-    if(d.getDay()===0){firstDay.setDate(firstDay.getDate()+1);i--;continue}
+    i++;
+    if(d.getDay()===0)continue; // saltar domingos
     const tk=dK(today),dk=dK(d);
     days.push({date:new Date(d),type:dk===tk?'today':(dk<tk?'past':'future')});
+    added++;
   }
   return days;
 }
