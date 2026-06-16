@@ -412,21 +412,36 @@ let suppressNextToast = false;
 
 // ========== DATE/TIME HELPERS ==========
 function getDays(){
-  // v70 Fase 18: ventana de 10 días: 2 atrás + hoy + 7 adelante, saltando
-  // domingos. weekOffset desplaza la ventana entera de a 7 días.
-  // Antes era 8 días alineados a la semana (lunes a sábado + extras),
-  // pero eso mostraba más días pasados que futuros cuando avanzaba la semana.
+  // v70 Fase 18: ventana de días hábiles (saltando domingos):
+  // 2 días hábiles atrás + hoy + 7 días hábiles adelante = 10 columnas.
+  // weekOffset desplaza la ventana entera de a 7 días corridos.
   const today=new Date();today.setHours(12,0,0,0);
+  const todayShifted=new Date(today);
+  todayShifted.setDate(today.getDate()+(weekOffset*7));
   const days=[];
-  // Punto de partida: hoy - 2 días + desplazamiento del usuario.
-  const firstDay=new Date(today);firstDay.setDate(today.getDate()-2+(weekOffset*7));
-  let added=0, i=0;
-  while(added<10 && i<20){
-    const d=new Date(firstDay);d.setDate(firstDay.getDate()+i);
-    i++;
-    if(d.getDay()===0)continue; // saltar domingos
-    const tk=dK(today),dk=dK(d);
-    days.push({date:new Date(d),type:dk===tk?'today':(dk<tk?'past':'future')});
+  // Recolectar 2 días hábiles atrás
+  const atras=[];
+  let dRet=new Date(todayShifted);
+  while(atras.length<2){
+    dRet.setDate(dRet.getDate()-1);
+    if(dRet.getDay()===0)continue;
+    atras.unshift(new Date(dRet));
+  }
+  const tk=dK(today);
+  atras.forEach(d=>{const dk=dK(d);days.push({date:d,type:dk===tk?'today':(dk<tk?'past':'future')});});
+  // Hoy (o el día base desplazado)
+  if(todayShifted.getDay()!==0){
+    const dk=dK(todayShifted);
+    days.push({date:new Date(todayShifted),type:dk===tk?'today':(dk<tk?'past':'future')});
+  }
+  // 7 días hábiles adelante
+  let dAdel=new Date(todayShifted);
+  let added=0;
+  while(added<7){
+    dAdel.setDate(dAdel.getDate()+1);
+    if(dAdel.getDay()===0)continue;
+    const dk=dK(dAdel);
+    days.push({date:new Date(dAdel),type:dk===tk?'today':(dk<tk?'past':'future')});
     added++;
   }
   return days;
@@ -4658,28 +4673,27 @@ function tryAssignToMachine(actId, opId, machId, fecha) {
   const hideErr = () => { if (errEl) errEl.style.display = 'none'; };
   hideErr();
 
-  // Determine insertion time: first free moment in the day considering BOTH
-  // the operator's existing activities AND the machine's existing activities.
-  // Operator uses Dop (only setup blocks operator for automaticas).
-  // Si machId es null (caso "sin maquina"), no hay conflicto de maquina:
-  // solo se considera la disponibilidad del operario.
-  const machBlocks = machId === null ? [] : dayBlocks(machId, fecha, actId);
+  // v70 Fase 18: buscar el PRIMER HUECO del día donde entre la actividad.
+  // Antes la lógica iba al final del día (después de la última actividad),
+  // pero si el operario tenía un hueco al inicio (ej. libre 06:00-11:55 y
+  // ocupado 11:55-15:00), la actividad nueva debería ir en el hueco inicial.
   const dayStart = sS(opId, fecha);
   const dayEnd = sE(opId, fecha);
-  const machineLatest = machBlocks.length === 0 ? dayStart : Math.max(...machBlocks.map(b => b.e)) + GAP;
+  const GAP_BETWEEN = GAP || 10;
+  const durOp = Dop(act);
 
-  // Find end of each activity's operator-attached portion on this day.
-  // For manuals this is the whole activity; for automaticas just the setup.
-  // v70 Fase 14: si la activ a colocar es auto/semi con setup_solapable=true,
-  // ignoramos las activs MANUALES del operario (el setup puede solaparse).
+  // Construir intervalos ocupados del operario en este día (excluyendo la
+  // propia actividad que se está movigiendo, y aplicando la excepción de
+  // setup_solapable). Cada intervalo: [start, end].
   const _actoIsAutoSolap = (act.tipo === 'automatica' || act.tipo === 'semi_automatica') && !!act.setup_solapable;
-  const opEndsOnDay = [];
+  const opOcupados = [];
   acts.forEach(a => {
     if (a.id === actId) return;
     if (a.operario_id !== opId) return;
     if (a.estado === 'sin_planificar') return;
-    // v70 Fase 14: si tengo setup_solapable y la otra es manual, no la cuento.
+    if (a.es_pulmon) return; // pulmones se pueden pisar
     if (_actoIsAutoSolap && (a.tipo === 'manual' || !a.tipo)) return;
+    // Calcular el rango que ocupa al operario en este día.
     let rem = Dop(a), cd = a.fecha, ct = tM(a.hora_inicio), safe = 0;
     while (rem > 0 && safe < 20) {
       safe++;
@@ -4688,33 +4702,61 @@ function tryAssignToMachine(actId, opId, machId, fecha) {
       const av = de - ct;
       if (av <= 0) { cd = nwd(cd); ct = sS(a.operario_id, cd); continue; }
       const used = Math.min(rem, av);
-      if (cd === fecha) opEndsOnDay.push(ct + used);
+      if (cd === fecha) opOcupados.push({ s: ct, e: ct + used });
       if (cd > fecha) break;
       rem -= used;
       if (rem > 0) { cd = nwd(cd); ct = sS(a.operario_id, cd); } else { ct += used; }
     }
   });
-  const operatorLatest = opEndsOnDay.length === 0 ? dayStart : Math.max(...opEndsOnDay) + GAP;
-  const startTime = Math.max(machineLatest, operatorLatest);
 
-  if (startTime >= dayEnd) {
-    // Activity doesn't fit at the end of the day.
-    // For auto y semi: offer options to insert BEFORE existing activities
-    // (since the setup might fit in earlier gaps).
+  // Construir intervalos ocupados de la máquina en este día.
+  const machBlocks = machId === null ? [] : dayBlocks(machId, fecha, actId);
+  const machOcupados = machBlocks.map(b => ({ s: b.s, e: b.e }));
+
+  // Unir todos los intervalos ocupados (operario + máquina) y ordenarlos.
+  const ocupados = [...opOcupados, ...machOcupados].sort((x, y) => x.s - y.s);
+
+  // Mergear intervalos solapados.
+  const merged = [];
+  ocupados.forEach(iv => {
+    if (merged.length === 0 || iv.s > merged[merged.length - 1].e + GAP_BETWEEN) {
+      merged.push({ s: iv.s, e: iv.e });
+    } else {
+      merged[merged.length - 1].e = Math.max(merged[merged.length - 1].e, iv.e);
+    }
+  });
+
+  // Buscar el primer hueco donde entra durOp.
+  let candidate = dayStart;
+  let startTime = null;
+  for (let i = 0; i < merged.length; i++) {
+    const block = merged[i];
+    // Hueco entre `candidate` y `block.s`.
+    if (block.s - candidate >= durOp) {
+      startTime = candidate;
+      break;
+    }
+    candidate = block.e + GAP_BETWEEN;
+  }
+  // Si no encontró hueco entre bloques, probar al final del día.
+  if (startTime === null && candidate + durOp <= dayEnd) {
+    startTime = candidate;
+  }
+
+  // Si no hay espacio
+  if (startTime === null || startTime + durOp > dayEnd) {
+    // For auto y semi: ofrecer opciones (igual que antes)
     if (isAuto(act)) {
       const chooser = document.getElementById('mach-chooser-modal');
       if (chooser) chooser.remove();
       showAutoInsertOptions(actId, opId, machId, fecha);
       return;
     }
-    // Manual: show error
+    // Manual: mostrar error con el último ocupado
     let msg = 'No hay espacio el ' + fDn(fecha) + '.';
-    const lastMach = machBlocks[machBlocks.length - 1];
-    if (machId !== null && lastMach && machineLatest >= dayEnd) msg += ' Maquina ' + mN(machId) + ' ocupada hasta ' + mT(lastMach.e) + '.';
-    if (opEndsOnDay.length && operatorLatest >= dayEnd) msg += ' ' + opN(opId) + ' ocupado hasta ' + mT(Math.max(...opEndsOnDay)) + '.';
+    const lastBlock = merged[merged.length - 1];
+    if (lastBlock) msg += ' ' + opN(opId) + ' ocupado hasta ' + mT(lastBlock.e) + '.';
     if (errEl) { errEl.innerHTML = msg; errEl.style.display = 'block'; }
-    // Si machId es null (sin maquina) y se llego aca, no hay modal abierto donde
-    // mostrar el error, asi que mostramos toast.
     else { toast(msg, true); }
     return;
   }
