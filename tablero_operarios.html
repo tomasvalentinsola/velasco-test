@@ -4589,14 +4589,12 @@ function showAutoInsertOptions(actId, opId, machId, fecha) {
       if (av <= 0) { cd = nwd(cd); ct = sS(a.operario_id, cd); continue; }
       const used = Math.min(rem, av);
       if (cd === fecha) {
-        // Has a slice on this day; track its end
         if (!started) started = true;
         dayEnd = ct + used;
       }
       rem -= used;
       if (rem > 0) {
         if (cd === fecha && started) {
-          // Crosses to next day → skip (not eligible)
           dayEnd = null; break;
         }
         cd = nwd(cd); ct = sS(a.operario_id, cd);
@@ -4606,10 +4604,14 @@ function showAutoInsertOptions(actId, opId, machId, fecha) {
   });
   dayActs.sort((a, b) => a.endMin - b.endMin);
 
+  // v70 Fase 18: este modal aplica a CUALQUIER tipo (manual, semi, auto). Antes
+  // solo se llamaba para automáticas pero también es útil para manuales cuando
+  // no hay espacio: el usuario elige el punto de inserción y el motor cascadea.
+  const tipoLbl = isAuto(act) ? 'automatica' : (effTipo(act) === 'semi_automatica' ? 'semi automatica' : 'manual');
   let h = '<button class="md-x" onclick="this.closest(\'.mo\').remove()">&times;</button>';
   h += '<div class="md-t">Donde insertar <b>' + descConPieza(act) + '</b>?</div>';
   h += '<div style="font-size:12px;color:#5F5E5A;margin-bottom:14px">Ped. ' + (act.pedido_nro || '-') + ' — ' + opN(opId) + ' — ' + mN(machId) + ' — ' + fDn(fecha) + '</div>';
-  h += '<div style="font-size:11px;color:#5F5E5A;margin-bottom:10px">' + opN(opId) + ' tiene el dia completo. Elegi donde colocar esta actividad automatica (su tiempo manual es ' + Dop(act) + ' min):</div>';
+  h += '<div style="font-size:11px;color:#5F5E5A;margin-bottom:10px">No hay un hueco libre que contenga la actividad. Elegí dónde colocarla; el sistema cascadeará las actividades que estén después (te va a pedir confirmación). Tipo: ' + tipoLbl + '. Tiempo operario: ' + Dop(act) + ' min.</div>';
 
   // Option 1: start of day
   const dayStart = sS(opId, fecha);
@@ -4738,26 +4740,14 @@ function tryAssignToMachine(actId, opId, machId, fecha) {
     }
     candidate = block.e + GAP_BETWEEN;
   }
-  // Si no encontró hueco entre bloques, probar al final del día.
-  if (startTime === null && candidate + durOp <= dayEnd) {
-    startTime = candidate;
-  }
-
-  // Si no hay espacio
-  if (startTime === null || startTime + durOp > dayEnd) {
-    // For auto y semi: ofrecer opciones (igual que antes)
-    if (isAuto(act)) {
-      const chooser = document.getElementById('mach-chooser-modal');
-      if (chooser) chooser.remove();
-      showAutoInsertOptions(actId, opId, machId, fecha);
-      return;
-    }
-    // Manual: mostrar error con el último ocupado
-    let msg = 'No hay espacio el ' + fDn(fecha) + '.';
-    const lastBlock = merged[merged.length - 1];
-    if (lastBlock) msg += ' ' + opN(opId) + ' ocupado hasta ' + mT(lastBlock.e) + '.';
-    if (errEl) { errEl.innerHTML = msg; errEl.style.display = 'block'; }
-    else { toast(msg, true); }
+  // Si no encontró hueco entre bloques, abrir el modal de opciones de
+  // inserción. v70 Fase 18: este flujo aplica tanto a auto como a manual.
+  // El usuario elige el punto de inserción y el motor cascadea las que
+  // queden chocando.
+  if (startTime === null) {
+    const chooser = document.getElementById('mach-chooser-modal');
+    if (chooser) chooser.remove();
+    showAutoInsertOptions(actId, opId, machId, fecha);
     return;
   }
 
