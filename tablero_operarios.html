@@ -346,26 +346,27 @@ function _actOverlaps(actId) {
   if (!A.fecha || A.fecha === '1900-01-01') return null;
   if (A.es_pulmon) return null;
 
-  // Helpers para calcular fin de A en términos de minutos absolutos desde
-  // el inicio del año (para comparar entre diferentes fechas).
-  // Usamos fecha + hora_inicio + duracion como rango ocupado.
-  // _simEndOp/_simEndMach están en otra parte del archivo y devuelven {date, time}.
-  // Para evitar dependencia, calculamos en epoch min.
+  // v70 Fase 18: usamos _simEndOp y _simEndMach para calcular el fin real
+  // respetando la jornada laboral (las actividades se cortan al fin del día
+  // y siguen al siguiente). Antes hacíamos start+dur lineal, que daba un
+  // fin "virtual" tarde en la noche que en la práctica no era cierto y
+  // hacía que NO se detectaran overlaps que SÍ existían visualmente.
   const epochDayMin = ds => {
     if (!ds) return 0;
     const [y, m, d] = ds.split('-').map(Number);
-    // Aproximación lineal suficiente: días*1440 desde 1970.
     return Math.floor(new Date(y, m - 1, d).getTime() / 60000);
   };
   const rangoOp = act => {
     const startMin = epochDayMin(act.fecha) + tM(act.hora_inicio);
-    const dur = Dop(act); // duración operario
-    return { start: startMin, end: startMin + dur };
+    const fin = _simEndOp(act); // {date, time}
+    const endMin = epochDayMin(fin.date) + fin.time;
+    return { start: startMin, end: endMin };
   };
   const rangoMaq = act => {
     const startMin = epochDayMin(act.fecha) + tM(act.hora_inicio);
-    const dur = D(act); // duración total
-    return { start: startMin, end: startMin + dur };
+    const fin = _simEndMach(act);
+    const endMin = epochDayMin(fin.date) + fin.time;
+    return { start: startMin, end: endMin };
   };
 
   const aRangeOp = rangoOp(A);
@@ -3554,13 +3555,13 @@ function showEdit(act, bl) {
         cambio: !numEq(margenAck, margenAhora)
       },
       {
-        concepto: 'Operario',
+        concepto: 'Operario sugerido (Proyectos)',
         antes: opLabel(opIdealAck),
         ahora: opLabel(opIdealAhora),
         cambio: opIdealAck != opIdealAhora
       },
       {
-        concepto: 'Máquina',
+        concepto: 'Máquina sugerida (Proyectos)',
         antes: maqLabel(maqIdealAckId, maqIdealAckNom),
         ahora: maqLabel(maqIdealAhoraId, maqIdealAhoraNom),
         cambio: (maqIdealAckId != maqIdealAhoraId) || ((maqIdealAckNom || '') !== (maqIdealAhoraNom || ''))
@@ -3592,8 +3593,8 @@ function showEdit(act, bl) {
 
   // Editable fields block
   let editHtml = '<div style="border-top:1px solid #C8C6BE;padding-top:14px">';
-  editHtml += '<div class="ef"><div class="ef-l">Operario</div><select class="ef-i" id="ed-op">' + opOptionsHtml + '</select></div>';
-  editHtml += '<div class="ef"><div class="ef-l">Maquina</div><select class="ef-i" id="ed-mq">' + mqOptionsHtml + '</select></div>';
+  editHtml += '<div class="ef"><div class="ef-l">Operario asignado</div><select class="ef-i" id="ed-op">' + opOptionsHtml + '</select></div>';
+  editHtml += '<div class="ef"><div class="ef-l">Máquina asignada</div><select class="ef-i" id="ed-mq">' + mqOptionsHtml + '</select></div>';
   // v70 Fase 13: renglón con 3 columnas:
   //   - Fecha y hora de inicio (editables)
   //   - Fecha y hora de fin (read-only, calculado desde inicio + duración)
