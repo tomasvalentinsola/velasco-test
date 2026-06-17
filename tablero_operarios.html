@@ -5082,47 +5082,55 @@ function _simCascadeOp(state, anchors) {
     // 3. A ancla, B no ancla    -> mover B despues del fin OPERARIO de A.
     // 4. ambas anclas           -> conflicto residual.
     for (let i = 0; i < arr.length - 1; i++) {
-      const A = arr[i], B = arr[i + 1];
+      const A = arr[i];
       const endA = _simEndOp(A);
-      const bDate = B.fecha, bTime = tM(B.hora_inicio);
-      let needs = false;
-      if (bDate < endA.date) needs = true;
-      else if (bDate === endA.date && bTime < endA.time + SIM_GAP) needs = true;
-      // v70 Fase 18 debug temporal: loguear pares relevantes para diagnóstico.
-      if (window._motorDebug && (A.id === 670 || B.id === 670 || A.id === 990 || B.id === 990)) {
-        console.log('[cascadeOp] op=' + opId + ' par A=#' + A.id + ' (' + A.fecha + ' ' + A.hora_inicio + ' tipo=' + A.tipo + ' D=' + D(A) + ' Dop=' + Dop(A) + ' endOp=' + endA.date + ' ' + mT(endA.time) + ') vs B=#' + B.id + ' (' + bDate + ' ' + B.hora_inicio + ' tipo=' + B.tipo + ') → needs=' + needs);
-      }
-      if (!needs) continue;
-      // v70 Fase 14: si una de las dos es auto/semi con setup_solapable=true
-      // y la otra es manual, no aplicar empuje: el setup puede ocupar el
-      // mismo tiempo que la manual.
       const aIsAutoSolap = (A.tipo === 'automatica' || A.tipo === 'semi_automatica') && !!A.setup_solapable;
-      const bIsAutoSolap = (B.tipo === 'automatica' || B.tipo === 'semi_automatica') && !!B.setup_solapable;
       const aIsManual = A.tipo === 'manual' || !A.tipo;
-      const bIsManual = B.tipo === 'manual' || !B.tipo;
-      if ((aIsAutoSolap && bIsManual) || (bIsAutoSolap && aIsManual)) continue;
       const aIsAnchor = anchors.has(A.id);
-      const bIsAnchor = anchors.has(B.id);
-      if (!bIsAnchor) {
-        const adj = _simAdjustToWorkingHours(B, endA.date, endA.time + SIM_GAP);
-        if (B.fecha !== adj.date || B.hora_inicio !== mT(adj.time)) {
-          B.fecha = adj.date;
-          B.hora_inicio = mT(adj.time);
-          movedAny = true;
-          break; // re-ordenar
+      // v70 Fase 18: en lugar de comparar SOLO con B = arr[i+1], iteramos hacia
+      // adelante mientras encontramos activs que A sigue tapando. Si la siguiente
+      // tiene excepción setup_solapable (semi/auto solapable vs manual), la
+      // saltamos y miramos la posterior. Antes el motor se detenía en el primer
+      // par solapable y nunca evaluaba el choque real con la siguiente activ
+      // que sí debía cascadearse.
+      let pairMoved = false;
+      for (let j = i + 1; j < arr.length; j++) {
+        const B = arr[j];
+        const bDate = B.fecha, bTime = tM(B.hora_inicio);
+        let needs = false;
+        if (bDate < endA.date) needs = true;
+        else if (bDate === endA.date && bTime < endA.time + SIM_GAP) needs = true;
+        if (!needs) break; // B no choca → tampoco las siguientes (orden por hora)
+        // Excepción setup_solapable
+        const bIsAutoSolap = (B.tipo === 'automatica' || B.tipo === 'semi_automatica') && !!B.setup_solapable;
+        const bIsManual = B.tipo === 'manual' || !B.tipo;
+        if ((aIsAutoSolap && bIsManual) || (bIsAutoSolap && aIsManual)) {
+          continue; // saltar este par; B no se cascadea pero seguimos buscando
         }
-      } else if (!aIsAnchor) {
-        // B es ancla y A no. Mover A despues de B (operario).
-        const endB = _simEndOp(B);
-        const adj = _simAdjustToWorkingHours(A, endB.date, endB.time + SIM_GAP);
-        if (A.fecha !== adj.date || A.hora_inicio !== mT(adj.time)) {
-          A.fecha = adj.date;
-          A.hora_inicio = mT(adj.time);
-          movedAny = true;
-          break; // re-ordenar
+        const bIsAnchor = anchors.has(B.id);
+        if (!bIsAnchor) {
+          const adj = _simAdjustToWorkingHours(B, endA.date, endA.time + SIM_GAP);
+          if (B.fecha !== adj.date || B.hora_inicio !== mT(adj.time)) {
+            B.fecha = adj.date;
+            B.hora_inicio = mT(adj.time);
+            movedAny = true;
+            pairMoved = true;
+            break;
+          }
+        } else if (!aIsAnchor) {
+          const endB = _simEndOp(B);
+          const adj = _simAdjustToWorkingHours(A, endB.date, endB.time + SIM_GAP);
+          if (A.fecha !== adj.date || A.hora_inicio !== mT(adj.time)) {
+            A.fecha = adj.date;
+            A.hora_inicio = mT(adj.time);
+            movedAny = true;
+            pairMoved = true;
+            break;
+          }
         }
+        // Caso 4: ambas anclas - residual.
       }
-      // Caso 4: ambas anclas - se reporta en el detector de residuales.
+      if (pairMoved) break; // re-ordenar el outer loop
     }
   }
   return movedAny;
