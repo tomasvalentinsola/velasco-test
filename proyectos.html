@@ -16087,7 +16087,7 @@ function _notaAutorSet(opId) {
 function _notaAutorNombre(opId) {
   if (!opId) return '(sin autor)';
   const op = operarios.find(o => o.id === opId);
-  return op ? op.nombre : '(operario eliminado)';
+  return op ? opFullName(op) : '(operario eliminado)';
 }
 function _notaFmtFecha(ts) {
   if (!ts) return '';
@@ -16132,7 +16132,7 @@ function renderNotasBlock(parentType, parentId, opciones) {
     h += '<select class="ef-i" id="' + idPrefix + '-autor">';
     h += '<option value="">— Elegir —</option>';
     operarios.forEach(o => {
-      h += '<option value="' + o.id + '"' + (o.id === defaultOp ? ' selected' : '') + '>' + escapeHtml(o.nombre) + '</option>';
+      h += '<option value="' + o.id + '"' + (o.id === defaultOp ? ' selected' : '') + '>' + escapeHtml(opFullName(o)) + '</option>';
     });
     h += '</select></div>';
     h += '</div>';
@@ -16147,17 +16147,15 @@ function renderNotasBlock(parentType, parentId, opciones) {
   if (lista.length === 0) {
     h += '<div style="color:#888780;font-size:12px;font-style:italic;padding:6px 0">No hay ' + (opciones.esCierre ? 'nota de cierre' : 'notas') + ' todavía.</div>';
   } else {
-    lista.forEach(n => {
+    lista.forEach((n, idx) => {
       const cierreBadge = n.es_cierre ? ' <span style="display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;background:#FFEDD5;color:#854F0B;border:1px solid #E69138;font-weight:700;margin-left:4px">🔒 Cierre</span>' : '';
-      h += '<div style="border:1px solid #E5E2D9;border-radius:6px;padding:8px 10px;margin-bottom:6px;background:#fff">';
-      h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;font-size:11px;color:#5F5E5A">';
-      h += '<div><b>' + escapeHtml(_notaAutorNombre(n.autor_op_id)) + '</b>' + cierreBadge + '</div>';
-      h += '<div>' + _notaFmtFecha(n.created_at) + '</div>';
+      const separator = idx > 0 ? 'border-top:1px solid #E5E2D9;padding-top:10px;margin-top:10px;' : '';
+      h += '<div style="' + separator + 'position:relative">';
+      h += '<div style="font-size:12px;color:#2C2C2A;margin-bottom:3px">';
+      h += '<b>' + escapeHtml(_notaAutorNombre(n.autor_op_id)) + '</b> · <b>' + _notaFmtFecha(n.created_at) + '</b>' + cierreBadge;
       h += '</div>';
-      h += '<div style="white-space:pre-wrap;font-size:13px">' + escapeHtml(n.contenido) + '</div>';
-      h += '<div style="margin-top:6px;text-align:right">';
-      h += '<button class="b b-link" style="font-size:11px;color:#A32D2D" onclick="eliminarNota(' + n.id + ')">Eliminar</button>';
-      h += '</div>';
+      h += '<div style="white-space:pre-wrap;font-size:13px;color:#2C2C2A;padding-right:60px">' + escapeHtml(n.contenido) + '</div>';
+      h += '<button onclick="eliminarNota(' + n.id + ')" style="position:absolute;top:0;right:0;background:none;border:none;color:#A32D2D;font-size:11px;cursor:pointer;padding:2px 4px;text-decoration:underline">Eliminar</button>';
       h += '</div>';
     });
   }
@@ -16230,7 +16228,7 @@ function renderNotaCierreCampo(idPrefix, label) {
   h += '<select class="ef-i" id="' + idPrefix + '-autor">';
   h += '<option value="">— Elegir —</option>';
   operarios.forEach(o => {
-    h += '<option value="' + o.id + '"' + (o.id === defaultOp ? ' selected' : '') + '>' + escapeHtml(o.nombre) + '</option>';
+    h += '<option value="' + o.id + '"' + (o.id === defaultOp ? ' selected' : '') + '>' + escapeHtml(opFullName(o)) + '</option>';
   });
   h += '</select></div></div>';
   h += '<textarea class="ef-i" id="' + idPrefix + '-texto" placeholder="Motivo del cierre, observaciones, etc..." rows="3" style="resize:vertical;font-family:inherit"></textarea>';
