@@ -16116,36 +16116,22 @@ function _notasDe(parentType, parentId, opciones) {
 // Devuelve HTML para incrustar en la página.
 function renderNotasBlock(parentType, parentId, opciones) {
   opciones = opciones || {};
-  const titulo = opciones.titulo || (opciones.esCierre ? 'Nota de cierre' : 'Notas');
   const lista = _notasDe(parentType, parentId, { esCierre: opciones.esCierre });
-  const defaultOp = _notaAutorDefault();
-  const idPrefix = 'nb-' + parentType + '-' + parentId + (opciones.esCierre ? '-c' : '');
 
-  let h = '<div class="card" style="margin:14px 0">';
-  h += '<div class="card-t">' + escapeHtml(titulo) + ' <span style="font-weight:400;color:#888780;font-size:12px">(' + lista.length + ')</span></div>';
+  let h = '<div style="margin:14px 0">';
 
-  if (!opciones.soloLista) {
-    // Form para nueva nota.
-    h += '<div style="border:1px solid #C8C6BE;border-radius:6px;padding:10px;margin-bottom:10px;background:#F7F5EF">';
-    h += '<div class="row" style="margin-bottom:6px">';
-    h += '<div class="ef" style="flex:1"><div class="ef-l">Autor</div>';
-    h += '<select class="ef-i" id="' + idPrefix + '-autor">';
-    h += '<option value="">— Elegir —</option>';
-    operarios.forEach(o => {
-      h += '<option value="' + o.id + '"' + (o.id === defaultOp ? ' selected' : '') + '>' + escapeHtml(opFullName(o)) + '</option>';
-    });
-    h += '</select></div>';
-    h += '</div>';
-    h += '<textarea class="ef-i" id="' + idPrefix + '-texto" placeholder="Escribí la nota..." rows="3" style="resize:vertical;font-family:inherit"></textarea>';
-    h += '<div style="margin-top:6px;display:flex;justify-content:flex-end">';
-    h += '<button class="b b-p" onclick="agregarNota(\'' + parentType + '\',' + parentId + ',' + (!!opciones.esCierre) + ',\'' + idPrefix + '\')">Agregar</button>';
-    h += '</div>';
+  // Botón "+ Nueva nota" arriba a la derecha (solo para notas regulares).
+  if (!opciones.soloLista && !opciones.esCierre) {
+    h += '<div style="display:flex;justify-content:flex-end;margin-bottom:8px">';
+    h += '<button class="b b-p" onclick="abrirModalNota(\'' + parentType + '\',' + parentId + ',null)">+ Nueva nota</button>';
     h += '</div>';
   }
 
-  // Lista de notas.
+  // Lista de notas (sin caja, estilo TacticaSoft).
   if (lista.length === 0) {
-    h += '<div style="color:#888780;font-size:12px;font-style:italic;padding:6px 0">No hay ' + (opciones.esCierre ? 'nota de cierre' : 'notas') + ' todavía.</div>';
+    if (!opciones.soloLista) {
+      h += '<div style="color:#888780;font-size:12px;font-style:italic;padding:6px 0">No hay notas todavía.</div>';
+    }
   } else {
     lista.forEach((n, idx) => {
       const cierreBadge = n.es_cierre ? ' <span style="display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;background:#FFEDD5;color:#854F0B;border:1px solid #E69138;font-weight:700;margin-left:4px">🔒 Cierre</span>' : '';
@@ -16154,8 +16140,11 @@ function renderNotasBlock(parentType, parentId, opciones) {
       h += '<div style="font-size:12px;color:#2C2C2A;margin-bottom:3px">';
       h += '<b>' + escapeHtml(_notaAutorNombre(n.autor_op_id)) + '</b> · <b>' + _notaFmtFecha(n.created_at) + '</b>' + cierreBadge;
       h += '</div>';
-      h += '<div style="white-space:pre-wrap;font-size:13px;color:#2C2C2A;padding-right:60px">' + escapeHtml(n.contenido) + '</div>';
-      h += '<button onclick="eliminarNota(' + n.id + ')" style="position:absolute;top:0;right:0;background:none;border:none;color:#A32D2D;font-size:11px;cursor:pointer;padding:2px 4px;text-decoration:underline">Eliminar</button>';
+      h += '<div style="white-space:pre-wrap;font-size:13px;color:#2C2C2A;padding-right:100px">' + escapeHtml(n.contenido) + '</div>';
+      h += '<div style="position:absolute;top:0;right:0;display:flex;gap:8px">';
+      h += '<button onclick="abrirModalNota(\'' + parentType + '\',' + parentId + ',' + n.id + ')" style="background:none;border:none;color:#0C447C;font-size:11px;cursor:pointer;padding:2px 4px;text-decoration:underline">Editar</button>';
+      h += '<button onclick="eliminarNota(' + n.id + ')" style="background:none;border:none;color:#A32D2D;font-size:11px;cursor:pointer;padding:2px 4px;text-decoration:underline">Eliminar</button>';
+      h += '</div>';
       h += '</div>';
     });
   }
@@ -16164,6 +16153,97 @@ function renderNotasBlock(parentType, parentId, opciones) {
   return h;
 }
 
+// Modal para crear nueva nota o editar una existente.
+function abrirModalNota(parentType, parentId, notaId) {
+  const prev = document.getElementById('nota-modal');
+  if (prev) prev.remove();
+  const nota = notaId ? notas.find(n => n.id === notaId) : null;
+  const isEdit = !!nota;
+  const defaultOp = isEdit ? nota.autor_op_id : _notaAutorDefault();
+  const contenidoInicial = isEdit ? nota.contenido : '';
+
+  const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'nota-modal';
+  bd.addEventListener('click', e => { if (e.target === bd) bd.remove(); });
+  const m = document.createElement('div'); m.className = 'md'; m.style.maxWidth = '500px';
+
+  let h = '<button class="md-x" onclick="this.closest(\'.mo\').remove()">&times;</button>';
+  h += '<div class="md-t">' + (isEdit ? 'Editar nota' : 'Nueva nota') + '</div>';
+  h += '<div class="ef"><div class="ef-l">Autor</div>';
+  h += '<select class="ef-i" id="nm-autor">';
+  h += '<option value="">— Elegir —</option>';
+  operarios.forEach(o => {
+    h += '<option value="' + o.id + '"' + (o.id === defaultOp ? ' selected' : '') + '>' + escapeHtml(opFullName(o)) + '</option>';
+  });
+  h += '</select></div>';
+  h += '<div class="ef"><div class="ef-l">Contenido</div>';
+  h += '<textarea class="ef-i" id="nm-texto" rows="5" placeholder="Escribí la nota..." style="resize:vertical;font-family:inherit">' + escapeHtml(contenidoInicial) + '</textarea></div>';
+  h += '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">';
+  h += '<button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button>';
+  if (isEdit) {
+    h += '<button class="b b-p" onclick="guardarNotaEdit(' + nota.id + ')">Guardar</button>';
+  } else {
+    h += '<button class="b b-p" onclick="guardarNotaNueva(\'' + parentType + '\',' + parentId + ',false)">Guardar</button>';
+  }
+  h += '</div>';
+  m.innerHTML = h;
+  bd.appendChild(m);
+  document.body.appendChild(bd);
+  if (typeof makeModalDraggable === 'function') makeModalDraggable(m);
+  // Focus en el textarea para escribir directo.
+  const ta = document.getElementById('nm-texto');
+  if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+}
+
+async function guardarNotaNueva(parentType, parentId, esCierre) {
+  const autorSel = document.getElementById('nm-autor');
+  const textoSel = document.getElementById('nm-texto');
+  if (!autorSel || !textoSel) return;
+  const autorOpId = parseInt(autorSel.value, 10) || null;
+  const contenido = (textoSel.value || '').trim();
+  if (!autorOpId) { toast('Elegí un autor', true); return; }
+  if (!contenido) { toast('Escribí algo en la nota', true); return; }
+  const { data, error } = await sb.from('notas').insert({
+    parent_type: parentType,
+    parent_id: parentId,
+    contenido: contenido,
+    es_cierre: !!esCierre,
+    autor_op_id: autorOpId
+  }).select().single();
+  if (error) { toast('Error: ' + error.message, true); return; }
+  notas.unshift(data);
+  _notaAutorSet(autorOpId);
+  const modal = document.getElementById('nota-modal');
+  if (modal) modal.remove();
+  toast('Nota agregada');
+  render();
+}
+
+async function guardarNotaEdit(notaId) {
+  const autorSel = document.getElementById('nm-autor');
+  const textoSel = document.getElementById('nm-texto');
+  if (!autorSel || !textoSel) return;
+  const autorOpId = parseInt(autorSel.value, 10) || null;
+  const contenido = (textoSel.value || '').trim();
+  if (!autorOpId) { toast('Elegí un autor', true); return; }
+  if (!contenido) { toast('Escribí algo en la nota', true); return; }
+  const { data, error } = await sb.from('notas').update({
+    contenido: contenido,
+    autor_op_id: autorOpId,
+    updated_at: new Date().toISOString()
+  }).eq('id', notaId).select().single();
+  if (error) { toast('Error: ' + error.message, true); return; }
+  // Actualizar en memoria.
+  const idx = notas.findIndex(n => n.id === notaId);
+  if (idx >= 0) notas[idx] = data;
+  _notaAutorSet(autorOpId);
+  const modal = document.getElementById('nota-modal');
+  if (modal) modal.remove();
+  toast('Nota actualizada');
+  render();
+}
+
+// Función obsoleta agregarNota: se mantiene por compatibilidad pero ya no se usa
+// (el flujo nuevo usa abrirModalNota → guardarNotaNueva).
 async function agregarNota(parentType, parentId, esCierre, idPrefix) {
   const autorSel = document.getElementById(idPrefix + '-autor');
   const textoSel = document.getElementById(idPrefix + '-texto');
