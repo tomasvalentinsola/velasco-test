@@ -167,6 +167,10 @@ let equipoProductos = [];
 let conjuntoProductos = [];
 let subconjuntoProductos = [];
 let productosGemelos = [];
+// v70 Fase 18: notas polimorficas para proyectos e items. Cada nota tiene:
+// parent_type ('proyecto'|'item'), parent_id, contenido, es_cierre (true para
+// nota de cierre del proyecto/item), autor_op_id, created_at.
+let notas = [];
 // v70 Fase 6: notas de envío registradas. Cada fila es un documento congelado
 // (snapshot del cliente y de los ítems al momento de generarse).
 let notasEnvio = [];
@@ -989,7 +993,7 @@ async function loadAll() {
   // funciona sin tocar nada).
   try {
     const [pm, pmp, mat, sec, eq, con, sub, ce, sc, pmu, iu, pmc, ph, cc,
-           ec, cs, ep, cp, sp, pg, ne, rm, pr2] = await Promise.all([
+           ec, cs, ep, cp, sp, pg, ne, rm, pr2, nt] = await Promise.all([
       sb.from('productos_matriz').select('*').order('descripcion'),
       sb.from('productos_matriz_procesos').select('*').order('orden', { ascending: true, nullsFirst: false }),
       sb.from('materiales').select('*').order('nombre'),
@@ -1016,7 +1020,9 @@ async function loadAll() {
       // v70 Fase 6b: remitos
       sb.from('remitos').select('*').order('id', { ascending: false }),
       // v70 Fase 8: tipos de proceso
-      sb.from('procesos').select('*').order('orden', { ascending: true, nullsFirst: false })
+      sb.from('procesos').select('*').order('orden', { ascending: true, nullsFirst: false }),
+      // v70 Fase 18: notas de proyecto/item
+      sb.from('notas').select('*').order('created_at', { ascending: false })
     ]);
     productosMatriz = pm.data || [];
     productosMatrizProcesos = (pmp.data || []).map(_normalizeActNumbers);
@@ -1042,6 +1048,7 @@ async function loadAll() {
     notasEnvio = ne.data || [];
     remitos = rm.data || [];
     procesos = pr2.data || [];
+    notas = nt.data || [];
   } catch(e) {
     console.warn('[loadAll] Tablas matriz/jerarquia no disponibles aun:', e);
     productosMatriz = [];
@@ -3310,6 +3317,9 @@ function renderProjectDetail() {
   h += '<button class="b" onclick="descartarCambiosProyecto()" title="Revierte los cambios al estado guardado">Descartar cambios</button>';
   h += '<button class="b b-p" id="btn-guardar-proyecto" onclick="saveProjectMeta()" disabled style="opacity:0.5;cursor:default">Guardar cambios</button></div>';
 
+  // v70 Fase 18: notas regulares del proyecto, arriba de la lista de items.
+  h += renderNotasBlock('proyecto', proj.id, { esCierre: false, titulo: 'Notas del proyecto' });
+
   h += '<div class="section-t">Items del proyecto <div style="display:flex;gap:6px"><button class="b b-p" onclick="showItemForm(null)">+ Agregar item</button> <button class="b b-p" onclick="showAgregarDesdeMatriz()">+ Agregar desde Matriz</button></div></div>';
   if (proj.items.length > 0) {
     // Header row with column titles
@@ -3450,6 +3460,13 @@ function renderProjectDetail() {
     });
   }
   h += '</div>';
+
+  // v70 Fase 18: nota de cierre del proyecto (solo lista, sin form de agregar
+  // porque solo se agrega al cerrar/anular). Si no hay, no se muestra nada.
+  const _notasCierreProj = _notasDe('proyecto', proj.id, { esCierre: true });
+  if (_notasCierreProj.length > 0) {
+    h += renderNotasBlock('proyecto', proj.id, { esCierre: true, titulo: 'Nota de cierre', soloLista: true });
+  }
 
   // v70 Fase 6: sección de notas de envío vinculadas a este proyecto.
   h += _neSeccionProyectoHtml(proj.id);
@@ -3891,6 +3908,10 @@ function showProjectStateModal(projectId) {
   h += '<div class="ef-l">Numero de pedido</div>';
   h += '<input type="text" class="ef-i" id="ps-pedido" placeholder="Si lo dejas vacio, queda con advertencia roja hasta cargarlo">';
   h += '</div>';
+  // v70 Fase 18: nota de cierre cuando se pasa a Cerrado o Anulado.
+  h += '<div id="ps-nota-cierre-wrap" style="display:none">';
+  h += renderNotaCierreCampo('ps-cierre', 'Nota de cierre (opcional)');
+  h += '</div>';
   h += '<div class="actions">';
   h += '<button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button>';
   h += '<button class="b b-p" onclick="saveProjectState(' + projectId + ')">Aplicar</button></div>';
@@ -3907,6 +3928,9 @@ function onProjStateChange(projectId) {
   // Nº pedido: solo si el estado nuevo lo requiere y no hay pedido cargado
   const needsPedido = PROJ_STATES_REQUIRE_PEDIDO.has(v) && !proj.pedido_nro;
   document.getElementById('ps-pedido-wrap').style.display = needsPedido ? 'block' : 'none';
+  // v70 Fase 18: nota de cierre solo si va a Cerrado o Anulado.
+  const notaWrap = document.getElementById('ps-nota-cierre-wrap');
+  if (notaWrap) notaWrap.style.display = (v === 'Cerrado' || v === 'Anulado') ? 'block' : 'none';
 }
 
 async function saveProjectState(projectId) {
@@ -3916,6 +3940,15 @@ async function saveProjectState(projectId) {
   const newSub = newEstado === 'Cerrado' ? document.getElementById('ps-sub').value : null;
   const newObs = newEstado === 'Anulado' ? document.getElementById('ps-obs').value.trim() : null;
   if (newEstado === 'Anulado' && !newObs) { toast('Las observaciones son obligatorias al anular', true); return; }
+
+  // v70 Fase 18: leer nota de cierre (opcional) si el estado nuevo lo aplica.
+  let _notaCierre = { autorOpId: null, contenido: '' };
+  if (newEstado === 'Cerrado' || newEstado === 'Anulado') {
+    _notaCierre = _leerNotaCierreModal('ps-cierre');
+    if (_notaCierre.contenido && !_notaCierre.autorOpId) {
+      toast('Elegí un autor para la nota de cierre', true); return;
+    }
+  }
 
   // Pedido inline: tomar lo escrito si el campo se mostro
   const pedidoEl = document.getElementById('ps-pedido');
@@ -3969,6 +4002,10 @@ async function saveProjectState(projectId) {
           // v70 Fase 17a: si pasa a Solicitud, marcar paso_por_solicitud=true.
           if (newEstado === 'Solicitud') payload.paso_por_solicitud = true;
           await sb.from('proyectos').update(payload).eq('id', projectId);
+          // v70 Fase 18: nota de cierre.
+          if ((newEstado === 'Cerrado' || newEstado === 'Anulado') && _notaCierre.contenido) {
+            await _agregarNotaCierreSiCorresponde('proyecto', projectId, _notaCierre.contenido, _notaCierre.autorOpId);
+          }
           await loadAll();
           toast('Estado actualizado');
           render();
@@ -3987,6 +4024,10 @@ async function saveProjectState(projectId) {
     // v70 Fase 17a: si pasa a Solicitud, marcar paso_por_solicitud=true.
     if (newEstado === 'Solicitud') payload.paso_por_solicitud = true;
     await sb.from('proyectos').update(payload).eq('id', projectId);
+    // v70 Fase 18: guardar nota de cierre si corresponde.
+    if ((newEstado === 'Cerrado' || newEstado === 'Anulado') && _notaCierre.contenido) {
+      await _agregarNotaCierreSiCorresponde('proyecto', projectId, _notaCierre.contenido, _notaCierre.autorOpId);
+    }
     await loadAll();
     const modal = document.getElementById('state-modal');
     if (modal) modal.remove();
@@ -4298,6 +4339,15 @@ function _renderItemModal(item, proj) {
   h += '<div class="ef" id="i-obs-wrap" style="display:' + (v.estado === 'Anulado' ? 'block' : 'none') + '">';
   h += '<div class="ef-l">Observaciones de anulación <span style="color:#A32D2D">*</span></div>';
   h += '<textarea class="ef-i" id="i-obs" rows="3" placeholder="Ej. Cliente ya no quiso la pieza, se asume perdida">' + escapeHtml(v.obs_anulacion) + '</textarea></div>';
+  // v70 Fase 18: campo nota de cierre opcional, solo al editar item existente
+  // y solo si el estado actual es terminal (o si lo cambian a terminal).
+  const _itemEstadosTerm = new Set(['Terminado', 'Stockeado', 'Enviado', 'Anulado']);
+  const _showCierreInit = !!itemId && _itemEstadosTerm.has(v.estado);
+  if (itemId) {
+    h += '<div id="i-cierre-wrap" style="display:' + (_showCierreInit ? 'block' : 'none') + '">';
+    h += renderNotaCierreCampo('i-cierre', 'Nota de cierre (opcional)');
+    h += '</div>';
+  }
 
   // Codigo del cliente (heredado read-only si vino de matriz)
   h += '<div class="row">';
@@ -4651,6 +4701,12 @@ function itGuardarCompatibilidad() {
 function onItemStateChange() {
   const v = document.getElementById('i-estado').value;
   document.getElementById('i-obs-wrap').style.display = (v === 'Anulado') ? 'block' : 'none';
+  // v70 Fase 18: nota de cierre cuando estado es terminal.
+  const cierreWrap = document.getElementById('i-cierre-wrap');
+  if (cierreWrap) {
+    const term = ['Terminado', 'Stockeado', 'Enviado', 'Anulado'].includes(v);
+    cierreWrap.style.display = term ? 'block' : 'none';
+  }
 }
 
 async function saveItem(itemId) {
@@ -4742,6 +4798,22 @@ async function saveItem(itemId) {
         subconjunto_id: u.subconjunto_id
       }));
       await sb.from('items_ubicaciones').insert(inserts);
+    }
+  }
+
+  // v70 Fase 18: nota de cierre del item, solo si está editando uno existente
+  // y el estado nuevo es terminal.
+  if (itemId) {
+    const _itemEstadosTerm = new Set(['Terminado', 'Stockeado', 'Enviado', 'Anulado']);
+    const cierreWrap = document.getElementById('i-cierre-wrap');
+    if (cierreWrap && cierreWrap.style.display !== 'none' && _itemEstadosTerm.has(estado)) {
+      const _notaCierre = _leerNotaCierreModal('i-cierre');
+      if (_notaCierre.contenido && !_notaCierre.autorOpId) {
+        toast('Elegí un autor para la nota de cierre', true); return;
+      }
+      if (_notaCierre.contenido) {
+        await _agregarNotaCierreSiCorresponde('item', itemId, _notaCierre.contenido, _notaCierre.autorOpId);
+      }
     }
   }
 
@@ -6460,6 +6532,8 @@ function renderItemDetail() {
   h += '<button class="b b-icon" onclick="duplicarItem(' + item.id + ')" title="Crea una copia del item con todos sus procesos">📑 Duplicar item</button>';
   h += '</div>';
   h += '</div></div>';
+  // v70 Fase 18: notas regulares del item, arriba de la lista de procesos.
+  h += renderNotasBlock('item', item.id, { esCierre: false, titulo: 'Notas del item' });
   h += '<div class="section-t">Procesos del item <div style="display:flex;gap:6px"><button class="b" onclick="redefinirPredecesoresItem(' + item.id + ')" title="Asigna predecesores lineales según el orden actual" style="background:#FFF4E0;color:#854F0B;border-color:#E0A800">🔗 Redefinir predecesores</button><button class="b b-p" onclick="showProcesoForm(null)">+ Agregar proceso</button></div></div>';
   if (procesos.length === 0) {
     h += '<div class="list-empty" style="padding:20px">Aun no hay procesos cargados. Sin procesos, este item no genera actividades en el tablero.</div>';
@@ -6604,6 +6678,11 @@ function renderItemDetail() {
     });
   }
   h += '</div>';
+  // v70 Fase 18: nota de cierre del item, solo si existe.
+  const _notasCierreItem = _notasDe('item', item.id, { esCierre: true });
+  if (_notasCierreItem.length > 0) {
+    h += renderNotasBlock('item', item.id, { esCierre: true, titulo: 'Nota de cierre', soloLista: true });
+  }
   main.innerHTML = h;
   setupPhotoPaste();
 }
@@ -7815,6 +7894,8 @@ function _mostrarModalFinalizarItem(item) {
     h += '<div style="flex:1"><div style="font-weight:600;font-size:13px">' + op.label + '</div>';
     h += '<div style="font-size:11px;color:#5F5E5A">' + op.desc + '</div></div></label>';
   });
+  // v70 Fase 18: campo de nota de cierre opcional.
+  h += renderNotaCierreCampo('finitem-cierre', 'Nota de cierre (opcional)');
   h += '<div class="actions" style="margin-top:14px">';
   h += '<button class="b" onclick="document.getElementById(\'finitem-modal\').remove(); render();">Dejar como está</button>';
   h += '<button class="b b-p" onclick="_finalizarItemGuardar(' + item.id + ')">Aplicar</button>';
@@ -7827,10 +7908,19 @@ async function _finalizarItemGuardar(itemId) {
   let nuevo = null;
   radios.forEach(r => { if (r.checked) nuevo = r.value; });
   if (!nuevo) { toast('Elegí un estado', true); return; }
+  // v70 Fase 18: leer nota de cierre antes de borrar el modal.
+  const _notaCierre = _leerNotaCierreModal('finitem-cierre');
+  if (_notaCierre.contenido && !_notaCierre.autorOpId) {
+    toast('Elegí un autor para la nota de cierre', true); return;
+  }
   showSpinner('Actualizando estado del item...');
   try {
     const { error } = await sb.from('items').update({ estado: nuevo }).eq('id', itemId);
     if (error) { toast('Error: ' + error.message, true); return; }
+    // v70 Fase 18: guardar nota de cierre.
+    if (_notaCierre.contenido) {
+      await _agregarNotaCierreSiCorresponde('item', itemId, _notaCierre.contenido, _notaCierre.autorOpId);
+    }
     await loadAll();
     const modal = document.getElementById('finitem-modal');
     if (modal) modal.remove();
@@ -7871,6 +7961,8 @@ function _mostrarModalCerrarProyecto(proyecto) {
   let h = '<button class="md-x" onclick="document.getElementById(\'cerrarproy-modal\').remove(); render();">&times;</button>';
   h += '<div class="md-t">Proyecto completado</div>';
   h += '<div style="font-size:12px;color:#5F5E5A;margin-bottom:14px">Todos los items del proyecto <b>' + escapeHtml(proyecto.descripcion || '(sin descripción)') + '</b> están en estado terminal. ¿Querés cerrar el proyecto?</div>';
+  // v70 Fase 18: campo de nota de cierre opcional.
+  h += renderNotaCierreCampo('cerrarproy-cierre', 'Nota de cierre (opcional)');
   h += '<div style="display:flex;gap:8px;justify-content:flex-end">';
   h += '<button class="b" onclick="document.getElementById(\'cerrarproy-modal\').remove(); render();">Dejar como está</button>';
   h += '<button class="b" style="background:#0C447C;color:#fff;font-weight:600" onclick="_intentarCerrarProyecto(' + proyecto.id + ')">Cerrar proyecto</button>';
@@ -8018,6 +8110,11 @@ function showConfirmModalProy(titulo, mensaje, opciones) {
 async function _intentarCerrarProyecto(proyectoId) {
   const proyecto = proyectos.find(p => p.id === proyectoId);
   if (!proyecto) return;
+  // v70 Fase 18: leer nota de cierre antes de cerrar el modal "Proyecto completado".
+  const _notaCierre = _leerNotaCierreModal('cerrarproy-cierre');
+  if (_notaCierre.contenido && !_notaCierre.autorOpId) {
+    toast('Elegí un autor para la nota de cierre', true); return;
+  }
   // Cerrar el modal "Proyecto completado" antes de seguir.
   const modalCompletado = document.getElementById('cerrarproy-modal');
   if (modalCompletado) modalCompletado.remove();
@@ -8026,6 +8123,10 @@ async function _intentarCerrarProyecto(proyectoId) {
     try {
       const { error } = await sb.from('proyectos').update({ estado: 'Cerrado' }).eq('id', proyectoId);
       if (error) { toast('Error: ' + error.message, true); return; }
+      // v70 Fase 18: persistir nota de cierre.
+      if (_notaCierre.contenido) {
+        await _agregarNotaCierreSiCorresponde('proyecto', proyectoId, _notaCierre.contenido, _notaCierre.autorOpId);
+      }
       await loadAll();
       toast('Proyecto cerrado');
       render();
@@ -15967,6 +16068,184 @@ function _remitoCubrePorProyecto(projId) {
 // v70 Fase 17d: registrar una nota de envío "externa" (la nota física se hizo
 // fuera del sistema, en un Word manipulado a mano). Reusa todo el flujo de
 // showNotaEnvioModal pasando esExterna=true.
+// ============================================================================
+// v70 Fase 18: NOTAS DE PROYECTO E ITEM (regulares y de cierre)
+// ============================================================================
+// Tabla `notas` polimorfica: parent_type ('proyecto'|'item'), parent_id,
+// contenido (texto libre), es_cierre (true para nota de cierre del entity),
+// autor_op_id (FK a operarios), created_at.
+// El autor por defecto se persiste en localStorage (clave 'velasco_nota_autor_op_id').
+
+function _notaAutorDefault() {
+  const k = localStorage.getItem('velasco_nota_autor_op_id');
+  return k ? parseInt(k, 10) : null;
+}
+function _notaAutorSet(opId) {
+  if (opId) localStorage.setItem('velasco_nota_autor_op_id', String(opId));
+  else localStorage.removeItem('velasco_nota_autor_op_id');
+}
+function _notaAutorNombre(opId) {
+  if (!opId) return '(sin autor)';
+  const op = operarios.find(o => o.id === opId);
+  return op ? op.nombre : '(operario eliminado)';
+}
+function _notaFmtFecha(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const yy = d.getFullYear();
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  return dd + '/' + mm + '/' + yy + ' ' + hh + ':' + mi;
+}
+
+// Devuelve notas filtradas (ordenadas por created_at descendente).
+function _notasDe(parentType, parentId, opciones) {
+  opciones = opciones || {};
+  const list = notas.filter(n =>
+    n.parent_type === parentType &&
+    n.parent_id === parentId &&
+    (opciones.esCierre === undefined || !!n.es_cierre === !!opciones.esCierre)
+  );
+  list.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+  return list;
+}
+
+// Render del bloque de notas. parentType + parentId + título.
+// Devuelve HTML para incrustar en la página.
+function renderNotasBlock(parentType, parentId, opciones) {
+  opciones = opciones || {};
+  const titulo = opciones.titulo || (opciones.esCierre ? 'Nota de cierre' : 'Notas');
+  const lista = _notasDe(parentType, parentId, { esCierre: opciones.esCierre });
+  const defaultOp = _notaAutorDefault();
+  const idPrefix = 'nb-' + parentType + '-' + parentId + (opciones.esCierre ? '-c' : '');
+
+  let h = '<div class="card" style="margin:14px 0">';
+  h += '<div class="card-t">' + escapeHtml(titulo) + ' <span style="font-weight:400;color:#888780;font-size:12px">(' + lista.length + ')</span></div>';
+
+  if (!opciones.soloLista) {
+    // Form para nueva nota.
+    h += '<div style="border:1px solid #C8C6BE;border-radius:6px;padding:10px;margin-bottom:10px;background:#F7F5EF">';
+    h += '<div class="row" style="margin-bottom:6px">';
+    h += '<div class="ef" style="flex:1"><div class="ef-l">Autor</div>';
+    h += '<select class="ef-i" id="' + idPrefix + '-autor">';
+    h += '<option value="">— Elegir —</option>';
+    operarios.forEach(o => {
+      h += '<option value="' + o.id + '"' + (o.id === defaultOp ? ' selected' : '') + '>' + escapeHtml(o.nombre) + '</option>';
+    });
+    h += '</select></div>';
+    h += '</div>';
+    h += '<textarea class="ef-i" id="' + idPrefix + '-texto" placeholder="Escribí la nota..." rows="3" style="resize:vertical;font-family:inherit"></textarea>';
+    h += '<div style="margin-top:6px;display:flex;justify-content:flex-end">';
+    h += '<button class="b b-p" onclick="agregarNota(\'' + parentType + '\',' + parentId + ',' + (!!opciones.esCierre) + ',\'' + idPrefix + '\')">Agregar</button>';
+    h += '</div>';
+    h += '</div>';
+  }
+
+  // Lista de notas.
+  if (lista.length === 0) {
+    h += '<div style="color:#888780;font-size:12px;font-style:italic;padding:6px 0">No hay ' + (opciones.esCierre ? 'nota de cierre' : 'notas') + ' todavía.</div>';
+  } else {
+    lista.forEach(n => {
+      const cierreBadge = n.es_cierre ? ' <span style="display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;background:#FFEDD5;color:#854F0B;border:1px solid #E69138;font-weight:700;margin-left:4px">🔒 Cierre</span>' : '';
+      h += '<div style="border:1px solid #E5E2D9;border-radius:6px;padding:8px 10px;margin-bottom:6px;background:#fff">';
+      h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;font-size:11px;color:#5F5E5A">';
+      h += '<div><b>' + escapeHtml(_notaAutorNombre(n.autor_op_id)) + '</b>' + cierreBadge + '</div>';
+      h += '<div>' + _notaFmtFecha(n.created_at) + '</div>';
+      h += '</div>';
+      h += '<div style="white-space:pre-wrap;font-size:13px">' + escapeHtml(n.contenido) + '</div>';
+      h += '<div style="margin-top:6px;text-align:right">';
+      h += '<button class="b b-link" style="font-size:11px;color:#A32D2D" onclick="eliminarNota(' + n.id + ')">Eliminar</button>';
+      h += '</div>';
+      h += '</div>';
+    });
+  }
+
+  h += '</div>';
+  return h;
+}
+
+async function agregarNota(parentType, parentId, esCierre, idPrefix) {
+  const autorSel = document.getElementById(idPrefix + '-autor');
+  const textoSel = document.getElementById(idPrefix + '-texto');
+  if (!autorSel || !textoSel) return;
+  const autorOpId = parseInt(autorSel.value, 10) || null;
+  const contenido = (textoSel.value || '').trim();
+  if (!autorOpId) { toast('Elegí un autor', true); return; }
+  if (!contenido) { toast('Escribí algo en la nota', true); return; }
+  const { data, error } = await sb.from('notas').insert({
+    parent_type: parentType,
+    parent_id: parentId,
+    contenido: contenido,
+    es_cierre: !!esCierre,
+    autor_op_id: autorOpId
+  }).select().single();
+  if (error) { toast('Error: ' + error.message, true); return; }
+  notas.unshift(data);
+  _notaAutorSet(autorOpId);
+  toast('Nota agregada');
+  render();
+}
+
+async function eliminarNota(notaId) {
+  if (!await showConfirmModalProy({ titulo: '¿Eliminar nota?', mensaje: 'Esta acción no se puede deshacer.', okLabel: 'Eliminar', okStyle: 'danger' })) return;
+  const { error } = await sb.from('notas').delete().eq('id', notaId);
+  if (error) { toast('Error: ' + error.message, true); return; }
+  notas = notas.filter(n => n.id !== notaId);
+  toast('Nota eliminada');
+  render();
+}
+
+// Wrapper para crear nota de cierre programáticamente (desde flujos de cerrar
+// proyecto/item). Devuelve true si se agregó (o se omitió por estar vacío);
+// false si el usuario quería cargarla pero faltó dato.
+async function _agregarNotaCierreSiCorresponde(parentType, parentId, contenido, autorOpId) {
+  contenido = (contenido || '').trim();
+  if (!contenido) return true; // opcional
+  if (!autorOpId) { toast('Falta el autor de la nota de cierre', true); return false; }
+  const { data, error } = await sb.from('notas').insert({
+    parent_type: parentType,
+    parent_id: parentId,
+    contenido: contenido,
+    es_cierre: true,
+    autor_op_id: autorOpId
+  }).select().single();
+  if (error) { toast('Error guardando nota de cierre: ' + error.message, true); return false; }
+  notas.unshift(data);
+  _notaAutorSet(autorOpId);
+  return true;
+}
+
+// Render del par "campo nota de cierre + select autor" para incrustar en un
+// modal de cierre. Devuelve HTML; los inputs se leen desde
+// _leerNotaCierreModal(idPrefix).
+function renderNotaCierreCampo(idPrefix, label) {
+  label = label || 'Nota de cierre (opcional)';
+  const defaultOp = _notaAutorDefault();
+  let h = '<div style="border:1px solid #C8C6BE;border-radius:6px;padding:10px;margin:10px 0;background:#F7F5EF">';
+  h += '<div style="font-weight:600;font-size:12px;margin-bottom:6px">' + escapeHtml(label) + '</div>';
+  h += '<div class="row" style="margin-bottom:6px">';
+  h += '<div class="ef" style="flex:1"><div class="ef-l">Autor</div>';
+  h += '<select class="ef-i" id="' + idPrefix + '-autor">';
+  h += '<option value="">— Elegir —</option>';
+  operarios.forEach(o => {
+    h += '<option value="' + o.id + '"' + (o.id === defaultOp ? ' selected' : '') + '>' + escapeHtml(o.nombre) + '</option>';
+  });
+  h += '</select></div></div>';
+  h += '<textarea class="ef-i" id="' + idPrefix + '-texto" placeholder="Motivo del cierre, observaciones, etc..." rows="3" style="resize:vertical;font-family:inherit"></textarea>';
+  h += '</div>';
+  return h;
+}
+function _leerNotaCierreModal(idPrefix) {
+  const autor = document.getElementById(idPrefix + '-autor');
+  const texto = document.getElementById(idPrefix + '-texto');
+  return {
+    autorOpId: autor ? (parseInt(autor.value, 10) || null) : null,
+    contenido: texto ? (texto.value || '').trim() : ''
+  };
+}
+
 function showNotaEnvioExternaModal(projId) {
   showNotaEnvioModal(projId, true);
 }
