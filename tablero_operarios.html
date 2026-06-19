@@ -36,7 +36,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;backgrou
 .bk-a{background:#FF9B9B;color:#000}.bk-m{background:#F0D47A;color:#000}.bk-b{background:#BDECB6;color:#000}
 .bk-pulmon{background:repeating-linear-gradient(45deg,#EAE8E0,#EAE8E0 6px,#D4D2C8 6px,#D4D2C8 12px);color:#5F5E5A}
 .bk-pulmon .bt,.bk-pulmon .bs,.bk-pulmon .bm,.bk-pulmon .bma{color:#5F5E5A}
-.bk-d{background:#E0DEDA;opacity:.5}
+/* v70 Fase 18: bloque "Hecho" mantiene su color base pero desaturado y un poco
+   más opaco. Antes era gris uniforme (#E0DEDA) que perdía la identidad de
+   urgencia/cliente. Ahora se nota que está terminado sin perder de qué se trata. */
+.bk-d{filter:grayscale(55%) brightness(0.92);opacity:.75}
 .bt{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:10px}
 .bs{color:#2C2C2A;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:9px}
 .bm{color:#2C2C2A;font-size:9px;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
