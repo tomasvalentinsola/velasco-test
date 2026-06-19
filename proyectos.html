@@ -2750,7 +2750,8 @@ function _newProjectRestoreFormValues(v) {
   // v70: el contacto y observaciones se restauran después del render principal,
   // junto con _llenarComboContactoProj. Acá solo restauramos lo demás.
   if (v.obsMail) {
-    const ed = document.getElementById('f-obs-mail');
+    // El editor rico se identifica por data-rich-content, NO por id.
+    const ed = document.querySelector('[data-rich-content="f-obs-mail"]');
     if (ed) ed.innerHTML = v.obsMail;
   }
 }

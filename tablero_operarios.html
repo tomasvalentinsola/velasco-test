@@ -455,7 +455,11 @@ function navWeek(dir){
 function fD(d){return['Dom','Lun','Mar','Mie','Jue','Vie','Sab'][d.getDay()]+' '+d.getDate()+'/'+(d.getMonth()+1)}
 function dK(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')}
 function tM(t){if(!t)return 0;const p=t.split(':');return+p[0]*60+(+p[1])}
-function mT(m){return String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0')}
+// v70 Fase 18: redondear el input para soportar duraciones con decimales
+// (productos matriz pueden tener "0.3 min por pieza" que termina en duraciones
+// fraccionarias). Si no redondeamos, mT(697.5) devuelve "11:37.5" que es un
+// string inválido para <input type="time"> y se renderiza como vacío.
+function mT(m){m=Math.round(m||0);return String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0')}
 function pL(m){return Math.max(0,(m-360)/660*100)}
 function pW(d){return d/660*100}
 function opC(id){const o=ops.find(x=>x.id===id);return o?o.color_borde:'#888'}
