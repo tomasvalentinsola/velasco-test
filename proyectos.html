@@ -6342,6 +6342,26 @@ async function _importarProductoCore(productoId, valores, ignorarValidaciones) {
     await sb.from('correlatividades').insert(corrInserts);
   }
 
+  // v70 Fase 18b: copiar las notas del producto matriz como notas del item.
+  // Las notas viven en la tabla notas con parent_type='producto'. Al importar,
+  // se duplican como parent_type='item' para que el item las muestre en su
+  // detalle (y en la portada de "Generar carpeta"). Cambios futuros en las
+  // notas del producto NO se propagan al item (es una copia, no un vínculo).
+  const notasDelProducto = notas.filter(n =>
+    n.parent_type === 'producto' && n.parent_id === productoId && !n.es_cierre
+  );
+  if (notasDelProducto.length > 0) {
+    const notasInsert = notasDelProducto.map(n => ({
+      parent_type: 'item',
+      parent_id: newItem.id,
+      contenido: n.contenido,
+      es_cierre: false,
+      autor_op_id: n.autor_op_id
+    }));
+    const { error: notErr } = await sb.from('notas').insert(notasInsert);
+    if (notErr) console.error('Error copiando notas del producto:', notErr);
+  }
+
   return { itemId: newItem.id, actIds: newActIds, pmpToActMap: pmpToActMap, productoId: productoId };
 }
 
@@ -6786,6 +6806,8 @@ function renderProductoMatrizDetail() {
     });
   }
   h += '</div>';
+  // v70 Fase 18: notas del producto. Polimorfismo: parent_type='producto'.
+  h += renderNotasBlock('producto', prod.id, { esCierre: false });
   main.innerHTML = h;
   setupPhotoPaste();
 }
@@ -15659,6 +15681,14 @@ body { font-family: Arial, sans-serif; font-size: 11px; color: #000; }
 .cover-photo { display: flex; justify-content: center; margin-top: 14px; }
 .cover-photo img { max-width: 100%; max-height: 320px; object-fit: contain; border: 1px solid #000; }
 
+/* v70 Fase 18b: notas al final de la portada. Compactas, cursiva, interlineado
+   apretado. Título en negrita no cursivo. */
+.cover-notas { margin-top: 10px; font-size: 9px; font-style: italic; line-height: 1.2; }
+.cover-notas-t { font-weight: 700; font-style: normal; font-size: 10px; margin: 6px 0 2px; }
+.cover-notas-list { list-style: disc; padding-left: 16px; margin: 0; }
+.cover-notas-list li { margin: 0; padding: 0; }
+.cover-notas-list li b { font-style: normal; }
+
 /* ===== ORDEN DE TRABAJO (mitad de hoja) ===== */
 .ot { border: 1.5px solid #000; padding: 0; display: flex; flex-direction: column; height: 142mm; min-height: 142mm; max-height: 142mm; overflow: hidden; position: relative; page-break-inside: avoid; box-sizing: border-box; }
 /* .ot.grew: la OT necesito crecer porque el detalle no entraba ni a 9pt.
@@ -15867,6 +15897,45 @@ body { font-family: Arial, sans-serif; font-size: 11px; color: #000; }
   html += `</tbody></table></div>`;
   if (itemFoto) {
     html += `<div class="cover-photo"><img src="${escapeHtml(itemFoto)}"></div>`;
+  }
+  // v70 Fase 18b: notas regulares del proyecto y del item al final de la portada.
+  // Las notas de cierre NO se imprimen (cuando se genera la carpeta el proyecto
+  // y el item están activos, no cerrados). Formato chico, cursiva, interlineado
+  // apretado para no ocupar mucho espacio.
+  const _notasProy = notas.filter(n => n.parent_type === 'proyecto' && n.parent_id === proj.id && !n.es_cierre)
+    .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+  const _notasItem = notas.filter(n => n.parent_type === 'item' && n.parent_id === item.id && !n.es_cierre)
+    .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''));
+  const _opName = id => {
+    const o = operarios.find(op => op.id === id);
+    return o ? opFullName(o) : '?';
+  };
+  const _fmtFechaCorta = ts => {
+    if (!ts) return '';
+    const d = new Date(ts);
+    const dd = String(d.getDate()).padStart(2, '0');
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    return dd + '/' + mm;
+  };
+  if (_notasProy.length > 0 || _notasItem.length > 0) {
+    html += `<div class="cover-notas">`;
+    if (_notasProy.length > 0) {
+      html += `<div class="cover-notas-t">Notas del proyecto</div>`;
+      html += `<ul class="cover-notas-list">`;
+      _notasProy.forEach(n => {
+        html += `<li><b>${escapeHtml(_opName(n.autor_op_id))}, ${_fmtFechaCorta(n.created_at)}:</b> ${escapeHtml(_flat(n.contenido))}</li>`;
+      });
+      html += `</ul>`;
+    }
+    if (_notasItem.length > 0) {
+      html += `<div class="cover-notas-t">Notas del item</div>`;
+      html += `<ul class="cover-notas-list">`;
+      _notasItem.forEach(n => {
+        html += `<li><b>${escapeHtml(_opName(n.autor_op_id))}, ${_fmtFechaCorta(n.created_at)}:</b> ${escapeHtml(_flat(n.contenido))}</li>`;
+      });
+      html += `</ul>`;
+    }
+    html += `</div>`;
   }
   html += `</div>`;
 
