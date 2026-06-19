@@ -4343,8 +4343,8 @@ function _renderItemModal(item, proj) {
   // v70 Fase 18: campo nota de cierre opcional, solo al editar item existente
   // y solo si el estado actual es terminal (o si lo cambian a terminal).
   const _itemEstadosTerm = new Set(['Terminado', 'Stockeado', 'Enviado', 'Anulado']);
-  const _showCierreInit = !!itemId && _itemEstadosTerm.has(v.estado);
-  if (itemId) {
+  const _showCierreInit = !isNew && _itemEstadosTerm.has(v.estado);
+  if (!isNew) {
     h += '<div id="i-cierre-wrap" style="display:' + (_showCierreInit ? 'block' : 'none') + '">';
     h += renderNotaCierreCampo('i-cierre', 'Nota de cierre (opcional)');
     h += '</div>';
