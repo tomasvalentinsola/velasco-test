@@ -16196,7 +16196,14 @@ function renderNotasBlock(parentType, parentId, opciones) {
 
   // Botón "+ Nueva nota" a la izquierda, color blanco (solo para notas regulares).
   if (!opciones.soloLista && !opciones.esCierre) {
-    h += '<div style="display:flex;justify-content:flex-start;margin-bottom:10px">';
+    // v70 Fase 18b: título a la izquierda + botón al lado.
+    const tituloAuto = parentType === 'proyecto' ? 'Notas de Proyecto'
+                     : parentType === 'item' ? 'Notas de Item'
+                     : parentType === 'producto' ? 'Notas de Producto'
+                     : 'Notas';
+    const titulo = opciones.titulo || tituloAuto;
+    h += '<div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">';
+    h += '<div style="font-weight:700;font-size:14px;color:#2C2C2A">' + escapeHtml(titulo) + '</div>';
     h += '<button class="b" onclick="abrirModalNota(\'' + parentType + '\',' + parentId + ',null)">+ Nueva nota</button>';
     h += '</div>';
   }
