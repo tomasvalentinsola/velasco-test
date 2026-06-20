@@ -6760,6 +6760,9 @@ function renderProductoMatrizDetail() {
     h += '<div style="font-size:12px;color:#888;font-style:italic;padding:6px 0">Sin ubicación asignada (producto genérico). Editá el producto para asignarle una ubicación.</div>';
   }
 
+  // v70 Fase 18b: notas del producto antes de los procesos (mismo orden que
+  // en proyectos e items: notas regulares arriba, procesos abajo).
+  h += renderNotasBlock('producto', prod.id, { esCierre: false });
   // Procesos del producto
   h += '<div class="section-t" style="margin-top:14px">Procesos del producto <div style="display:flex;gap:6px"><button class="b" onclick="redefinirPredecesoresProducto(' + prod.id + ')" title="Asigna predecesores lineales según el orden actual" style="background:#FFF4E0;color:#854F0B;border-color:#E0A800">🔗 Redefinir predecesores</button><button class="b b-p" onclick="showProcesoForm(null, {tipo:\'producto\',parentId:' + prod.id + '})">+ Agregar proceso</button></div></div>';
   if (procesos.length === 0) {
@@ -6806,8 +6809,6 @@ function renderProductoMatrizDetail() {
     });
   }
   h += '</div>';
-  // v70 Fase 18: notas del producto. Polimorfismo: parent_type='producto'.
-  h += renderNotasBlock('producto', prod.id, { esCierre: false });
   main.innerHTML = h;
   setupPhotoPaste();
 }
@@ -16188,32 +16189,35 @@ function renderNotasBlock(parentType, parentId, opciones) {
   opciones = opciones || {};
   const lista = _notasDe(parentType, parentId, { esCierre: opciones.esCierre });
 
-  let h = '<div style="margin:14px 0">';
+  // v70 Fase 18b: contenedor con fondo levemente distinto para que se note
+  // visualmente que hay una "sección" de notas. Las notas individuales NO
+  // tienen su propio fondo: están separadas por una línea gris.
+  let h = '<div style="margin:14px 0;background:#F7F5EF;border:1px solid #E5E2D9;border-radius:6px;padding:12px 14px">';
 
-  // Botón "+ Nueva nota" arriba a la derecha (solo para notas regulares).
+  // Botón "+ Nueva nota" a la izquierda, color blanco (solo para notas regulares).
   if (!opciones.soloLista && !opciones.esCierre) {
-    h += '<div style="display:flex;justify-content:flex-end;margin-bottom:8px">';
-    h += '<button class="b b-p" onclick="abrirModalNota(\'' + parentType + '\',' + parentId + ',null)">+ Nueva nota</button>';
+    h += '<div style="display:flex;justify-content:flex-start;margin-bottom:10px">';
+    h += '<button class="b" onclick="abrirModalNota(\'' + parentType + '\',' + parentId + ',null)">+ Nueva nota</button>';
     h += '</div>';
   }
 
-  // Lista de notas (sin caja, estilo TacticaSoft).
+  // Lista de notas (sin caja individual, separadas por línea gris).
   if (lista.length === 0) {
     if (!opciones.soloLista) {
-      h += '<div style="color:#888780;font-size:12px;font-style:italic;padding:6px 0">No hay notas todavía.</div>';
+      h += '<div style="color:#888780;font-size:12px;font-style:italic;padding:2px 0">No hay notas todavía.</div>';
     }
   } else {
     lista.forEach((n, idx) => {
       const cierreBadge = n.es_cierre ? ' <span style="display:inline-block;padding:1px 6px;border-radius:3px;font-size:10px;background:#FFEDD5;color:#854F0B;border:1px solid #E69138;font-weight:700;margin-left:4px">🔒 Cierre</span>' : '';
-      const separator = idx > 0 ? 'border-top:1px solid #E5E2D9;padding-top:10px;margin-top:10px;' : '';
+      const separator = idx > 0 ? 'border-top:1px solid #D8D5CC;padding-top:10px;margin-top:10px;' : '';
       h += '<div style="' + separator + 'position:relative">';
       h += '<div style="font-size:12px;color:#2C2C2A;margin-bottom:3px">';
       h += '<b>' + escapeHtml(_notaAutorNombre(n.autor_op_id)) + '</b> · <b>' + _notaFmtFecha(n.created_at) + '</b>' + cierreBadge;
       h += '</div>';
-      h += '<div style="white-space:pre-wrap;font-size:13px;color:#2C2C2A;padding-right:100px">' + escapeHtml(n.contenido) + '</div>';
-      h += '<div style="position:absolute;top:0;right:0;display:flex;gap:8px">';
-      h += '<button onclick="abrirModalNota(\'' + parentType + '\',' + parentId + ',' + n.id + ')" style="background:none;border:none;color:#0C447C;font-size:11px;cursor:pointer;padding:2px 4px;text-decoration:underline">Editar</button>';
-      h += '<button onclick="eliminarNota(' + n.id + ')" style="background:none;border:none;color:#A32D2D;font-size:11px;cursor:pointer;padding:2px 4px;text-decoration:underline">Eliminar</button>';
+      h += '<div style="white-space:pre-wrap;font-size:13px;color:#2C2C2A;padding-right:130px">' + escapeHtml(n.contenido) + '</div>';
+      h += '<div style="position:absolute;top:0;right:0;display:flex;gap:4px">';
+      h += '<button class="b b-icon" onclick="abrirModalNota(\'' + parentType + '\',' + parentId + ',' + n.id + ')">Editar</button>';
+      h += '<button class="b b-icon b-d" onclick="eliminarNota(' + n.id + ')">Eliminar</button>';
       h += '</div>';
       h += '</div>';
     });
