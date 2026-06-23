@@ -3196,11 +3196,18 @@ function renderProjectDetail() {
   h += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 4px">';
   h += '<button class="b b-p" onclick="showProjectStateModal(' + proj.id + ')">Cambiar estado</button>';
   h += '<button class="b" onclick="copyProjectForMail(' + proj.id + ')" title="Copia el proyecto formateado para pegar en el mail estandarizado">✉ Copiar mail</button>';
-  h += '<button class="b" onclick="showRemitoModal(' + proj.id + ')" title="Cargar un remito para este proyecto">🚚 Cargar remito</button>';
-  h += '<button class="b" onclick="showNotaEnvioModal(' + proj.id + ')" title="Generar nota de envío para este proyecto">🚚 Nota de envío</button>';
-  // v70 Fase 17d: cargar nota de envío externa (no generada por el sistema).
-  h += '<button class="b" onclick="showNotaEnvioExternaModal(' + proj.id + ')" title="Registrar una nota de envío que se confeccionó fuera del sistema" style="background:#F5F3EC;border-color:#888780">📥 Cargar nota externa</button>';
-  h += '<button class="b" onclick="showEtiquetaModalProyecto(' + proj.id + ')" title="Generar etiqueta de envío para imprimir">🏷 Etiqueta de envío</button>';
+  // v70 Fase 18b: los 4 botones de envío (remito, nota, externa, etiqueta) se
+  // agruparon en un solo botón "Envío" con dropdown. Color neutro (mismo que
+  // tenía "Cargar nota externa": #F5F3EC con borde #888780).
+  h += '<div class="envio-dropdown" style="position:relative;display:inline-block">';
+  h += '<button class="b" onclick="toggleEnvioDropdown(event,' + proj.id + ')" title="Acciones de envío" style="background:#F5F3EC;border-color:#888780">🚚 Envío ▾</button>';
+  h += '<div id="envio-dropdown-menu-' + proj.id + '" class="envio-dropdown-menu" style="display:none;position:absolute;top:100%;left:0;margin-top:4px;background:#fff;border:1px solid #C8C6BE;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.15);padding:6px;min-width:220px;z-index:1000">';
+  h += '<button class="b" style="display:block;width:100%;text-align:left;margin-bottom:4px" onclick="_envioMenuClick(' + proj.id + ',\'remito\')" title="Cargar un remito para este proyecto">🚚 Cargar Remito</button>';
+  h += '<button class="b" style="display:block;width:100%;text-align:left;margin-bottom:4px" onclick="_envioMenuClick(' + proj.id + ',\'nota\')" title="Generar nota de envío para este proyecto">🚚 Nota de Envío</button>';
+  h += '<button class="b" style="display:block;width:100%;text-align:left;margin-bottom:4px" onclick="_envioMenuClick(' + proj.id + ',\'externa\')" title="Registrar una nota de envío que se confeccionó fuera del sistema">📥 Cargar NDE externa</button>';
+  h += '<button class="b" style="display:block;width:100%;text-align:left" onclick="_envioMenuClick(' + proj.id + ',\'etiqueta\')" title="Generar etiqueta de envío para imprimir">🏷 Etiqueta de envío</button>';
+  h += '</div>';
+  h += '</div>';
   h += '<button class="b" onclick="copyProject(' + proj.id + ')" title="Crea un proyecto nuevo con todos estos datos">📑 Duplicar proyecto</button>';
   h += '</div>';
 
@@ -3271,9 +3278,13 @@ function renderProjectDetail() {
   h += '<input type="text" class="ef-i" id="f-clifinal-search" value="' + escapeHtml(_cfMatch ? _cfMatch.nombre : '') + '" placeholder="Buscar cliente..." autocomplete="off" oninput="renderClienteFinalCombo()" onfocus="renderClienteFinalCombo()" onblur="setTimeout(closeClienteFinalCombo, 200)">';
   h += '<div id="f-clifinal-list" class="combo-list" style="display:none"></div>';
   h += '</div>';
-  // Texto libre (visible si habilitado Y modo libre).
+  // Texto libre (visible si habilitado Y modo libre). v70 Fase 18b: alineamos
+  // el comportamiento con el form de Nuevo proyecto: input "disabled" + fondo
+  // gris cuando no está visible, así _toggleClienteFinalLibre() lo activa de
+  // forma consistente. Antes el input quedaba editable aunque oculto, lo que
+  // generaba comportamiento raro al alternar entre modo picker y modo libre.
   const _libreVisible = _cfHab && _cfLibre;
-  h += '<input type="text" class="ef-i" id="f-clifinal" value="' + escapeHtml(_cfVal) + '" placeholder="Ej. GDLP" style="display:' + (_libreVisible ? 'block' : 'none') + '">';
+  h += '<input type="text" class="ef-i" id="f-clifinal" value="' + escapeHtml(_cfVal) + '" placeholder="Ej. GDLP"' + (_libreVisible ? '' : ' disabled') + ' style="' + (_libreVisible ? '' : 'background:#F0EFEA;color:#5F5E5A;') + 'display:' + (_libreVisible ? 'block' : 'none') + '">';
   h += '<div class="ef-help">Para casos como stock interno donde el destinatario real es otro. Marcá <b>Habilitar</b> para activarlo y, si necesitás un nombre que no está en la base, también <b>Permitir escritura libre</b>.</div></div>';
   // v62: contacto del proyecto — va inmediatamente después de Cliente final.
   h += '<div class="ef"><div class="ef-l">Contacto del proyecto <span style="color:#A32D2D">*</span></div>';
@@ -6679,9 +6690,15 @@ function renderItemDetail() {
       h += '<button class="b" style="padding:2px 6px;font-size:10px;margin-left:4px" onclick="showAddPredecesorModal(' + p.id + ')">+ Predecesor</button>';
       h += '</div></div>';
       h += '<div class="card-actions" style="display:flex;flex-direction:column;gap:4px">';
-      h += '<div style="display:flex;gap:2px">';
+      h += '<div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap">';
       h += '<button class="b b-icon" ' + (idx === 0 ? 'disabled' : 'onclick="moveProceso(' + p.id + ',-1)"') + ' title="Subir">▲</button>';
       h += '<button class="b b-icon" ' + (idx === procesos.length - 1 ? 'disabled' : 'onclick="moveProceso(' + p.id + ',1)"') + ' title="Bajar">▼</button>';
+      // v70 Fase 18b: span "N/Total" + botón ✏ para mover el proceso a una
+      // posición específica. Más rápido que apretar las flechitas N veces.
+      const _posActual = idx + 1;
+      const _total = procesos.length;
+      h += '<span id="procpos-' + p.id + '" data-es-matriz="false" style="font-size:11px;color:#5F5E5A">' + _posActual + '/' + _total
+        + ' <button class="b b-icon" style="padding:1px 6px;font-size:11px" onclick="_editarPosProceso(' + p.id + ',' + _total + ',' + _posActual + ',false)" title="Editar posición">✏</button></span>';
       h += '</div>';
       h += '<button class="b b-icon" onclick="showProcesoForm(' + p.id + ')">Editar</button>';
       // v70 Fase 17b: duplicar proceso (opcionalmente como retrabajo). Crea
@@ -6799,9 +6816,14 @@ function renderProductoMatrizDetail() {
       h += '<br><b>Predecesores:</b> ' + _renderPmPredChipsHtml(p);
       h += '</div></div>';
       h += '<div class="card-actions" style="display:flex;flex-direction:column;gap:4px">';
-      h += '<div style="display:flex;gap:2px">';
+      h += '<div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap">';
       h += '<button class="b b-icon" ' + (idx === 0 ? 'disabled' : 'onclick="movePmProceso(' + p.id + ',-1)"') + ' title="Subir">▲</button>';
       h += '<button class="b b-icon" ' + (idx === procesos.length - 1 ? 'disabled' : 'onclick="movePmProceso(' + p.id + ',1)"') + ' title="Bajar">▼</button>';
+      // v70 Fase 18b: span "N/Total" + botón ✏ para mover a posición específica.
+      const _posActualPm = idx + 1;
+      const _totalPm = procesos.length;
+      h += '<span id="procpos-' + p.id + '" data-es-matriz="true" style="font-size:11px;color:#5F5E5A">' + _posActualPm + '/' + _totalPm
+        + ' <button class="b b-icon" style="padding:1px 6px;font-size:11px" onclick="_editarPosProceso(' + p.id + ',' + _totalPm + ',' + _posActualPm + ',true)" title="Editar posición">✏</button></span>';
       h += '</div>';
       h += '<button class="b b-icon" onclick="showProcesoForm(' + p.id + ', {tipo:\'producto\',parentId:' + prod.id + '})">Editar</button>';
       h += '<button class="b b-icon b-d" onclick="procCtx={tipo:\'producto\',parentId:' + prod.id + '};confirmDeleteProceso(' + p.id + ')">Eliminar</button>';
@@ -6828,6 +6850,33 @@ async function movePmProceso(procesoId, delta) {
   await sb.from('productos_matriz_procesos').update({ orden: ordenB }).eq('id', proc.id);
   await sb.from('productos_matriz_procesos').update({ orden: ordenA }).eq('id', otro.id);
   await loadAll();
+  render();
+}
+
+// v70 Fase 18b: mover un proceso de producto matriz a una posición específica (1..N).
+async function movePmProcesoAPos(procesoId, posInput) {
+  const proc = productosMatrizProcesos.find(p => p.id === procesoId);
+  if (!proc) return;
+  const sameProd = productosMatrizProcesos.filter(p => p.producto_id === proc.producto_id)
+    .sort((a, b) => (a.orden || 999999) - (b.orden || 999999));
+  const total = sameProd.length;
+  const idxActual = sameProd.findIndex(p => p.id === procesoId);
+  const posActual = idxActual + 1;
+  const posNueva = parseInt(posInput, 10);
+  if (!Number.isFinite(posNueva)) {
+    toast('Posición inválida', true); return;
+  }
+  if (posNueva < 1 || posNueva > total) {
+    toast('La posición debe estar entre 1 y ' + total, true); return;
+  }
+  if (posNueva === posActual) return;
+  const lista = sameProd.slice();
+  const [movido] = lista.splice(idxActual, 1);
+  lista.splice(posNueva - 1, 0, movido);
+  const updates = lista.map((p, i) => sb.from('productos_matriz_procesos').update({ orden: i + 1 }).eq('id', p.id));
+  await Promise.all(updates);
+  await loadAll();
+  toast('Proceso movido a posición ' + posNueva);
   render();
 }
 
@@ -6870,6 +6919,33 @@ function refreshPredsInModal() {
   list.innerHTML = renderPredsChipsHtml(actId);
 }
 
+// v70 Fase 18b: cuando el usuario hace click en ✏ al lado del "N/Total" del
+// proceso, ese span se reemplaza con un input numérico + botón ✓ que aplica
+// la nueva posición. Se cancela apretando Esc o el botón ✗.
+function _editarPosProceso(procesoId, total, posActual, esMatriz) {
+  const cont = document.getElementById('procpos-' + procesoId);
+  if (!cont) return;
+  cont.innerHTML = '<input type="number" min="1" max="' + total + '" value="' + posActual + '" id="procpos-input-' + procesoId + '" style="width:50px;padding:1px 4px;font-size:11px;border:1px solid #888780;border-radius:3px" onkeydown="if(event.key===\'Enter\'){event.preventDefault();_aplicarPosProceso(' + procesoId + ',' + total + ',' + posActual + ',' + esMatriz + ');}else if(event.key===\'Escape\'){event.preventDefault();_cancelarEditarPos(' + procesoId + ',' + total + ',' + posActual + ');}" />'
+    + ' <button class="b b-icon" style="padding:1px 6px;font-size:11px" onclick="_aplicarPosProceso(' + procesoId + ',' + total + ',' + posActual + ',' + esMatriz + ')" title="Aplicar">✓</button>'
+    + ' <button class="b b-icon" style="padding:1px 6px;font-size:11px" onclick="_cancelarEditarPos(' + procesoId + ',' + total + ',' + posActual + ')" title="Cancelar">✗</button>';
+  const inp = document.getElementById('procpos-input-' + procesoId);
+  if (inp) { inp.focus(); inp.select(); }
+}
+
+function _aplicarPosProceso(procesoId, total, posActual, esMatriz) {
+  const inp = document.getElementById('procpos-input-' + procesoId);
+  if (!inp) return;
+  const v = inp.value;
+  if (esMatriz) movePmProcesoAPos(procesoId, v);
+  else moveProcesoAPos(procesoId, v);
+}
+
+function _cancelarEditarPos(procesoId, total, posActual) {
+  const cont = document.getElementById('procpos-' + procesoId);
+  if (!cont) return;
+  cont.innerHTML = posActual + '/' + total + ' <button class="b b-icon" style="padding:1px 6px;font-size:11px" onclick="_editarPosProceso(' + procesoId + ',' + total + ',' + posActual + ',' + (cont.dataset.esMatriz === 'true') + ')" title="Editar posición">✏</button>';
+}
+
 async function moveProceso(procesoId, delta) {
   const proceso = actividades.find(a => a.id === procesoId);
   if (!proceso) return;
@@ -6883,6 +6959,37 @@ async function moveProceso(procesoId, delta) {
   await sb.from('actividades_tablero').update({ orden: swap.orden }).eq('id', proceso.id);
   await sb.from('actividades_tablero').update({ orden: proceso.orden }).eq('id', swap.id);
   await loadAll();
+  render();
+}
+
+// v70 Fase 18b: mover un proceso de item a una posición específica (1..N).
+// Si la posición está fuera de rango (< 1 o > N), avisa con toast y no aplica.
+// Si la posición es la misma que la actual, no hace nada.
+async function moveProcesoAPos(procesoId, posInput) {
+  const proceso = actividades.find(a => a.id === procesoId);
+  if (!proceso) return;
+  const sameItem = actividades.filter(a => a.item_id === proceso.item_id && !a.proceso_eliminado)
+    .sort((a, b) => (a.orden || 999999) - (b.orden || 999999));
+  const total = sameItem.length;
+  const idxActual = sameItem.findIndex(a => a.id === procesoId);
+  const posActual = idxActual + 1; // 1-based
+  const posNueva = parseInt(posInput, 10);
+  if (!Number.isFinite(posNueva)) {
+    toast('Posición inválida', true); return;
+  }
+  if (posNueva < 1 || posNueva > total) {
+    toast('La posición debe estar entre 1 y ' + total, true); return;
+  }
+  if (posNueva === posActual) return; // sin cambios
+  // Reordenar la lista en memoria: sacar el proceso de idxActual e insertar en posNueva-1.
+  const lista = sameItem.slice();
+  const [movido] = lista.splice(idxActual, 1);
+  lista.splice(posNueva - 1, 0, movido);
+  // Reasignar orden 1..N en BD. Usamos Promise.all para que se ejecuten en paralelo.
+  const updates = lista.map((p, i) => sb.from('actividades_tablero').update({ orden: i + 1 }).eq('id', p.id));
+  await Promise.all(updates);
+  await loadAll();
+  toast('Proceso movido a posición ' + posNueva);
   render();
 }
 
@@ -16577,7 +16684,7 @@ function _neRenderModal(cfg) {
 
   let h = '<div class="md-t">' + (esEditar
     ? (esExt ? 'Editar nota externa ' : 'Editar nota de envío ') + escapeHtml(cfg.numero || '')
-    : (esExt ? '📥 Cargar nota externa — ' : 'Nota de envío — ') + escapeHtml(cfg.tituloCliente)) + '</div>';
+    : (esExt ? '📥 Cargar NDE externa — ' : 'Nota de envío — ') + escapeHtml(cfg.tituloCliente)) + '</div>';
   h += '<div style="font-size:11px;color:#5F5E5A;margin-bottom:10px">' + (esEditar
     ? 'Editás el contenido de la nota. El número se mantiene.'
     : (esExt
@@ -18237,6 +18344,40 @@ function _rmNotasYaCerradas(projId, excluirRemitoId) {
     r.items.forEach(it => { if (it.notaId != null) set.add(it.notaId); });
   });
   return set;
+}
+
+// v70 Fase 18b: dropdown de "Envío" que agrupa los 4 botones de acciones de
+// envío (remito, nota, externa, etiqueta). Se abre/cierra al clickear el botón
+// y se cierra al clickear fuera o seleccionar una opción.
+function toggleEnvioDropdown(ev, projId) {
+  if (ev) { ev.stopPropagation(); }
+  const menu = document.getElementById('envio-dropdown-menu-' + projId);
+  if (!menu) return;
+  const visible = menu.style.display !== 'none';
+  // Cerrar todos los dropdowns de envío abiertos (por si hay más de uno).
+  document.querySelectorAll('.envio-dropdown-menu').forEach(m => { m.style.display = 'none'; });
+  if (!visible) {
+    menu.style.display = 'block';
+    // Cerrar al clickear fuera.
+    setTimeout(() => {
+      const closer = (e) => {
+        if (!menu.contains(e.target)) {
+          menu.style.display = 'none';
+          document.removeEventListener('click', closer);
+        }
+      };
+      document.addEventListener('click', closer);
+    }, 0);
+  }
+}
+
+function _envioMenuClick(projId, accion) {
+  const menu = document.getElementById('envio-dropdown-menu-' + projId);
+  if (menu) menu.style.display = 'none';
+  if (accion === 'remito') showRemitoModal(projId);
+  else if (accion === 'nota') showNotaEnvioModal(projId);
+  else if (accion === 'externa') showNotaEnvioExternaModal(projId);
+  else if (accion === 'etiqueta') showEtiquetaModalProyecto(projId);
 }
 
 // Abre el modal de carga de remito desde un proyecto.
