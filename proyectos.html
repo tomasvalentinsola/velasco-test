@@ -3202,8 +3202,8 @@ function renderProjectDetail() {
   h += '<div class="envio-dropdown" style="position:relative;display:inline-block">';
   h += '<button class="b" onclick="toggleEnvioDropdown(event,' + proj.id + ')" title="Acciones de envío" style="background:#F5F3EC;border-color:#888780">🚚 Envío ▾</button>';
   h += '<div id="envio-dropdown-menu-' + proj.id + '" class="envio-dropdown-menu" style="display:none;position:absolute;top:100%;left:0;margin-top:4px;background:#fff;border:1px solid #C8C6BE;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.15);padding:6px;min-width:220px;z-index:1000">';
-  h += '<button class="b" style="display:block;width:100%;text-align:left;margin-bottom:4px" onclick="_envioMenuClick(' + proj.id + ',\'remito\')" title="Cargar un remito para este proyecto">🚚 Cargar Remito</button>';
   h += '<button class="b" style="display:block;width:100%;text-align:left;margin-bottom:4px" onclick="_envioMenuClick(' + proj.id + ',\'nota\')" title="Generar nota de envío para este proyecto">🚚 Nota de Envío</button>';
+  h += '<button class="b" style="display:block;width:100%;text-align:left;margin-bottom:4px" onclick="_envioMenuClick(' + proj.id + ',\'remito\')" title="Cargar un remito para este proyecto">📥 Cargar Remito</button>';
   h += '<button class="b" style="display:block;width:100%;text-align:left;margin-bottom:4px" onclick="_envioMenuClick(' + proj.id + ',\'externa\')" title="Registrar una nota de envío que se confeccionó fuera del sistema">📥 Cargar NDE externa</button>';
   h += '<button class="b" style="display:block;width:100%;text-align:left" onclick="_envioMenuClick(' + proj.id + ',\'etiqueta\')" title="Generar etiqueta de envío para imprimir">🏷 Etiqueta de envío</button>';
   h += '</div>';
