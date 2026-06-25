@@ -18105,8 +18105,13 @@ function showEtiquetaModalProyecto(projId) {
   if (!proj) { toast('Proyecto no encontrado', true); return; }
   const cliente = clientes.find(c => c.id === proj.cliente_id);
   const contacto = proj.contacto_id ? clienteContactos.find(c => c.id === proj.contacto_id) : null;
+  // v70 Fase 18b: usar numero_impreso (el número que el usuario escribe a mano
+  // y que figura en el documento físico) en lugar de numero (el correlativo
+  // interno del sistema). Esto importa especialmente para notas externas, donde
+  // el correlativo interno no aparece en el documento real. Si numero_impreso
+  // está vacío, caemos al correlativo interno como fallback.
   const notasProj = notasEnvio.filter(n => n.proyecto_id === projId)
-    .map(n => n.numero).filter(Boolean);
+    .map(n => n.numero_impreso || n.numero).filter(Boolean);
   _etqAbrir({
     cliente: cliente, contacto: contacto,
     notas: notasProj
@@ -18127,7 +18132,7 @@ function showEtiquetaModalNota(notaId) {
   _etqAbrir({
     cliente: cliente, contacto: contacto,
     contactoTexto: n.cliente_contacto || '',
-    notas: n.numero ? [n.numero] : []
+    notas: (n.numero_impreso || n.numero) ? [n.numero_impreso || n.numero] : []
   });
 }
 
