@@ -18330,6 +18330,26 @@ html, body {
 //  - 'directo': remite ítems que nunca tuvieron nota. Estos SÍ suman.
 // Un remito es de un tipo o del otro, nunca mezcla.
 
+// v154: el remito de TacticaSoft tiene formato "00001-0000XXXX" (punto de
+// venta 00001 + correlativo de 8 díg.). Hoy el correlativo está en el orden
+// de los miles, así que los primeros 4 díg. del correlativo son "0000" y solo
+// cambian los últimos 4. Por eso pedimos únicamente esos 4, igual que en la
+// nota de envío. Si algún día el correlativo cruza 9999→10000, basta con
+// cambiar este prefijo a "00001-0001".
+const _RM_PREFIJO_IMPRESO = '00001-0000';
+
+// Decide cómo editar el número de un remito guardado:
+//  - { completo: false, corto: 'XXXX' } → caja prefijo + 4 dígitos (caso normal).
+//  - { completo: true,  corto: '...' }  → input libre con el número entero
+//    (fallback para remitos viejos o con otro formato, para no corromperlos).
+function _rmModoNumero(numeroGuardado) {
+  const s = String(numeroGuardado || '');
+  if (s && !s.startsWith(_RM_PREFIJO_IMPRESO)) {
+    return { completo: true, corto: s };
+  }
+  return { completo: false, corto: s.startsWith(_RM_PREFIJO_IMPRESO) ? s.slice(_RM_PREFIJO_IMPRESO.length) : '' };
+}
+
 let _rmState = { mode: 'nuevo', projId: null, remitoId: null, tipo: 'nota',
   itemsNota: [], itemsDirecto: [] };
 
@@ -18478,12 +18498,27 @@ function _rmRenderModal(cfg) {
   let h = '<div class="md-t">' + (esEditar ? 'Editar remito ' + escapeHtml(cfg.numero) : 'Cargar remito') + '</div>';
   h += '<div style="font-size:11px;color:#5F5E5A;margin-bottom:10px">El remito es el número de TacticaSoft. Un remito cierra notas de envío <b>o</b> remite ítems sin nota — una opción u otra.</div>';
 
+  // v154: número de remito por prefijo fijo + 4 dígitos (análogo a NDE).
+  const _rmModo = _rmModoNumero(cfg.numero);
   h += '<div class="row">';
-  h += '<div class="ef" style="flex:1"><div class="ef-l">Nº de remito <span style="color:#A32D2D">*</span></div>';
-  h += '<input type="text" class="ef-i" id="rm-numero" value="' + escapeHtml(cfg.numero) + '" placeholder="Ej. 0001-00012345"></div>';
+  if (_rmModo.completo) {
+    // Fallback: remito viejo/raro que no encaja el prefijo. Input libre para
+    // no corromperlo.
+    h += '<div class="ef" style="flex:1"><div class="ef-l">Nº de remito (completo) <span style="color:#A32D2D">*</span></div>';
+    h += '<input type="text" class="ef-i" id="rm-numero" value="' + escapeHtml(_rmModo.corto) + '" placeholder="Ej. 00001-00004133"></div>';
+  } else {
+    h += '<div class="ef" style="flex:1"><div class="ef-l">Nº de remito <span style="color:#A32D2D">*</span></div>';
+    h += '<div style="display:flex;align-items:center;gap:4px">';
+    h += '<span style="font-size:14px;font-weight:600;color:#5F5E5A;white-space:nowrap">' + _RM_PREFIJO_IMPRESO + '</span>';
+    h += '<input type="text" class="ef-i" id="rm-numimp" value="' + escapeHtml(_rmModo.corto) + '" placeholder="Ej. 4133" maxlength="4" style="max-width:120px" inputmode="numeric">';
+    h += '</div></div>';
+  }
   h += '<div class="ef" style="flex:1"><div class="ef-l">Fecha</div>';
   h += '<input type="date" class="ef-i" id="rm-fecha" value="' + escapeHtml(cfg.fecha) + '"></div>';
   h += '</div>';
+  if (!_rmModo.completo) {
+    h += '<div class="ef-help" style="font-size:10px;margin-top:-4px;margin-bottom:6px">Cargá los últimos 4 dígitos del remito de TacticaSoft. El número completo queda ' + _RM_PREFIJO_IMPRESO + 'XXXX.</div>';
+  }
 
   // Selector de tipo
   h += '<div class="ef"><div class="ef-l">Tipo de remito</div>';
@@ -18599,9 +18634,19 @@ function _rmToggleDirecto(idx) {
 // Guarda (inserta o actualiza) el remito.
 async function guardarRemito() {
   _rmSyncDirecto();
+  // v154: si está la caja de 4 dígitos, armamos el número con el prefijo fijo;
+  // si está el input completo (fallback), lo usamos tal cual.
+  const numimpEl = document.getElementById('rm-numimp');
   const numEl = document.getElementById('rm-numero');
   const fechaEl = document.getElementById('rm-fecha');
-  const numero = numEl ? numEl.value.trim() : '';
+  let numero;
+  if (numimpEl) {
+    const digits = numimpEl.value.replace(/\D/g, '');
+    if (!digits) { toast('Ingresá los últimos 4 dígitos del remito', true); return; }
+    numero = _RM_PREFIJO_IMPRESO + digits.padStart(4, '0');
+  } else {
+    numero = numEl ? numEl.value.trim() : '';
+  }
   const fecha = fechaEl ? fechaEl.value.trim() : '';
   if (!numero) { toast('Ingresá el número de remito', true); return; }
 
