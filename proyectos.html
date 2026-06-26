@@ -7211,22 +7211,47 @@ function renderPredecesorList() {
       return true;
     })
     .filter(x => !search || x.searchable.includes(search));
-  candidates.sort((x, y) => x.itLabel.localeCompare(y.itLabel));
+  // v155: en vez de una lista plana, agrupamos los candidatos por pieza (item)
+  // con un encabezado de grupo, igual que el modal de la matriz de productos.
+  // Cabecera amarilla para la pieza del propio proceso, gris para las demás.
+  const sucItemId = sucesor.item_id;
   const list = document.getElementById('pred-list');
   if (candidates.length === 0) {
     list.innerHTML = '<div style="padding:14px;text-align:center;color:#888780;font-size:11px;font-style:italic">No hay procesos que coincidan con los filtros.</div>';
     return;
   }
-  let h = '';
+  // Agrupar (respetando el tope de 80 candidatos) por item.
+  const grupos = new Map();  // itemId -> { it, projLabel, pedLabel, procs: [] }
   candidates.slice(0, 80).forEach(x => {
-    const checked = _predMultiSelected.has(x.a.id);
-    h += '<div style="display:flex;align-items:center;padding:8px 10px;border-bottom:1px solid #F5F3EC;font-size:12px">';
-    h += '<input type="checkbox" id="predcb-' + x.a.id + '"' + (checked ? ' checked' : '') + ' onclick="event.stopPropagation();togglePredMulti(' + x.a.id + ')" style="margin-right:8px;cursor:pointer">';
-    h += '<div onclick="addPredecesor(' + x.a.id + ')" style="flex:1;cursor:pointer" onmouseenter="this.style.background=\'#E6F1FB\'" onmouseleave="this.style.background=\'\'">';
-    h += '<b>' + escapeHtml(x.procLabel) + '</b> — ' + escapeHtml(x.itLabel);
-    h += '<div style="font-size:10px;color:#5F5E5A">Proyecto: ' + escapeHtml(x.projLabel) + ' · Pedido: ' + escapeHtml(x.pedLabel) + '</div>';
+    if (!grupos.has(x.it.id)) {
+      grupos.set(x.it.id, { it: x.it, projLabel: x.projLabel, pedLabel: x.pedLabel, procs: [] });
+    }
+    grupos.get(x.it.id).procs.push(x);
+  });
+  // La pieza del propio proceso va primero; el resto, alfabético.
+  const sortedGrupos = [...grupos.values()].sort((a, b) => {
+    if (a.it.id === sucItemId) return -1;
+    if (b.it.id === sucItemId) return 1;
+    return (_flat(a.it.descripcion) || '').localeCompare(_flat(b.it.descripcion) || '');
+  });
+  let h = '';
+  sortedGrupos.forEach(g => {
+    const esMismaPieza = g.it.id === sucItemId;
+    h += '<div style="background:' + (esMismaPieza ? '#FFF4D5' : '#F5F3EC') + ';padding:6px 10px;font-size:11px;font-weight:600;color:#5F5E5A;border-bottom:1px solid #E8E6DF">';
+    h += escapeHtml(_flat(g.it.descripcion) || ('Pieza ' + g.it.id)) + (esMismaPieza ? ' <span style="color:#854F0B">(misma pieza)</span>' : '');
+    h += '<span style="font-weight:400;color:#888;margin-left:6px">· ' + escapeHtml(g.projLabel) + ' · Pedido: ' + escapeHtml(g.pedLabel) + '</span>';
     h += '</div>';
-    h += '</div>';
+    g.procs.sort((a, b) => (a.a.orden || 999999) - (b.a.orden || 999999));
+    g.procs.forEach(x => {
+      const checked = _predMultiSelected.has(x.a.id);
+      h += '<div style="display:flex;align-items:center;padding:6px 14px;border-bottom:1px solid #E8E6DF;font-size:12px;gap:8px">';
+      h += '<input type="checkbox" id="predcb-' + x.a.id + '"' + (checked ? ' checked' : '') + ' onclick="event.stopPropagation();togglePredMulti(' + x.a.id + ')" style="cursor:pointer;flex:0 0 auto">';
+      h += '<div style="flex:1;display:flex;justify-content:space-between;align-items:center;cursor:pointer" onclick="addPredecesor(' + x.a.id + ')">';
+      h += '<span><span style="color:#888;margin-right:6px">#' + (x.a.orden || '?') + '</span>' + escapeHtml(x.procLabel) + '</span>';
+      h += '<button class="b b-p" style="padding:2px 8px;font-size:10px">Elegir</button>';
+      h += '</div>';
+      h += '</div>';
+    });
   });
   list.innerHTML = h;
 }
