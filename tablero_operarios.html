@@ -2676,8 +2676,7 @@ function showMachineConflictAlert(act, machId, fecha, startTime, conflicts, newO
 // All three mutations are bundled into placeAct so undo restores the whole set.
 async function moveActOp(actId, newOpId, fecha, dropMin) {
   const act = acts.find(a => a.id === actId);
-  if (!act) { toast('[DBG] Actividad no encontrada'); return; }
-  if (!act.maquina_id) { toast('[DBG] Actividad sin maquina asignada'); return; }
+  if (!act) { toast('Actividad no encontrada', true); return; }
   const fromOp = opN(act.operario_id), toOp = opN(newOpId);
   const fromDate = act.fecha, fromTime = act.hora_inicio;
   console.log('[drop] moveActOp: ' + act.descripcion + ' | from ' + fromOp + ' ' + fromDate + ' ' + fromTime + ' → to ' + toOp + ' ' + fecha + ' dropMin=' + mT(dropMin) + ' (mach=' + mN(act.maquina_id) + ')');
@@ -2692,7 +2691,7 @@ async function moveActOp(actId, newOpId, fecha, dropMin) {
   if (startTime < opStart) startTime = opStart;
   // Detect no-op movements (same op, same date, ≤1min delta)
   if (act.operario_id === newOpId && fromDate === fecha && Math.abs(tM(fromTime) - startTime) < 2) {
-    toast('[DBG] Sin cambios — misma posicion');
+    toast('Sin cambios — misma posición');
     return;
   }
   console.log('[drop] calcInsertTimeForOp returned=' + mT(rawStart) + ' adjusted=' + mT(startTime));
