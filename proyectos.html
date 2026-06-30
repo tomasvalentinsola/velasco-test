@@ -17921,18 +17921,40 @@ table.ne-tabla td.ne-d { text-align: left; white-space: pre-wrap; }
 // =====================================================================
 
 // Versión de la librería docx usada (debe coincidir con la del CDN).
-const _DOCX_CDN = 'https://cdn.jsdelivr.net/npm/docx@9.6.1/dist/index.umd.cjs';
+// v156: usamos el bundle .iife.js (formato global para navegador) en lugar del
+// .umd.cjs, que daba HTTP 404 al servirse por CDN (la extensión .cjs no se
+// sirve bien). Probamos varios CDNs en orden por si alguno está caído.
+const _DOCX_VERSION = '9.6.1';
+const _DOCX_CDNS = [
+  'https://cdn.jsdelivr.net/npm/docx@' + _DOCX_VERSION + '/dist/index.iife.js',
+  'https://unpkg.com/docx@' + _DOCX_VERSION + '/dist/index.iife.js'
+];
 let _docxLibPromise = null;
 
+// Baja el código de la librería probando cada CDN en orden. Devuelve el texto
+// del primer CDN que responda OK; si todos fallan, lanza el último error.
+async function _fetchDocxCode() {
+  let ultimoError = null;
+  for (const url of _DOCX_CDNS) {
+    try {
+      const r = await fetch(url);
+      if (r.ok) return await r.text();
+      ultimoError = new Error('HTTP ' + r.status);
+    } catch (e) {
+      ultimoError = e;
+    }
+  }
+  throw ultimoError || new Error('ningún CDN respondió');
+}
+
 // Carga la librería docx bajo demanda (solo la primera vez que se usa).
-// El CDN sirve el archivo .cjs con un MIME que el navegador rechaza para
+// El CDN puede servir el archivo con un MIME que el navegador rechaza para
 // <script src>, así que lo bajamos con fetch (que no valida MIME) y lo
 // reinyectamos como un Blob con el MIME correcto.
 function _cargarDocxLib() {
   if (window.docx) return Promise.resolve(window.docx);
   if (_docxLibPromise) return _docxLibPromise;
-  _docxLibPromise = fetch(_DOCX_CDN)
-    .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+  _docxLibPromise = _fetchDocxCode()
     .then(code => new Promise((resolve, reject) => {
       try {
         const blob = new Blob([code], { type: 'text/javascript' });
