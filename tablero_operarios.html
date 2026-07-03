@@ -708,6 +708,8 @@ function showConfirmModal(titulo, mensaje, opciones) {
 function updU(){const b=document.getElementById('bu');if(!b)return;b.disabled=uStack.length===0;document.getElementById('uc').textContent=uStack.length>0?uStack.length+' cambio(s)':''}
 function canPlace(act,machId){if(!act.maquina_ideal_id)return true;if(mN(machId)==='Otra')return true;return act.maquina_ideal_id===machId||(act.maquinas_suplentes_ids||[]).includes(machId)}
 function nwd(ds){const d=new Date(ds+'T12:00:00');do{d.setDate(d.getDate()+1)}while(d.getDay()===0);return dK(d)}
+// v157: día laboral ANTERIOR a una fecha (domingo es el único no laboral, igual que nwd).
+function pwd(ds){const d=new Date(ds+'T12:00:00');do{d.setDate(d.getDate()-1)}while(d.getDay()===0);return dK(d)}
 function sS(opId,ds){
   const o=ops.find(x=>x.id===opId);
   if(!o)return 360;
@@ -5223,6 +5225,9 @@ function _simEnforceCorrs(state, anchors) {
       // no debe bloquear — ya se hizo, no hay nada que esperar.
       const predAct = acts.find(a => a.id === corr.predecesor_id);
       if (predAct && predAct.estado === 'completada') continue;
+      // v157: si el predecesor quedó fuera del state por ser pasado (terminó
+      // antes del corte), tampoco bloquea: ya ocurrió, no hay nada que esperar.
+      if (predAct && _simEsPasado(predAct)) continue;
       // v70 Fase 18: si el predecesor está sin_planificar, lo ignoramos en
       // el motor. El sucesor planificado queda donde está. La activ va a
       // mostrarse con badge "⚠ Inconsistente" en el tablero. Antes (fase 10)
@@ -5251,6 +5256,35 @@ function _simEnforceCorrs(state, anchors) {
   return { ok: true, moved: movedAny };
 }
 
+// v157: FILTRO DE PASADO PARA EL MOTOR.
+// El motor solo debe operar sobre el presente/futuro. Corte = último día
+// laboral anterior a hoy (viernes → jueves; lunes → sábado). Toda actividad
+// que TERMINE antes del corte es historia y no participa de ningún cálculo:
+// no se recalcula, no se mueve, no bloquea y no genera conflictos. Esto evita
+// que un cambio global (p. ej. mover la hora de entrada de un operario)
+// arrastre actividades ya hechas o de días pasados. Las hechas del corte en
+// adelante siguen como ancla de bloqueo (no se pisan, pero no se mueven).
+let _simCorteCache = { dia: null, corte: null };
+// v157: el harness testMotor corre con fechas fijas históricas; activa esta
+// bandera para que el filtro de pasado no excluya sus actividades de prueba.
+let _simIgnorarFiltroPasado = false;
+function _simFechaCorte() {
+  const hoy = dK(new Date());
+  if (_simCorteCache.dia !== hoy) {
+    _simCorteCache = { dia: hoy, corte: pwd(hoy) };
+  }
+  return _simCorteCache.corte;
+}
+// Devuelve true si la actividad es "pasado" (terminó antes del corte) y por
+// lo tanto queda FUERA del motor. Se filtra por fecha de FIN (realEnd), no de
+// inicio, para no excluir multi-día que arrancaron antes pero siguen vigentes.
+function _simEsPasado(a) {
+  if (_simIgnorarFiltroPasado) return false;
+  const corte = _simFechaCorte();
+  if (a.fecha >= corte) return false;      // arranca en/después del corte
+  return realEnd(a).date < corte;          // arranca antes: solo se excluye si además terminó antes
+}
+
 // Funcion principal: simula los `changes` aplicados al estado actual y
 // resuelve todas las cascadas hasta punto fijo.
 function simulateChange(changes, options) {
@@ -5266,6 +5300,7 @@ function simulateChange(changes, options) {
   const completadasIds = new Set();
   acts.forEach(a => {
     if (a.estado === 'sin_planificar' || a.fecha === '1900-01-01') return;
+    if (_simEsPasado(a)) return; // v157: el pasado (días previos al corte) no entra al motor
     state.set(a.id, _simBuildStateItem(a));
     if (a.estado === 'completada') completadasIds.add(a.id);
   });
@@ -5511,6 +5546,7 @@ function _simBuildResult(state, anchors) {
   // Detectar deletes (estaban en acts y no en state)
   acts.forEach(a => {
     if (a.estado === 'sin_planificar' || a.fecha === '1900-01-01') return;
+    if (_simEsPasado(a)) return; // v157: las de pasado no están en el state a propósito, no son deletes
     if (!state.has(a.id)) {
       applyPlan.push({ id: a.id, _delete: true });
       affected.push({
@@ -5594,7 +5630,7 @@ function _validarInvariantesEnState(state, _applyPlan) {
   const stateArr = Array.from(state.values());
   const solapNuevos = paresSolapadosMaquina(stateArr);
   // Solapamientos preexistentes (en `acts` con activ activas).
-  const actsActivas = acts.filter(a => a.estado !== 'sin_planificar' && a.fecha !== '1900-01-01')
+  const actsActivas = acts.filter(a => a.estado !== 'sin_planificar' && a.fecha !== '1900-01-01' && !_simEsPasado(a))
     .map(a => _simBuildStateItem(a));
   const solapViejos = paresSolapadosMaquina(actsActivas);
   // Un solapamiento es "preexistente" si los mismos dos IDs ya se solapaban
@@ -5645,6 +5681,7 @@ function _validarInvariantesEnState(state, _applyPlan) {
   acts.forEach(a => {
     if (a.estado !== 'completada') return;
     if (!a.fecha || a.fecha === '1900-01-01') return;
+    if (_simEsPasado(a)) return; // v157: las completadas de pasado salen del state a propósito, no son "eliminadas"
     const sim = state.get(a.id);
     if (!sim) {
       violaciones.push({ tipo: 'anclada_eliminada', act: { id: a.id, descripcion: a.descripcion } });
@@ -5805,6 +5842,8 @@ window.testMotor = function(verbose) {
   verbose = !!verbose;
   const origActs = acts.slice();
   const origCorrs = corrs.slice();
+  const _origIgnorarPasado = _simIgnorarFiltroPasado;
+  _simIgnorarFiltroPasado = true; // v157: los tests usan fechas fijas históricas
   let pass = 0, fail = 0;
   const results = [];
   function expectEq(label, got, expected) {
@@ -6274,9 +6313,35 @@ window.testMotor = function(verbose) {
       tM(buje.hora_inicio) >= 840 || buje.fecha > '2026-05-05');
   }
 
+  // ===== TEST 34 (v157): filtro de pasado en el motor =====
+  // pwd: día laboral anterior (determinista). Julio 2026: vie 3, sáb 4, dom 5, lun 6.
+  expectEq('T34: pwd viernes→jueves', pwd('2026-07-03'), '2026-07-02');
+  expectEq('T34: pwd lunes→sábado (salta domingo)', pwd('2026-07-06'), '2026-07-04');
+  expectEq('T34: pwd sábado→viernes', pwd('2026-07-04'), '2026-07-03');
+  expectEq('T34: pwd domingo→sábado', pwd('2026-07-05'), '2026-07-04');
+  // _simEsPasado / exclusión del motor, con el filtro REAL activo y fechas
+  // relativas a hoy. Una activ hecha de hace 30 días no debe entrar al motor;
+  // una de hoy sí, y un cambio sobre la de hoy no debe tocar la vieja.
+  _simIgnorarFiltroPasado = false;
+  const _hoyT = dK(new Date());
+  const _hace30 = (function () { const d = new Date(); d.setDate(d.getDate() - 30); return dK(d); })();
+  const _vieja = { ...ma(1, _hace30, '08:00', opId1, machId1, 60), estado: 'completada' };
+  const _hoyAct = ma(2, _hoyT, '10:00', opId1, machId1, 60);
+  setActs([_vieja, _hoyAct]);
+  setCorrs([]);
+  expectTrue('T34: activ hecha de hace 30 días es pasado', _simEsPasado(_vieja));
+  expectTrue('T34: activ de hoy NO es pasado', !_simEsPasado(_hoyAct));
+  r = simulateChange([{ id: 2, fecha: _hoyT, hora_inicio: '08:00:00', operario_id: opId1, maquina_id: machId1 }]);
+  expectTrue('T34: cambio en la de hoy no toca la vieja (no aparece en affected)',
+    r.ok && (!r.affected || !r.affected.some(a => a.id === 1)));
+  expectTrue('T34: la vieja no aparece en el applyPlan',
+    r.ok && (!r.applyPlan || !r.applyPlan.some(p => p.id === 1)));
+  _simIgnorarFiltroPasado = true;
+
   // ===== Restaurar =====
   setActs(origActs);
   setCorrs(origCorrs);
+  _simIgnorarFiltroPasado = _origIgnorarPasado; // v157
 
   console.log('=== RESULTADOS TESTS MOTOR A ===');
   results.forEach(line => console.log(line));
