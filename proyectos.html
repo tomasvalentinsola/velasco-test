@@ -973,15 +973,37 @@ function _normalizeActNumbers(a) {
   return a;
 }
 
+// v157: PostgREST devuelve como máximo 1000 filas por request. En tablas que
+// crecen con la operación (procesos, correlatividades, fotos, notas...) eso
+// truncaba la carga: al venir ordenadas por 'orden', el cupo de 1000 se
+// llenaba con los primeros procesos de CADA item y los items quedaban cortados
+// (bug: se importaban todos los procesos pero al recargar sólo aparecían ~6).
+// fetchAllRows pagina con .range() hasta traer TODAS las filas. Devuelve el
+// mismo shape { data, error } que una query normal para encajar en loadAll.
+async function fetchAllRows(tabla, aplicarOrden) {
+  const PAGE = 1000;
+  let desde = 0, todo = [];
+  while (true) {
+    let q = sb.from(tabla).select('*');
+    if (aplicarOrden) q = aplicarOrden(q);
+    const { data, error } = await q.range(desde, desde + PAGE - 1);
+    if (error) { console.error('fetchAllRows(' + tabla + '):', error); return { data: todo, error }; }
+    todo = todo.concat(data || []);
+    if (!data || data.length < PAGE) break; // última página
+    desde += PAGE;
+  }
+  return { data: todo, error: null };
+}
+
 async function loadAll() {
   const [c, m, o, p, it, a, co] = await Promise.all([
     sb.from('clientes').select('*').order('nombre'),
     sb.from('maquinas').select('*').order('nombre'),
     sb.from('operarios').select('*').order('nombre'),
     sb.from('proyectos').select('*').order('id', { ascending: false }),
-    sb.from('items').select('*').order('id'),
-    sb.from('actividades_tablero').select('*').order('orden', { ascending: true, nullsFirst: false }),
-    sb.from('correlatividades').select('*')
+    fetchAllRows('items', q => q.order('id')),
+    fetchAllRows('actividades_tablero', q => q.order('orden', { ascending: true, nullsFirst: false })),
+    fetchAllRows('correlatividades')
   ]);
   clientes = c.data || []; maquinas = m.data || []; operarios = o.data || [];
   proyectos = p.data || []; items = it.data || []; actividades = a.data || [];
@@ -995,7 +1017,7 @@ async function loadAll() {
     const [pm, pmp, mat, sec, eq, con, sub, ce, sc, pmu, iu, pmc, ph, cc,
            ec, cs, ep, cp, sp, pg, ne, rm, pr2, nt] = await Promise.all([
       sb.from('productos_matriz').select('*').order('descripcion'),
-      sb.from('productos_matriz_procesos').select('*').order('orden', { ascending: true, nullsFirst: false }),
+      fetchAllRows('productos_matriz_procesos', q => q.order('orden', { ascending: true, nullsFirst: false })),
       sb.from('materiales').select('*').order('nombre'),
       sb.from('sectores').select('*').order('nombre'),
       sb.from('equipos').select('*').order('nombre'),
@@ -1004,9 +1026,9 @@ async function loadAll() {
       sb.from('conjuntos_equipos').select('*'),
       sb.from('subconjuntos_conjuntos').select('*'),
       sb.from('productos_matriz_ubicaciones').select('*'),
-      sb.from('items_ubicaciones').select('*'),
-      sb.from('productos_matriz_correlatividades').select('*'),
-      sb.from('fotos').select('*').order('entidad_tipo').order('entidad_id').order('orden'),
+      fetchAllRows('items_ubicaciones'),
+      fetchAllRows('productos_matriz_correlatividades'),
+      fetchAllRows('fotos', q => q.order('entidad_tipo').order('entidad_id').order('orden')),
       sb.from('cliente_contactos').select('*').order('apellido').order('nombre'),
       // v70: tablas nuevas de composición
       sb.from('equipo_conjuntos').select('*'),
@@ -1016,13 +1038,13 @@ async function loadAll() {
       sb.from('subconjunto_productos').select('*'),
       sb.from('productos_gemelos').select('*'),
       // v70 Fase 6: notas de envío
-      sb.from('notas_envio').select('*').order('id', { ascending: false }),
+      fetchAllRows('notas_envio', q => q.order('id', { ascending: false })),
       // v70 Fase 6b: remitos
-      sb.from('remitos').select('*').order('id', { ascending: false }),
+      fetchAllRows('remitos', q => q.order('id', { ascending: false })),
       // v70 Fase 8: tipos de proceso
       sb.from('procesos').select('*').order('orden', { ascending: true, nullsFirst: false }),
       // v70 Fase 18: notas de proyecto/item
-      sb.from('notas').select('*').order('created_at', { ascending: false })
+      fetchAllRows('notas', q => q.order('created_at', { ascending: false }))
     ]);
     productosMatriz = pm.data || [];
     productosMatrizProcesos = (pmp.data || []).map(_normalizeActNumbers);
@@ -4851,6 +4873,8 @@ async function saveItem(itemId) {
 //
 // Los filtros del modal son INDEPENDIENTES de los de la pagina de Matriz.
 let agregarDesdeMatrizState = null;
+// v157: cuenta cuántos items se importaron sin cerrar el modal (para el toast).
+let _afmImportCount = 0;
 
 function showAgregarDesdeMatriz(opts) {
   // opts es opcional. Si no viene, asume modo 'project' usando nav.projectId.
@@ -4866,14 +4890,32 @@ function showAgregarDesdeMatriz(opts) {
   }
   if (!cliId) { toast('Falta cliente del proyecto', true); return; }
 
-  // Pre-llenar filtros: cliente del proyecto + Genericos por default
+  // v157: sumar el cliente final al filtro por default. El cliente final se
+  // guarda como texto (nombre), así que buscamos un cliente real con ese nombre
+  // para obtener su id (el filtro trabaja por id). Si se cargó como escritura
+  // libre y no matchea ninguno, simplemente no se agrega.
+  const _cliIdsDefault = [cliId, 'GENERICO'];
+  let _cfNombre = '';
+  if (modo === 'project') {
+    const _pr = getProject(nav.projectId);
+    _cfNombre = (_pr && _pr.cliente_final) ? String(_pr.cliente_final).trim() : '';
+  } else {
+    const _cf = (typeof _leerClienteFinal === 'function') ? _leerClienteFinal() : null;
+    _cfNombre = _cf ? String(_cf).trim() : '';
+  }
+  if (_cfNombre) {
+    const _cfCli = clientes.find(c => (c.nombre || '').trim() === _cfNombre && c.activo !== false);
+    if (_cfCli && !_cliIdsDefault.includes(_cfCli.id)) _cliIdsDefault.push(_cfCli.id);
+  }
+
+  // Pre-llenar filtros: cliente del proyecto + cliente final (si aplica) + Genericos
   agregarDesdeMatrizState = {
     modo: modo,
     clienteProjId: cliId,
     filters: {
       search: '',
       codigos: '',
-      clienteIds: [cliId, 'GENERICO'],
+      clienteIds: _cliIdsDefault,
       sectorIds: [],
       equipoIds: [],
       conjuntoIds: [],
@@ -4881,6 +4923,7 @@ function showAgregarDesdeMatriz(opts) {
     },
     sort: { by: 'descripcion', dir: 'asc' }
   };
+  _afmImportCount = 0; // v157: reinicia el contador de importados de esta sesión del modal
   // Resetear expansion al abrir
   afmExpanded = new Set();
   _renderAgregarDesdeMatrizModal();
@@ -4980,7 +5023,7 @@ function _renderAgregarDesdeMatrizModal() {
   h += '</div>';
 
   h += '<div class="actions" style="margin-top:14px">';
-  h += '<button class="b" onclick="this.closest(\'.mo\').remove()">Cancelar</button>';
+  h += '<button class="b" onclick="this.closest(\'.mo\').remove()">Cerrar</button>';
   h += '</div>';
   m.innerHTML = h; bd.appendChild(m); document.body.appendChild(bd); makeModalDraggable(m);
 }
@@ -6124,13 +6167,17 @@ function _confirmarImport(mode) {
 async function _ejecutarImportProyecto(productoId, valores, ignorarValidaciones) {
   showSpinner('Importando producto...');
   try {
-    await _importarProductoCore(productoId, valores, ignorarValidaciones);
-    const modalAfm = document.getElementById('add-from-matriz-modal');
-    if (modalAfm) modalAfm.remove();
+    const res = await _importarProductoCore(productoId, valores, ignorarValidaciones);
+    if (res && res.error) { toast('Error al importar: ' + res.error, true); return; }
     await loadAll();
+    // v157: NO cerramos el modal de matriz. Se reabre con los mismos filtros
+    // para poder importar varios items seguidos. El orden de carga = orden en
+    // que se van importando. El usuario lo cierra con "Cerrar" al terminar.
+    _afmImportCount++;
     const prodProcs = productosMatrizProcesos.filter(pp => pp.producto_id === productoId);
-    toast('Item importado de la matriz: ' + prodProcs.length + ' proceso(s)' + (ignorarValidaciones ? ' (forzado)' : ''));
     render();
+    if (agregarDesdeMatrizState) _renderAgregarDesdeMatrizModal();
+    toast('Item cargado (' + _afmImportCount + '): ' + prodProcs.length + ' proceso(s)' + (ignorarValidaciones ? ' (forzado)' : ''));
   } finally {
     hideSpinner();
   }
