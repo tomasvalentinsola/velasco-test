@@ -4433,7 +4433,12 @@ function renderOpSelector() {
   }
 
   const urgOrder = { urgente: 0, alta: 1, media: 2, baja: 3 };
+  // v159: las tarjetas bloqueadas (gris, predecesores pendientes) van al final.
+  // Se calcula una vez por actividad; dentro de cada grupo se respeta el orden elegido.
+  const _ready = new Map(list.map(a => [a.id, hasPredecessorsReady(a.id)]));
   list.sort((a, b) => {
+    const ra = _ready.get(a.id) ? 0 : 1, rb = _ready.get(b.id) ? 0 : 1;
+    if (ra !== rb) return ra - rb;
     if (S.sortBy === 'urgencia') {
       // Bug fix: urgOrder['urgente'] === 0, and 0 || 3 is 3 in JS (falsy).
       // Use explicit `in` check / nullish coalescing to preserve 0.
