@@ -3967,6 +3967,20 @@ function onProjStateChange(projectId) {
   if (notaWrap) notaWrap.style.display = (v === 'Cerrado' || v === 'Anulado') ? 'block' : 'none';
 }
 
+// v159: al asignar el nº de pedido desde el cambio de estado, se guardaba solo
+// en el proyecto. Items y actividades quedaban con pedido_nro vacío, así que el
+// tablero mostraba "Ped. -" y el filtro "Nº Pedido" del "+" no las encontraba.
+// (saveProjectMeta ya propagaba; esto alinea el cambio de estado con ese criterio.)
+async function _propagarPedidoNro(projectId, pedido) {
+  const { error: e1 } = await sb.from('items').update({ pedido_nro: pedido }).eq('proyecto_id', projectId);
+  if (e1) console.error('[_propagarPedidoNro] items:', e1);
+  const itemIds = items.filter(i => i.proyecto_id === projectId).map(i => i.id);
+  if (itemIds.length) {
+    const { error: e2 } = await sb.from('actividades_tablero').update({ pedido_nro: pedido }).in('item_id', itemIds);
+    if (e2) console.error('[_propagarPedidoNro] actividades:', e2);
+  }
+}
+
 async function saveProjectState(projectId) {
   const proj = getProject(projectId);
   if (!proj) return;
@@ -4036,6 +4050,7 @@ async function saveProjectState(projectId) {
           // v70 Fase 17a: si pasa a Solicitud, marcar paso_por_solicitud=true.
           if (newEstado === 'Solicitud') payload.paso_por_solicitud = true;
           await sb.from('proyectos').update(payload).eq('id', projectId);
+          if (pedidoNew) await _propagarPedidoNro(projectId, pedidoNew); // v159
           // v70 Fase 18: nota de cierre.
           if ((newEstado === 'Cerrado' || newEstado === 'Anulado') && _notaCierre.contenido) {
             await _agregarNotaCierreSiCorresponde('proyecto', projectId, _notaCierre.contenido, _notaCierre.autorOpId);
@@ -4058,6 +4073,7 @@ async function saveProjectState(projectId) {
     // v70 Fase 17a: si pasa a Solicitud, marcar paso_por_solicitud=true.
     if (newEstado === 'Solicitud') payload.paso_por_solicitud = true;
     await sb.from('proyectos').update(payload).eq('id', projectId);
+    if (pedidoNew) await _propagarPedidoNro(projectId, pedidoNew); // v159
     // v70 Fase 18: guardar nota de cierre si corresponde.
     if ((newEstado === 'Cerrado' || newEstado === 'Anulado') && _notaCierre.contenido) {
       await _agregarNotaCierreSiCorresponde('proyecto', projectId, _notaCierre.contenido, _notaCierre.autorOpId);
@@ -15763,10 +15779,20 @@ async function _doCopyProject(projectId, fechaEntrega) {
           maquina_ideal_id: op.maquina_ideal_id,
           maquina_ideal_nombre: op.maquina_ideal_nombre,
           operario_ideal_id: op.operario_ideal_id,
-          maquinas_suplentes: op.maquinas_suplentes,
-          operarios_suplentes: op.operarios_suplentes,
+          // v159: las columnas en actividades_tablero son *_ids. Antes se copiaba
+          // con los nombres de la matriz (sin _ids), quedaban undefined y el
+          // duplicado perdía todos los suplentes (no aparecía en el "+" del suplente).
+          maquinas_suplentes_ids: op.maquinas_suplentes_ids || null,
+          operarios_suplentes_ids: op.operarios_suplentes_ids || null,
+          duracion_operacion_min: op.duracion_operacion_min,
           trabajo_a_realizar: op.trabajo_a_realizar,
           descripcion_trabajo: op.descripcion_trabajo,  // v158 (punto 2): el "Detalle de tareas" se lee de acá
+          // v159: datos del proyecto/item que el tablero muestra y usa en los filtros del "+".
+          descripcion_proyecto: newProj.descripcion,
+          foto_proyecto_url: newProj.foto_url,
+          foto_url: newItem.foto_url,
+          fecha_ingreso: newProj.fecha_ingreso,
+          cliente_final: newProj.cliente_final,
           cliente_id: proj.cliente_id,
           pedido_nro: null,
           urgencia: proj.urgencia,
