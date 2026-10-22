@@ -8760,10 +8760,18 @@ function renderChips(containerId, list, kind) {
   const wrap = document.getElementById(containerId);
   if (!wrap) return;
   let h = '';
+  // v160: antes, si un suplente guardado no estaba en la lista acotada (los
+  // operarios habituales de la máquina/proceso), el chip no se dibujaba: seguía
+  // guardado (y salía en la carpeta) pero no se veía ni se podía quitar.
+  // Ahora se busca también en la lista completa y se muestra con borde punteado.
+  const full = kind === 'maq' ? maquinas : operarios;
   chipState[kind].forEach(id => {
-    const it = list.find(x => x.id === id);
+    let it = list.find(x => x.id === id);
+    let fuera = false;
+    if (!it) { it = full.find(x => x.id === id); fuera = !!it; }
     if (!it) return;
-    h += '<span class="chip">' + escapeHtml(_chipLabel(it, kind)) + ' <span class="chip-x" onclick="removeChip(\'' + kind + '\',' + id + ')">&times;</span></span>';
+    const extra = fuera ? ' style="border:1px dashed #E0A800;background:#FFF8E1" title="No figura entre los habituales de esta máquina/proceso"' : '';
+    h += '<span class="chip"' + extra + '>' + escapeHtml(_chipLabel(it, kind)) + ' <span class="chip-x" onclick="removeChip(\'' + kind + '\',' + id + ')">&times;</span></span>';
   });
   const remaining = list.filter(x => !chipState[kind].has(x.id));
   h += '<input type="text" class="chip-add" id="chip-add-' + kind + '" placeholder="' + (chipState[kind].size === 0 ? 'Agregar...' : '') + '" list="datalist-' + kind + '" onchange="addChipFromInput(\'' + kind + '\')">';
@@ -16001,6 +16009,10 @@ body { font-family: Arial, sans-serif; font-size: 11px; color: #000; }
 
 .cover-photo { display: flex; justify-content: center; margin-top: 14px; }
 .cover-photo img { max-width: 100%; max-height: 320px; object-fit: contain; border: 1px solid #000; }
+/* v160: varias fotos del item en la portada. Hasta 3 por fila; el alto total
+   no supera los 320px que ya ocupaba una sola foto, así no salta de página. */
+.cover-photos { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 6px; margin-top: 14px; }
+.cover-photos img { object-fit: contain; border: 1px solid #000; }
 
 /* v70 Fase 18b: notas al final de la portada. Compactas, cursiva, interlineado
    apretado. Título en negrita no cursivo. */
@@ -16216,8 +16228,22 @@ body { font-family: Arial, sans-serif; font-size: 11px; color: #000; }
     html += `<tr${cls}><td class="num">${i + 1}</td><td></td><td></td><td></td></tr>`;
   }
   html += `</tbody></table></div>`;
-  if (itemFoto) {
-    html += `<div class="cover-photo"><img src="${escapeHtml(itemFoto)}"></div>`;
+  // v160: imprimir TODAS las fotos del item (tabla fotos), no solo la principal.
+  // Si el item no tiene fotos propias, cae a item.foto_url / foto del proyecto.
+  const _fotosItem = getFotos('item', item.id).map(f => f.url).filter(Boolean);
+  const _fotosPortada = _fotosItem.length ? _fotosItem : (itemFoto ? [itemFoto] : []);
+  if (_fotosPortada.length === 1) {
+    html += `<div class="cover-photo"><img src="${escapeHtml(_fotosPortada[0])}"></div>`;
+  } else if (_fotosPortada.length > 1) {
+    const _porFila = Math.min(_fotosPortada.length, 3);
+    const _filas = Math.ceil(_fotosPortada.length / 3);
+    const _maxH = Math.floor((320 - (_filas - 1) * 6) / _filas);
+    const _maxW = 'calc((100% - ' + ((_porFila - 1) * 6) + 'px) / ' + _porFila + ')';
+    html += `<div class="cover-photos">`;
+    _fotosPortada.forEach(u => {
+      html += `<img src="${escapeHtml(u)}" style="max-height:${_maxH}px;max-width:${_maxW}">`;
+    });
+    html += `</div>`;
   }
   // v70 Fase 18b: notas regulares del proyecto y del item al final de la portada.
   // Las notas de cierre NO se imprimen (cuando se genera la carpeta el proyecto
