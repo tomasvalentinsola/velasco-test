@@ -986,6 +986,11 @@ async function fetchAllRows(tabla, aplicarOrden) {
   while (true) {
     let q = sb.from(tabla).select('*');
     if (aplicarOrden) q = aplicarOrden(q);
+    // v162: desempate por id. Ordenar solo por 'orden' (o sin orden) deja
+    // empates, y con .range() Postgres no garantiza páginas estables: filas
+    // salteadas o repetidas en el borde de cada página de 1000. Síntoma: un
+    // proceso recién guardado ("Proceso agregado") que no aparecía en el item.
+    q = q.order('id', { ascending: true });
     const { data, error } = await q.range(desde, desde + PAGE - 1);
     if (error) { console.error('fetchAllRows(' + tabla + '):', error); return { data: todo, error }; }
     todo = todo.concat(data || []);
