@@ -7480,6 +7480,11 @@ function showProcesoForm(procesoId, ctx) {
   // Suplentes: actividades_tablero los guarda en _ids; productos_matriz_procesos sin sufijo.
   const supMaqIds = proceso ? ((proceso.maquinas_suplentes_ids || proceso.maquinas_suplentes || []).map(x => parseInt(x))) : [];
   const supOpIds = proceso ? ((proceso.operarios_suplentes_ids || proceso.operarios_suplentes || []).map(x => parseInt(x))) : [];
+  // v161: si quedó abierto otro modal de proceso (doble clic, o uno que no se
+  // cerró), lo sacamos. Con dos modales apilados los IDs se duplicaban: el
+  // guardado leía los campos del modal de abajo y cerraba ese, dejando abierto
+  // el visible (parecía que "Agregar" no hacía nada).
+  document.querySelectorAll('#proc-modal').forEach(x => x.remove());
   const bd = document.createElement('div'); bd.className = 'mo'; bd.id = 'proc-modal';
   const m = document.createElement('div'); m.className = 'md';
   let h = '<div class="md-t">' + (isNew ? 'Nuevo proceso' : 'Editar proceso') + '</div>';
@@ -7689,6 +7694,7 @@ async function saveProceso(procesoId) {
   try {
     await _saveProcesoImpl(procesoId);
   } catch (e) {
+    console.error('[saveProceso] error:', e); // v161
     toast('Error al guardar el proceso: ' + (e.message || e), true);
   } finally {
     hideSpinner();
@@ -7708,8 +7714,10 @@ async function _saveProcesoImpl(procesoId) {
   let item = null, proj = null, producto = null;
   if (ctxItem) {
     item = items.find(i => i.id === procCtx.parentId);
-    if (!item) return;
-    proj = getProject(nav.projectId);
+    // v161: antes cortaba en silencio.
+    if (!item) { toast('No se encontró el item del proceso (id ' + procCtx.parentId + '). Recargá la página e intentá de nuevo.', true); console.error('[saveProceso] item no encontrado', procCtx); return; }
+    proj = getProject(nav.projectId) || proyectos.find(pp => pp.id === item.proyecto_id);
+    if (!proj) { toast('No se encontró el proyecto del item. Recargá la página e intentá de nuevo.', true); console.error('[saveProceso] proyecto no encontrado', nav.projectId, item); return; }
   } else {
     producto = productosMatriz.find(p => p.id === procCtx.parentId);
     if (!producto) { toast('Producto no encontrado', true); return; }
@@ -7819,7 +7827,7 @@ async function _saveProcesoImpl(procesoId) {
       toast('Proceso agregado');
     }
     await loadAll();
-    document.getElementById('proc-modal').remove();
+    document.querySelectorAll('#proc-modal').forEach(x => x.remove()); // v161
     render();
     return;
   }
@@ -7968,7 +7976,7 @@ async function _saveProcesoImpl(procesoId) {
     }
   }
   await loadAll();
-  document.getElementById('proc-modal').remove();
+  document.querySelectorAll('#proc-modal').forEach(x => x.remove()); // v161
   render();
 }
 
